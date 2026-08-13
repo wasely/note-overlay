@@ -1,0 +1,11 @@
+.folder-input {
+  width: 100%;
+  margin: 0 0 7px;
+  border: 1px solid rgba(140, 242, 193, .35);
+  border-radius: 7px;
+  padding: 7px;
+  outline: 0;
+  background: #152232;
+  color: #eaf1fa;
+  font-size: 11px;
+}
