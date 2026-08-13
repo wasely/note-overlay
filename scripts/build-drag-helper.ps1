@@ -1,4 +1,8 @@
 $ErrorActionPreference = "Stop"
+# A previous drag-out can leave a helper running and lock the output .exe, which
+# would block every later dev/build. Reclaim the files before compiling.
+Get-Process clean-text-drag, clean-drag-test-host -ErrorAction SilentlyContinue | Stop-Process -Force
+
 $root = Split-Path -Parent $PSScriptRoot
 $compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path -LiteralPath $compiler)) { throw "Windows C# compiler was not found." }

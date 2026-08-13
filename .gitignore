@@ -10,3 +10,7 @@ release-v*/
 build/*.exe
 build/*.ico
 scripts/*.exe
+
+# Local dev-run logs
+/dev-run.log
+/dev-run.err.log

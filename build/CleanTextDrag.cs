@@ -78,8 +78,9 @@ internal static class CleanTextDrag
         var pressDeadline = DateTime.UtcNow.AddSeconds(2);
         while ((GetAsyncKeyState(0x01) & 0x8000) == 0 && DateTime.UtcNow < pressDeadline) Thread.Sleep(5);
         if ((GetAsyncKeyState(0x01) & 0x8000) == 0) return false;
-        while ((GetAsyncKeyState(0x01) & 0x8000) != 0) Thread.Sleep(8);
-        return true;
+        var releaseDeadline = DateTime.UtcNow.AddSeconds(15);
+        while ((GetAsyncKeyState(0x01) & 0x8000) != 0 && DateTime.UtcNow < releaseDeadline) Thread.Sleep(8);
+        return (GetAsyncKeyState(0x01) & 0x8000) == 0;
     }
 
     private static uint TypeUnicode(string text)
