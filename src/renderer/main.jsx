@@ -18,37 +18,127 @@ const mockApi = {
   notes: {
     list: async () => mockNotes.filter((note) => !note.deleted_at).map((note) => ({ ...note })),
     create: async (input = {}) => {
-      const note = { id: crypto.randomUUID(), title: input.title || "", body: input.body || "", folder_id: input.folderId || "inbox", created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-      mockNotes.unshift(note); return { ...note };
+      const note = {
+        id: crypto.randomUUID(),
+        title: input.title || "",
+        body: input.body || "",
+        folder_id: input.folderId || "inbox",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      mockNotes.unshift(note);
+      return { ...note };
     },
-    update: async (id, input) => { const note = mockNotes.find((item) => item.id === id); Object.assign(note, { ...input, folder_id: input.folderId ?? note.folder_id, updated_at: new Date().toISOString() }); return { ...note }; }, dragFile: async () => "C:\\Temp\\notebook-note.md",
-    trash: async (id) => { const note = mockNotes.find((item) => item.id === id); note.deleted_at = new Date().toISOString(); },
+    update: async (id, input) => {
+      const note = mockNotes.find((item) => item.id === id);
+      Object.assign(note, { ...input, folder_id: input.folderId ?? note.folder_id, updated_at: new Date().toISOString() });
+      return { ...note };
+    },
+    dragFile: async () => "C:\\Temp\\notebook-note.md",
+    trash: async (id) => {
+      const note = mockNotes.find((item) => item.id === id);
+      note.deleted_at = new Date().toISOString();
+    },
   },
   skills: {
     list: async () => mockSkills.map((skill) => ({ ...skill })),
-    create: async (input = {}) => { const skill = { id: crypto.randomUUID(), name: input.name || "", category: input.category || "Unsorted", body: input.body || "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; mockSkills.unshift(skill); return { ...skill }; },
-    update: async (id, input) => { const skill = mockSkills.find((item) => item.id === id); Object.assign(skill, input, { updated_at: new Date().toISOString() }); return { ...skill }; },
-    remove: async (id) => { const index = mockSkills.findIndex((item) => item.id === id); if (index >= 0) mockSkills.splice(index, 1); },
+    create: async (input = {}) => {
+      const skill = {
+        id: crypto.randomUUID(),
+        name: input.name || "",
+        category: input.category || "Unsorted",
+        body: input.body || "",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      mockSkills.unshift(skill);
+      return { ...skill };
+    },
+    update: async (id, input) => {
+      const skill = mockSkills.find((item) => item.id === id);
+      Object.assign(skill, input, { updated_at: new Date().toISOString() });
+      return { ...skill };
+    },
+    remove: async (id) => {
+      const index = mockSkills.findIndex((item) => item.id === id);
+      if (index >= 0) mockSkills.splice(index, 1);
+    },
   },
   slashCommands: {
     list: async () => mockSlashCommands.map((item) => ({ ...item })),
-    create: async (input = {}) => { const item = { id: crypto.randomUUID(), name: input.name || "", command: input.command || "", body: input.body || "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; mockSlashCommands.unshift(item); return { ...item }; },
-    update: async (id, input) => { const item = mockSlashCommands.find((entry) => entry.id === id); Object.assign(item, input, { updated_at: new Date().toISOString() }); return { ...item }; },
-    remove: async (id) => { const index = mockSlashCommands.findIndex((item) => item.id === id); if (index >= 0) mockSlashCommands.splice(index, 1); },
+    create: async (input = {}) => {
+      const item = {
+        id: crypto.randomUUID(),
+        name: input.name || "",
+        command: input.command || "",
+        body: input.body || "",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      mockSlashCommands.unshift(item);
+      return { ...item };
+    },
+    update: async (id, input) => {
+      const item = mockSlashCommands.find((entry) => entry.id === id);
+      Object.assign(item, input, { updated_at: new Date().toISOString() });
+      return { ...item };
+    },
+    remove: async (id) => {
+      const index = mockSlashCommands.findIndex((item) => item.id === id);
+      if (index >= 0) mockSlashCommands.splice(index, 1);
+    },
   },
   folders: {
-    list: async () => mockFolders.map((folder) => ({ ...folder, note_count: mockNotes.filter((note) => !note.deleted_at && note.folder_id === folder.id).length })),
-    create: async (name) => { const folder = { id: crypto.randomUUID(), name: name.trim(), is_inbox: false, note_count: 0 }; mockFolders.push(folder); return { ...folder }; },
-    rename: async (id, name) => { const folder = mockFolders.find((item) => item.id === id); folder.name = name.trim(); },
-    remove: async (id) => { const index = mockFolders.findIndex((item) => item.id === id); if (index >= 0) mockFolders.splice(index, 1); mockNotes.forEach((note) => { if (note.folder_id === id) note.folder_id = "inbox"; }); },
+    list: async () => mockFolders.map((folder) => ({
+      ...folder,
+      note_count: mockNotes.filter((note) => !note.deleted_at && note.folder_id === folder.id).length,
+    })),
+    create: async (name) => {
+      const folder = { id: crypto.randomUUID(), name: name.trim(), is_inbox: false, note_count: 0 };
+      mockFolders.push(folder);
+      return { ...folder };
+    },
+    rename: async (id, name) => {
+      const folder = mockFolders.find((item) => item.id === id);
+      folder.name = name.trim();
+    },
+    remove: async (id) => {
+      const index = mockFolders.findIndex((item) => item.id === id);
+      if (index >= 0) mockFolders.splice(index, 1);
+      mockNotes.forEach((note) => { if (note.folder_id === id) note.folder_id = "inbox"; });
+    },
   },
-  compressor: { status: async () => new URLSearchParams(location.search).get("demo") === "success", start: async () => ({ ready: new URLSearchParams(location.search).get("demo") === "success", error: "Local service is only available in the desktop app." }), compress: async () => ({ compressed_prompt: "Concise project update. Feature complete, tests passed, ready for review.", origin_tokens: 24, compressed_tokens: 14, ratio: "1.7x" }) },
+  compressor: {
+    status: async () => new URLSearchParams(location.search).get("demo") === "success",
+    start: async () => ({
+      ready: new URLSearchParams(location.search).get("demo") === "success",
+      error: "Local service is only available in the desktop app.",
+    }),
+    compress: async () => ({
+      compressed_prompt: "Concise project update. Feature complete, tests passed, ready for review.",
+      origin_tokens: 24,
+      compressed_tokens: 14,
+      ratio: "1.7x",
+    }),
+  },
   compressions: { create: async (value) => value },
-  backups: { list: async () => [], create: async () => ({ name: "notebook-backup-preview.json", createdAt: new Date().toISOString(), size: 1024 }), restore: async () => mockNotes.map((note) => ({ ...note })) },
-  settings: { version: async () => "0.7.6", export: async () => ({ filePath: "C:\\Temp\\notebook-backup.json" }), dataLocation: async () => "C:\\Notebook data" },
+  backups: {
+    list: async () => [],
+    create: async () => ({ name: "notebook-backup-preview.json", createdAt: new Date().toISOString(), size: 1024 }),
+    restore: async () => mockNotes.map((note) => ({ ...note })),
+  },
+  settings: {
+    version: async () => "0.7.6",
+    export: async () => ({ filePath: "C:\\Temp\\notebook-backup.json" }),
+    dataLocation: async () => "C:\\Notebook data",
+  },
   clipboard: { writeText: async (text) => navigator.clipboard.writeText(text) },
   window: { hide: async () => {} },
-  onNewInboxNote: () => {}, onFocusEditor: () => {}, onFlushEditor: () => {}, onOverlayHiding: () => {}, onOverlayShown: () => {},
+  onNewInboxNote: () => {},
+  onFocusEditor: () => {},
+  onFlushEditor: () => {},
+  onOverlayHiding: () => {},
+  onOverlayShown: () => {},
 };
 const api = window.hushnote || mockApi;
 
@@ -141,8 +231,8 @@ function App() {
   const [backups, setBackups] = useState([]);
   const [dataLocation, setDataLocation] = useState("");
   const [recoveryMessage, setRecoveryMessage] = useState("");
-  const [popping, setPopping] = useState(true);
   const [closing, setClosing] = useState(false);
+  const [showTick, setShowTick] = useState(0);
   const [editorMode, setEditorMode] = useState("write");
   const [notebookEditor, setNotebookEditor] = useState(null);
   const [appVersion, setAppVersion] = useState("");
@@ -151,6 +241,7 @@ function App() {
   const slashCommandSaveTimer = useRef();
   const noticeTimer = useRef();
   const editorRef = useRef();
+  const surfaceRef = useRef(null);
   const currentRef = useRef(null);
   const currentSkillRef = useRef(null);
   const currentSlashCommandRef = useRef(null);
@@ -182,9 +273,24 @@ function App() {
     api.onFocusEditor(() => setTimeout(() => editorRef.current?.focus(), 0));
     api.onFlushEditor(() => { if (currentRef.current) saveNow(currentRef.current); if (currentSkillRef.current) saveSkillNow(currentSkillRef.current); if (currentSlashCommandRef.current) saveSlashCommandNow(currentSlashCommandRef.current); });
     api.onOverlayHiding(() => setClosing(true));
-    api.onOverlayShown(() => { setClosing(false); setPopping(false); requestAnimationFrame(() => setPopping(true)); });
+    api.onOverlayShown(() => { setClosing(false); setShowTick((tick) => tick + 1); });
     return () => { clearTimeout(saveTimer.current); clearTimeout(skillSaveTimer.current); clearTimeout(slashCommandSaveTimer.current); clearTimeout(noticeTimer.current); };
   }, []);
+
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const surface = surfaceRef.current;
+    if (!surface?.animate) return;
+    const animation = surface.animate(
+      [
+        { opacity: 0, transform: "translateY(34px) scale(0.96)" },
+        { opacity: 1, offset: 0.7 },
+        { opacity: 1, transform: "translateY(0) scale(1)" },
+      ],
+      { duration: 360, easing: "cubic-bezier(0.22, 1.32, 0.36, 1)" }
+    );
+    return () => animation.cancel();
+  }, [showTick]);
 
   useEffect(() => { currentRef.current = current; }, [current]);
   useEffect(() => { currentSkillRef.current = currentSkill; }, [currentSkill]);
@@ -401,6 +507,7 @@ function App() {
     if (!window.confirm(`Replace your current notes with the backup from ${fullTime(backup.createdAt)}? A safety backup will be made first.`)) return;
     setRecoveryMessage("Restoring…");
     try {
+      // Desktop returns { notes, skills, slashCommands }; the browser mock returns a notes array.
       const restored = await api.backups.restore(backup.name);
       const restoredNotes = Array.isArray(restored) ? restored : restored.notes;
       const restoredSkills = Array.isArray(restored) ? null : restored.skills;
@@ -519,7 +626,7 @@ function App() {
     return matchesSearch && (skillCategory === "All" || (skill.category?.trim() || "Unsorted") === skillCategory);
   });
   const visibleSlashCommands = slashCommands.filter((item) => `${slashCommandName(item)} ${item.command || ""} ${item.body || ""}`.toLowerCase().includes(slashCommandFilter.toLowerCase()));
-  return <div className={`window-surface ${popping ? "is-opening" : ""} ${closing ? "is-closing" : ""}`}><main className="notebook">
+  return <div className={`window-surface ${closing ? "is-closing" : ""}`} ref={surfaceRef}><main className="notebook">
     <aside className="note-list" aria-label={view === "notes" ? "Notes" : view === "skills" ? "Skills" : "Slash commands"}>
       <div className="list-top"><strong>Notebook</strong><div><button className="utility" onClick={openRecovery} aria-label="Backups and settings" title="Backups and settings">···</button><button className="new-note" onClick={view === "notes" ? () => createNote() : view === "skills" ? createSkill : createSlashCommand} aria-label={view === "notes" ? "New note" : view === "skills" ? "New skill" : "New slash command"}>+</button></div></div>
       <nav className="view-switch" aria-label="Notebook pages"><button className={view === "notes" ? "active" : ""} onClick={() => { setView("notes"); setCompressOpen(false); }}>Notes</button><button className={view === "skills" ? "active" : ""} onClick={() => { setView("skills"); setCompressOpen(false); }}>Skills</button><button className={view === "slash-commands" ? "active" : ""} onClick={() => { setView("slash-commands"); setCompressOpen(false); }} aria-label="Slash commands">Slash</button></nav>

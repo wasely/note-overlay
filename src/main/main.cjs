@@ -175,20 +175,56 @@ app.whenReady().then(() => {
   ipcMain.handle("slash-commands:create", (_event, input) => store.createSlashCommand(slashCommandInput.partial().parse(input || {})));
   ipcMain.handle("slash-commands:update", (_event, id, input) => store.updateSlashCommand(z.string().parse(id), slashCommandInput.parse(input)));
   ipcMain.handle("slash-commands:remove", (_event, id) => store.deleteSlashCommand(z.string().parse(id)));
-  ipcMain.handle("folders:list", () => store.listFolders()); ipcMain.handle("folders:create", (_event, name) => store.createFolder(z.string().max(80).parse(name))); ipcMain.handle("folders:rename", (_event, id, name) => store.renameFolder(z.string().parse(id), z.string().min(1).max(80).parse(name))); ipcMain.handle("folders:remove", (_event, id) => store.removeFolder(z.string().parse(id)));
+  ipcMain.handle("folders:list", () => store.listFolders());
+  ipcMain.handle("folders:create", (_event, name) => store.createFolder(z.string().max(80).parse(name)));
+  ipcMain.handle("folders:rename", (_event, id, name) => store.renameFolder(z.string().parse(id), z.string().min(1).max(80).parse(name)));
+  ipcMain.handle("folders:remove", (_event, id) => store.removeFolder(z.string().parse(id)));
   ipcMain.handle("tags:list", () => store.listTags());
-  ipcMain.handle("compressions:list", (_event, noteId) => store.listCompressions(z.string().parse(noteId))); ipcMain.handle("compressions:create", (_event, input) => store.createCompression(compressionInput.parse(input)));
+  ipcMain.handle("compressions:list", (_event, noteId) => store.listCompressions(z.string().parse(noteId)));
+  ipcMain.handle("compressions:create", (_event, input) => store.createCompression(compressionInput.parse(input)));
   ipcMain.handle("settings:get", () => settings());
   ipcMain.handle("app:version", () => app.getVersion());
-  ipcMain.handle("settings:set", (_event, input) => { const current = settings(); const next = { ...current, ...z.object({ hotkey: z.string().min(3).max(80).optional(), startAtLogin: z.boolean().optional(), compressorDir: z.string().min(3).max(400).optional() }).parse(input) }; if (next.hotkey !== current.hotkey && !hotkeys.setPreferred(next.hotkey)) throw new Error("Windows could not register that shortcut."); store.setSetting("app", next); repairStartAtLogin(); return next; });
-  ipcMain.handle("data:export", async (_event, format) => { const { filePath, canceled } = await dialog.showSaveDialog({ title: "Export Notebook", defaultPath: `notebook-backup.${format === "markdown" ? "md" : "json"}`, filters: format === "markdown" ? [{ name: "Markdown", extensions: ["md"] }] : [{ name: "JSON", extensions: ["json"] }] }); if (canceled || !filePath) return { canceled: true }; const data = store.exportData(); if (format === "markdown") { const notes = data.notes.filter((note) => !note.deleted_at).map((note) => `# ${note.title || "Untitled"}\n\n${note.body}\n\n---\n`); const skills = data.skills.map((skill) => `# Skill: ${skill.name || "Untitled skill"}\n\nCategory: ${skill.category || "Unsorted"}\n\n${skill.body}\n\n---\n`); const slashCommands = data.slashCommands.map((item) => `# Slash command: ${item.name || "Untitled command"}\n\n${item.command ? `Command: ${item.command}\n\n` : ""}${item.body}\n\n---\n`); fs.writeFileSync(filePath, [...notes, ...skills, ...slashCommands].join("\n"), "utf8"); } else fs.writeFileSync(filePath, JSON.stringify(data, null, 2)); return { filePath }; });
-  ipcMain.handle("data:import", async () => { const { filePaths, canceled } = await dialog.showOpenDialog({ title: "Import Notebook JSON", filters: [{ name: "JSON", extensions: ["json"] }], properties: ["openFile"] }); if (canceled || !filePaths[0]) return { canceled: true }; const notes = store.importData(JSON.parse(fs.readFileSync(filePaths[0], "utf8"))); return { notes }; });
+  ipcMain.handle("settings:set", (_event, input) => {
+    const current = settings();
+    const patch = z.object({ hotkey: z.string().min(3).max(80).optional(), startAtLogin: z.boolean().optional(), compressorDir: z.string().min(3).max(400).optional() }).parse(input);
+    const next = { ...current, ...patch };
+    if (next.hotkey !== current.hotkey && !hotkeys.setPreferred(next.hotkey)) throw new Error("Windows could not register that shortcut.");
+    store.setSetting("app", next);
+    repairStartAtLogin();
+    return next;
+  });
+  ipcMain.handle("data:export", async (_event, format) => {
+    const isMarkdown = format === "markdown";
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: "Export Notebook",
+      defaultPath: `notebook-backup.${isMarkdown ? "md" : "json"}`,
+      filters: isMarkdown ? [{ name: "Markdown", extensions: ["md"] }] : [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (canceled || !filePath) return { canceled: true };
+    const data = store.exportData();
+    if (isMarkdown) {
+      const notes = data.notes.filter((note) => !note.deleted_at).map((note) => `# ${note.title || "Untitled"}\n\n${note.body}\n\n---\n`);
+      const skills = data.skills.map((skill) => `# Skill: ${skill.name || "Untitled skill"}\n\nCategory: ${skill.category || "Unsorted"}\n\n${skill.body}\n\n---\n`);
+      const slashCommands = data.slashCommands.map((item) => `# Slash command: ${item.name || "Untitled command"}\n\n${item.command ? `Command: ${item.command}\n\n` : ""}${item.body}\n\n---\n`);
+      fs.writeFileSync(filePath, [...notes, ...skills, ...slashCommands].join("\n"), "utf8");
+    } else {
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    }
+    return { filePath };
+  });
+  ipcMain.handle("data:import", async () => {
+    const { filePaths, canceled } = await dialog.showOpenDialog({ title: "Import Notebook JSON", filters: [{ name: "JSON", extensions: ["json"] }], properties: ["openFile"] });
+    if (canceled || !filePaths[0]) return { canceled: true };
+    const notes = store.importData(JSON.parse(fs.readFileSync(filePaths[0], "utf8")));
+    return { notes };
+  });
   ipcMain.handle("backups:list", () => store.listBackups());
   ipcMain.handle("backups:create", () => store.createBackup());
   ipcMain.handle("backups:restore", (_event, name) => { store.createBackup(); return store.restoreBackup(z.string().max(180).parse(name)); });
   ipcMain.handle("data:location", () => store.userDataPath);
   ipcMain.handle("clipboard:write-text", (_event, text) => { clipboard.writeText(z.string().max(2_000_000).parse(text)); });
-  ipcMain.handle("compressor:status", compressorStatus); ipcMain.handle("compressor:start", startCompressor);
+  ipcMain.handle("compressor:status", compressorStatus);
+  ipcMain.handle("compressor:start", startCompressor);
   ipcMain.handle("compressor:compress", async (_event, text, rate) => {
     const response = await fetch(`${COMPRESSOR_URL}/compress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: z.string().min(1).max(2_000_000).parse(text), rate: z.number().min(.1).max(1).parse(rate) }), signal: AbortSignal.timeout(90000) });
     const raw = await response.text(); let result;
@@ -197,6 +233,10 @@ app.whenReady().then(() => {
     if (!result || typeof result.compressed_prompt !== "string") throw new Error("The local compressor returned no compressed text.");
     return result;
   });
-  ipcMain.handle("window:hide", hideOverlay); ipcMain.handle("window:new-note", () => showOverlay(true));
+  ipcMain.handle("window:hide", hideOverlay);
+  ipcMain.handle("window:new-note", () => showOverlay(true));
 });
-app.on("before-quit", () => { app.isQuitting = true; persistWindowBounds(); }); app.on("will-quit", () => hotkeys?.stop()); app.on("window-all-closed", () => {}); app.on("activate", () => showOverlay(false));
+app.on("before-quit", () => { app.isQuitting = true; persistWindowBounds(); });
+app.on("will-quit", () => hotkeys?.stop());
+app.on("window-all-closed", () => {});
+app.on("activate", () => showOverlay(false));
