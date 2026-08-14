@@ -45,8 +45,11 @@ internal static class CleanDragTestHost
             form.Bounds = new Rectangle(x, y, 440, 420);
             form.TopMost = true;
             var input = new TextBox { Dock = DockStyle.Fill, Multiline = true, Font = new Font("Consolas", 16), TextAlign = HorizontalAlignment.Center };
+            input.GotFocus += (sender, eventArgs) => File.AppendAllText(resultPath + ".events", "GOTFOCUS\n");
+            input.LostFocus += (sender, eventArgs) => File.AppendAllText(resultPath + ".events", "LOSTFOCUS\n");
             input.TextChanged += (sender, eventArgs) =>
             {
+                File.AppendAllText(resultPath + ".events", "TEXT=" + input.Text.Replace("\r", "\\r").Replace("\n", "\\n") + "\n");
                 if (input.Text == expected) { File.WriteAllText(resultPath, input.Text); form.Close(); }
             };
             form.Controls.Add(input);
@@ -54,7 +57,7 @@ internal static class CleanDragTestHost
             {
                 input.Focus();
                 var center = form.PointToScreen(new Point(form.ClientSize.Width / 2, form.ClientSize.Height / 2));
-                File.WriteAllText(readyPath, center.X + "," + center.Y + "," + expected);
+                File.WriteAllText(readyPath, center.X + "," + center.Y + "," + expected + "," + form.Handle);
             };
             Application.Run(form);
         }

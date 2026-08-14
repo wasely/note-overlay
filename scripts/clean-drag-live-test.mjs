@@ -18,7 +18,8 @@ const resultPath = path.join(testDir, "result.txt");
 const expected = "Token and Efficiency maxxing.md";
 const helperLogPath = path.join(testDir, "helper.log");
 const dropSignalPath = path.join(testDir, "drop.signal");
-const app = await electron.launch({ executablePath: electronPath, args: [root, `--user-data-dir=${userData}`], env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1", NOTEBOOK_CLEAN_DRAG_LOG: helperLogPath, NOTEBOOK_CLEAN_DRAG_DROP_SIGNAL: dropSignalPath } });
+const targetFile = path.join(testDir, "target.hwnd");
+const app = await electron.launch({ executablePath: electronPath, args: [root, `--user-data-dir=${userData}`], env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1", NOTEBOOK_CLEAN_DRAG_LOG: helperLogPath, NOTEBOOK_CLEAN_DRAG_DROP_SIGNAL: dropSignalPath, NOTEBOOK_CLEAN_DRAG_TARGET_FILE: targetFile } });
 let receiver;
 
 async function waitForFile(filePath, timeoutMs = 10000) {
@@ -71,6 +72,7 @@ try {
   const targetY = Math.max(0, sourceInfo.targetPoint.y - 210);
   receiver = spawn(hostPath, ["--receive", readyPath, resultPath, expected, String(targetX), String(targetY)], { windowsHide: true, stdio: "ignore" });
   const target = (await waitForFile(readyPath)).split(",");
+  await fs.writeFile(targetFile, target[3]);
   console.log(`Window ${JSON.stringify(sourceInfo.bounds)}, element ${JSON.stringify(rect)}, drag ${source.x},${source.y} -> ${target[0]},${target[1]}`);
   await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
   await page.mouse.down();

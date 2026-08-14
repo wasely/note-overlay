@@ -4,8 +4,46 @@ const path = require("path");
 const { randomUUID } = require("crypto");
 
 function now() { return new Date().toISOString(); }
+function localDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function shiftDate(value, days) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return localDate(date);
+}
 const BACKUP_RETENTION = 21;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const STARTER_SKILLS = [
+  {
+    id: "starter-onlyoffice",
+    name: "OnlyOffice",
+    category: "Apps & Integrations",
+    body: [
+      "## Best overall office suite",
+      "OnlyOffice is the strongest Microsoft Office-compatible alternative — a full-featured office suite for text, spreadsheets, and presentations with a modern, clean UI.",
+      "",
+      "## Top-tier compatibility",
+      "Works natively with Microsoft Office formats (.docx, .xlsx, .pptx) without conversion, so documents look the same as in Word or Excel.",
+      "",
+      "## Collaboration",
+      "Real-time co-editing, commenting, version history, and built-in chat. Note: live co-editing requires OnlyOffice Document Server (self-hosted) or DocSpace/cloud — the free desktop app alone does not do live collaboration.",
+      "",
+      "## How to use",
+      "The Community Edition is free under the AGPL-3.0 license. Self-host it or use it through integrations like Nextcloud.",
+      "",
+      "## Caveats",
+      "- \"Most feature-rich\" is debatable: LibreOffice has more raw features (macros, Base database). OnlyOffice's real edge is MS Office compatibility plus a modern UI.",
+      "- AGPL-3.0 carries network-copyleft obligations if you modify it and serve it publicly.",
+      "- Very complex .docx (macros, some charts, OLE objects) can render slightly differently; macros are largely unsupported.",
+    ].join("\n"),
+  },
+];
+
 const STARTER_SLASH_COMMANDS = [
   {
     id: "starter-gitpush",
@@ -66,6 +104,9 @@ function createStorage(userDataPath) {
     CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS note_tags (note_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY(note_id, tag_id), FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE, FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS compressions (id TEXT PRIMARY KEY, note_id TEXT, source_text TEXT NOT NULL, compressed_text TEXT NOT NULL, preset TEXT NOT NULL, rate REAL NOT NULL, origin_tokens INTEGER, compressed_tokens INTEGER, ratio TEXT, created_at TEXT NOT NULL, FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE SET NULL);
+    CREATE TABLE IF NOT EXISTS daily_tasks (id TEXT PRIMARY KEY, task_date TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'done', 'carried')), completed_at TEXT, completed_on TEXT, carried_from_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(carried_from_id) REFERENCES daily_tasks(id) ON DELETE SET NULL);
+    CREATE INDEX IF NOT EXISTS daily_tasks_date_status ON daily_tasks(task_date, status);
+    CREATE INDEX IF NOT EXISTS daily_tasks_completed_on ON daily_tasks(completed_on);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
   let inbox = db.prepare("SELECT id FROM folders WHERE is_inbox = 1").get();
@@ -159,6 +200,79 @@ function createStorage(userDataPath) {
     return getSlashCommand(id);
   }
   function deleteSlashCommand(id) { db.prepare("DELETE FROM slash_commands WHERE id = ?").run(id); }
+  function getDailyTask(id) {
+    const task = db.prepare("SELECT * FROM daily_tasks WHERE id = ?").get(id);
+    return task ? { ...task, carried: Boolean(task.carried_from_id) } : null;
+  }
+  function listDailyTasks() {
+    return db.prepare("SELECT * FROM daily_tasks ORDER BY task_date DESC, created_at").all();
+  }
+  function rollDailyTasks(date = localDate()) {
+    const overdue = db.prepare("SELECT * FROM daily_tasks WHERE task_date < ? AND status = 'open' ORDER BY task_date, created_at").all(date);
+    if (!overdue.length) return 0;
+    const timestamp = now();
+    const roll = db.transaction(() => {
+      const markCarried = db.prepare("UPDATE daily_tasks SET status = 'carried', updated_at = ? WHERE id = ? AND status = 'open'");
+      const insert = db.prepare("INSERT INTO daily_tasks (id, task_date, text, status, carried_from_id, created_at, updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?)");
+      for (const task of overdue) {
+        if (!markCarried.run(timestamp, task.id).changes) continue;
+        insert.run(randomUUID(), date, task.text, task.id, timestamp, timestamp);
+      }
+    });
+    roll();
+    return overdue.length;
+  }
+  function dailyDashboard(date = localDate()) {
+    rollDailyTasks(date);
+    const tomorrow = shiftDate(date, 1);
+    const todayTasks = db.prepare("SELECT * FROM daily_tasks WHERE task_date = ? AND status = 'open' ORDER BY created_at").all(date);
+    const tomorrowTasks = db.prepare("SELECT * FROM daily_tasks WHERE task_date = ? AND status = 'open' ORDER BY created_at").all(tomorrow);
+    const done = db.prepare("SELECT * FROM daily_tasks WHERE completed_on = ? AND status = 'done' ORDER BY completed_at DESC").all(date);
+    const history = [];
+    const completedCount = db.prepare("SELECT COUNT(*) AS count FROM daily_tasks WHERE completed_on = ? AND status = 'done'");
+    for (let offset = 0; offset < 7; offset += 1) {
+      const day = shiftDate(date, -offset);
+      history.push({ date: day, completed: completedCount.get(day).count });
+    }
+    const hydrate = (task) => ({ ...task, carried: Boolean(task.carried_from_id) });
+    return {
+      date,
+      tomorrowDate: tomorrow,
+      today: todayTasks.map(hydrate),
+      done: done.map(hydrate),
+      tomorrow: tomorrowTasks.map(hydrate),
+      history,
+      carriedCount: todayTasks.filter((task) => task.carried_from_id).length,
+    };
+  }
+  function createDailyTask(input, date = localDate()) {
+    const text = String(input?.text || "").trim();
+    if (!text) throw new Error("Task text is required.");
+    const taskDate = input.bucket === "tomorrow" ? shiftDate(date, 1) : date;
+    const timestamp = now();
+    const completed = Boolean(input.completed) && input.bucket !== "tomorrow";
+    db.prepare("INSERT INTO daily_tasks (id, task_date, text, status, completed_at, completed_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), taskDate, text, completed ? "done" : "open", completed ? timestamp : null, completed ? date : null, timestamp, timestamp);
+    return dailyDashboard(date);
+  }
+  function updateDailyTask(id, text, date = localDate()) {
+    if (!getDailyTask(id)) throw new Error("Daily task not found.");
+    const clean = String(text || "").trim();
+    if (!clean) throw new Error("Task text is required.");
+    db.prepare("UPDATE daily_tasks SET text = ?, updated_at = ? WHERE id = ?").run(clean, now(), id);
+    return dailyDashboard(date);
+  }
+  function completeDailyTask(id, completed, date = localDate()) {
+    const task = getDailyTask(id);
+    if (!task) throw new Error("Daily task not found.");
+    const timestamp = now();
+    if (completed) db.prepare("UPDATE daily_tasks SET status = 'done', completed_at = ?, completed_on = ?, updated_at = ? WHERE id = ?").run(timestamp, date, timestamp, id);
+    else db.prepare("UPDATE daily_tasks SET task_date = ?, status = 'open', completed_at = NULL, completed_on = NULL, updated_at = ? WHERE id = ?").run(date, timestamp, id);
+    return dailyDashboard(date);
+  }
+  function deleteDailyTask(id, date = localDate()) {
+    db.prepare("DELETE FROM daily_tasks WHERE id = ?").run(id);
+    return dailyDashboard(date);
+  }
   function updateNote(id, input) {
     const note = getNote(id); if (!note) throw new Error("Note not found.");
     db.prepare("UPDATE notes SET title = ?, body = ?, folder_id = ?, pinned = ?, archived = ?, updated_at = ? WHERE id = ?").run(input.title ?? note.title, input.body ?? note.body, input.folderId ?? note.folder_id, input.pinned === undefined ? Number(note.pinned) : Number(input.pinned), input.archived === undefined ? Number(note.archived) : Number(input.archived), now(), id);
@@ -183,7 +297,12 @@ function createStorage(userDataPath) {
     const clean = name.trim(); if (!clean) throw new Error("Folder name is required.");
     const id = randomUUID(); db.prepare("INSERT INTO folders (id, name, created_at) VALUES (?, ?, ?)").run(id, clean, now()); return { id, name: clean };
   }
-  function renameFolder(id, name) { if (id === inbox.id) throw new Error("Inbox cannot be renamed."); db.prepare("UPDATE folders SET name = ? WHERE id = ?").run(name.trim(), id); }
+  function renameFolder(id, name) {
+    if (id === inbox.id) throw new Error("Inbox cannot be renamed.");
+    const clean = name.trim();
+    if (!clean) throw new Error("Folder name is required.");
+    db.prepare("UPDATE folders SET name = ? WHERE id = ?").run(clean, id);
+  }
   function removeFolder(id) { if (id === inbox.id) throw new Error("Inbox cannot be removed."); const run = db.transaction(() => { db.prepare("UPDATE notes SET folder_id = ? WHERE folder_id = ?").run(inbox.id, id); db.prepare("DELETE FROM folders WHERE id = ?").run(id); }); run(); }
   function createCompression(input) {
     const id = randomUUID(); const timestamp = now();
@@ -191,7 +310,7 @@ function createStorage(userDataPath) {
     return { id, ...input, created_at: timestamp };
   }
   function listCompressions(noteId) { return db.prepare("SELECT * FROM compressions WHERE note_id = ? ORDER BY created_at DESC").all(noteId); }
-  function exportData() { return { version: 4, exportedAt: now(), folders: listFolders(), notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), compressions: db.prepare("SELECT * FROM compressions ORDER BY created_at DESC").all() }; }
+  function exportData() { return { version: 5, exportedAt: now(), folders: listFolders(), notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), dailyTasks: listDailyTasks(), compressions: db.prepare("SELECT * FROM compressions ORDER BY created_at DESC").all() }; }
   function importData(data) {
     if (!data || !Array.isArray(data.notes)) throw new Error("That is not a Notebook JSON backup.");
     const run = db.transaction(() => {
@@ -206,6 +325,14 @@ function createStorage(userDataPath) {
       }
       for (const slashCommand of data.slashCommands || []) {
         db.prepare("INSERT OR IGNORE INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(slashCommand.id || randomUUID(), slashCommand.name || "", slashCommand.command || "", slashCommand.body || "", slashCommand.created_at || now(), slashCommand.updated_at || now());
+      }
+      for (const task of data.dailyTasks || []) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(task.task_date || "") || !String(task.text || "").trim()) continue;
+        const status = ["open", "done", "carried"].includes(task.status) ? task.status : "open";
+        db.prepare("INSERT OR IGNORE INTO daily_tasks (id, task_date, text, status, completed_at, completed_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(task.id || randomUUID(), task.task_date, String(task.text).trim(), status, task.completed_at || null, task.completed_on || null, task.created_at || now(), task.updated_at || now());
+      }
+      for (const task of data.dailyTasks || []) {
+        if (task.id && task.carried_from_id && db.prepare("SELECT id FROM daily_tasks WHERE id = ?").get(task.carried_from_id)) db.prepare("UPDATE daily_tasks SET carried_from_id = ? WHERE id = ?").run(task.carried_from_id, task.id);
       }
     }); run(); return listNotes();
   }
@@ -254,6 +381,7 @@ function createStorage(userDataPath) {
       db.prepare("DELETE FROM compressions").run();
       db.prepare("DELETE FROM notes").run();
       db.prepare("DELETE FROM skills").run();
+      db.prepare("DELETE FROM daily_tasks").run();
       if (Array.isArray(data.slashCommands)) db.prepare("DELETE FROM slash_commands").run();
       db.prepare("DELETE FROM folders WHERE id != ?").run(inbox.id);
       for (const folder of data.folders || []) {
@@ -281,9 +409,26 @@ function createStorage(userDataPath) {
       for (const slashCommand of data.slashCommands || []) {
         db.prepare("INSERT INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(slashCommand.id || randomUUID(), slashCommand.name || "", slashCommand.command || "", slashCommand.body || "", slashCommand.created_at || now(), slashCommand.updated_at || now());
       }
+      for (const task of data.dailyTasks || []) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(task.task_date || "") || !String(task.text || "").trim()) continue;
+        const status = ["open", "done", "carried"].includes(task.status) ? task.status : "open";
+        db.prepare("INSERT INTO daily_tasks (id, task_date, text, status, completed_at, completed_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(task.id || randomUUID(), task.task_date, String(task.text).trim(), status, task.completed_at || null, task.completed_on || null, task.created_at || now(), task.updated_at || now());
+      }
+      for (const task of data.dailyTasks || []) {
+        if (task.id && task.carried_from_id && db.prepare("SELECT id FROM daily_tasks WHERE id = ?").get(task.carried_from_id)) db.prepare("UPDATE daily_tasks SET carried_from_id = ? WHERE id = ?").run(task.carried_from_id, task.id);
+      }
     });
     restore();
     return { notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands() };
+  }
+
+  function seedSkills() {
+    if (getSetting("starterSkillsVersion", 0) >= 1) return;
+    const timestamp = now();
+    const insert = db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
+    const seed = db.transaction(() => STARTER_SKILLS.forEach((item) => insert.run(item.id, item.name, item.category, item.body, timestamp, timestamp)));
+    seed();
+    setSetting("starterSkillsVersion", 1);
   }
 
   function seedSlashCommands() {
@@ -295,9 +440,10 @@ function createStorage(userDataPath) {
     setSetting("starterSlashCommandsVersion", 1);
   }
 
+  seedSkills();
   seedSlashCommands();
   migrateLegacyJson();
-  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, createCompression, listCompressions, getSetting, setSetting, exportData, importData, createBackup, ensureDailyBackup, listBackups, restoreBackup, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, dailyDashboard, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, createBackup, ensureDailyBackup, listBackups, restoreBackup, close: () => db.close(), userDataPath, inboxId: inbox.id };
 }
 
 module.exports = { createStorage };

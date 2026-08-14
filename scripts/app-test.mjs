@@ -13,19 +13,22 @@ const userData = await fs.mkdtemp(path.join(os.tmpdir(), "notebook-test-"));
 const server = http.createServer((request, response) => {
   if (request.url === "/health") { response.writeHead(200).end("ok"); return; }
   if (request.url === "/compress") { response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ compressed_prompt: "Compressed test note.", origin_tokens: 8, compressed_tokens: 3, ratio: "2.7x" })); return; }
+  if (request.url === "/mail") { response.writeHead(200, { "Content-Type": "text/html" }).end("<!doctype html><html><body><h1>Gmail test inbox</h1></body></html>"); return; }
   response.writeHead(404).end();
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const { port } = server.address();
 const packagedExecutable = process.env.NOTEBOOK_EXECUTABLE;
-const app = await electron.launch({ executablePath: packagedExecutable || electronPath, args: packagedExecutable ? [`--user-data-dir=${userData}`] : [".", `--user-data-dir=${userData}`], env: { ...process.env, NOTEBOOK_COMPRESSOR_URL: `http://127.0.0.1:${port}`, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1" } });
+const app = await electron.launch({ executablePath: packagedExecutable || electronPath, args: packagedExecutable ? [`--user-data-dir=${userData}`] : [".", `--user-data-dir=${userData}`], env: { ...process.env, NOTEBOOK_COMPRESSOR_URL: `http://127.0.0.1:${port}`, NOTEBOOK_MAIL_URL: `http://127.0.0.1:${port}/mail`, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1" } });
 
 try {
   const page = await app.firstWindow();
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
   await page.bringToFront();
   await page.getByText("Notebook", { exact: true }).waitFor();
-  await page.getByText(`Local only · v${packageJson.version}`, { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Backups and settings" }).click();
+  await page.getByText(`Notebook v${packageJson.version} · local only`, { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Close backups" }).click();
   const dragRegions = await page.evaluate(() => ({
     file: getComputedStyle(document.querySelector(".drag-action")).getPropertyValue("-webkit-app-region"),
     header: getComputedStyle(document.querySelector(".editor-bar")).getPropertyValue("-webkit-app-region"),
@@ -57,6 +60,8 @@ try {
   if (overflow.documentWidth > overflow.viewportWidth || overflow.documentHeight > overflow.viewportHeight || overflow.bodyWidth > overflow.viewportWidth || overflow.bodyHeight > overflow.viewportHeight) throw new Error(`Window content overflows: ${JSON.stringify(overflow)}`);
   const hotkeyRegistered = await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+N"));
   if (!hotkeyRegistered) console.log("Global hotkey is already owned by the running Notebook instance.");
+  const mailHotkeyRegistered = await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+M"));
+  if (!mailHotkeyRegistered) console.log("Global mail hotkey is already owned by another application.");
   const folders = await page.evaluate(async () => window.hushnote.folders.list());
   if (!folders.some((folder) => folder.name === "Inbox")) throw new Error("Inbox folder missing.");
   await page.getByRole("button", { name: "New notebook" }).click();
@@ -74,6 +79,15 @@ try {
   await page.waitForTimeout(500);
   const savedTaskBody = await page.evaluate(async () => (await window.hushnote.notes.list()).find((note) => note.title === "Overlay smoke test")?.body);
   if (!savedTaskBody?.includes("- [x] Verify checklist")) throw new Error("Interactive Markdown checklist did not save.");
+  await page.getByRole("button", { name: "Daily", exact: true }).click();
+  await page.getByRole("textbox", { name: "Today task", exact: true }).fill("Ship the daily flow");
+  await page.getByRole("button", { name: "Add today task" }).click();
+  await page.getByLabel("Complete Ship the daily flow").click();
+  await page.getByRole("textbox", { name: "Tomorrow task", exact: true }).fill("Review the next priority");
+  await page.getByRole("button", { name: "Add tomorrow task" }).click();
+  const daily = await page.evaluate(() => window.hushnote.daily.get());
+  if (!daily.done.some((task) => task.text === "Ship the daily flow") || !daily.tomorrow.some((task) => task.text === "Review the next priority")) throw new Error("Daily today/done/tomorrow workflow did not save.");
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
   await page.getByRole("button", { name: "Back to note", exact: true }).click();
   await page.waitForTimeout(200);
   await page.getByRole("button", { name: "More note actions" }).click();
@@ -84,14 +98,15 @@ try {
   await page.getByRole("button", { name: "Back up now" }).click();
   await page.getByText("Backup created.", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Close backups" }).click();
-  await page.getByRole("button", { name: "Skills" }).click();
+  await page.getByRole("button", { name: "More pages", exact: true }).click();
+  await page.getByRole("button", { name: "Skills", exact: true }).click();
   await page.getByRole("button", { name: "New skill" }).click();
   await page.getByLabel("Skill name").fill("Terminal helper");
   await page.getByLabel("Skill category").fill("Automation");
   await page.getByLabel("Skill notes").fill("Run this command safely.");
   await page.waitForTimeout(900);
   await page.getByText("Saved", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Copy" }).click();
+  await page.getByRole("button", { name: "Copy", exact: true }).click();
   await page.getByText("Copied", { exact: true }).waitFor();
   await page.getByLabel("Find a skill").fill("Terminal");
   await page.getByText("Terminal helper", { exact: true }).waitFor();
@@ -99,7 +114,8 @@ try {
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByText(/No skills found/).waitFor();
-  await page.getByRole("button", { name: "Slash commands" }).click();
+  await page.getByRole("button", { name: "More pages", exact: true }).click();
+  await page.getByRole("button", { name: "Slash commands", exact: true }).click();
   await page.getByText("Git push", { exact: true }).waitFor();
   await page.getByText("Markdown, skills, and slash commands", { exact: true }).waitFor();
   await page.getByRole("button", { name: "New slash command" }).click();
@@ -108,13 +124,30 @@ try {
   await page.getByLabel("Slash command notes").fill("Publish the current preview without extra checks.");
   await page.waitForTimeout(900);
   await page.getByText("Saved", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Copy" }).click();
+  await page.getByRole("button", { name: "Copy", exact: true }).click();
   await page.getByText("Copied", { exact: true }).waitFor();
   await page.getByLabel("Find a slash command").fill("Deploy preview");
   await page.getByText("Deploy preview", { exact: true }).waitFor();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByText(/No slash items found/).waitFor();
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Notebook" }).waitFor();
+  let mailLoaded = false;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    mailLoaded = await app.evaluate(({ webContents }, expectedUrl) => webContents.getAllWebContents().some((contents) => {
+      const url = contents.getURL();
+      if (expectedUrl) return url === expectedUrl;
+      try { return ["mail.google.com", "accounts.google.com"].includes(new URL(url).hostname); }
+      catch { return false; }
+    }), packagedExecutable ? null : `http://127.0.0.1:${port}/mail`);
+    if (mailLoaded) break;
+    await page.waitForTimeout(100);
+  }
+  if (!mailLoaded) throw new Error("Embedded Gmail view did not load.");
+  await page.getByRole("button", { name: "Reload Gmail" }).click();
+  await page.getByRole("button", { name: "Back to Notebook" }).click();
+  await page.getByRole("button", { name: "Notes", exact: true }).waitFor();
   await page.getByRole("button", { name: "Notes" }).click();
   const draggedFile = await page.evaluate(() => window.hushnote.notes.dragFile({ id: "terminal-drop", title: "terminal drop", body: "echo hello\n\n- [ ] verify it" }));
   if (!draggedFile.endsWith("terminal drop.md")) throw new Error(`Drag-out Markdown filename was not clean: ${draggedFile}`);
@@ -133,7 +166,7 @@ try {
   await page.getByLabel("Compressed note").waitFor({ timeout: 90000 });
   const result = await page.getByLabel("Compressed note").inputValue();
   if (!result.trim()) throw new Error("Compressor returned an empty result.");
-  console.log("Electron Markdown notes, notebooks, checklists, skills, slash commands, and compressor smoke test passed.");
+  console.log("Electron notes, daily planning, notebooks, checklists, skills, slash commands, Gmail view, and compressor smoke test passed.");
 } finally {
   await app.evaluate(({ app }) => app.quit()).catch(() => {});
   await app.close().catch(() => {});

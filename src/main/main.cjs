@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, dialog, nativeImage, screen, clipboard, powerMonitor } = require("electron");
+const { app, BrowserWindow, WebContentsView, Tray, Menu, globalShortcut, ipcMain, dialog, nativeImage, screen, clipboard, powerMonitor, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -6,18 +6,21 @@ const { z } = require("zod");
 const { createStorage } = require("./storage.cjs");
 const { validBounds, boundsForDisplay } = require("./window-bounds.cjs");
 const { createHotkeyManager } = require("./hotkey-manager.cjs");
+const { DEFAULT_MAIL_URL, createMailViewController } = require("./mail-view.cjs");
 const { syncStartAtLogin } = require("./startup.cjs");
 
 const DEFAULT_SETTINGS = { hotkey: "Control+Alt+Shift+N", startAtLogin: true, compressorDir: "C:\\Code\\llmlingua-local" };
 const FALLBACK_HOTKEYS = ["Control+Alt+N"];
+const MAIL_HOTKEY = "Control+Alt+Shift+M";
 const RETIRED_HOTKEYS = new Set(["Control+Shift+Space", "Control+Alt+N", "F8"]);
 const COMPRESSOR_URL = process.env.NOTEBOOK_COMPRESSOR_URL || "http://127.0.0.1:8787";
 const noteInput = z.object({ title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional(), folderId: z.string().max(120).optional(), pinned: z.boolean().optional(), archived: z.boolean().optional() });
 const skillInput = z.object({ name: z.string().max(240).optional(), category: z.string().max(80).optional(), body: z.string().max(2_000_000).optional() });
 const slashCommandInput = z.object({ name: z.string().max(240).optional(), command: z.string().max(1_000).optional(), body: z.string().max(2_000_000).optional() });
+const dailyTaskInput = z.object({ text: z.string().trim().min(1).max(500), bucket: z.enum(["today", "tomorrow"]), completed: z.boolean().optional() });
 const dragNoteInput = z.object({ id: z.string().max(120).optional(), title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional() });
 const compressionInput = z.object({ noteId: z.string().nullable().optional(), sourceText: z.string().min(1).max(2_000_000), compressedText: z.string().min(1).max(2_000_000), preset: z.string().max(40), rate: z.number().min(0.1).max(1), originTokens: z.number().optional(), compressedTokens: z.number().optional(), ratio: z.string().optional() });
-let overlay; let tray; let store; let boundsTimer; let hideTimer; let hotkeys;
+let overlay; let tray; let store; let boundsTimer; let hideTimer; let hotkeys; let mailHotkeys; let mailView; let quitFlushed = false;
 const isPrimaryInstance = app.requestSingleInstanceLock();
 const openedInBackground = process.argv.includes("--background");
 
@@ -33,6 +36,14 @@ function persistWindowBounds() {
   store.setSetting("windowBoundsByDisplay", { ...savedBoundsByDisplay(), [display.id]: bounds });
 }
 function scheduleBoundsSave() { clearTimeout(boundsTimer); boundsTimer = setTimeout(persistWindowBounds, 220); }
+function restoreNormalWindowState() {
+  if (!overlay || overlay.isDestroyed()) return false;
+  let restored = false;
+  if (overlay.isFullScreen()) { overlay.setFullScreen(false); restored = true; }
+  if (overlay.isMaximized()) { overlay.unmaximize(); restored = true; }
+  if (overlay.isMinimized()) { overlay.restore(); restored = true; }
+  return restored;
+}
 function moveOverlayToCursorDisplay() {
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const saved = savedBoundsByDisplay()[display.id];
@@ -41,6 +52,7 @@ function moveOverlayToCursorDisplay() {
 function showOverlay(newNote = false) {
   if (!overlay || overlay.isDestroyed()) { createOverlay(true, newNote); return; }
   clearTimeout(hideTimer);
+  restoreNormalWindowState();
   moveOverlayToCursorDisplay();
   overlay.show(); overlay.focus(); overlay.webContents.send("overlay:focus-editor"); overlay.webContents.send("overlay:shown");
   if (newNote) overlay.webContents.send("overlay:new-inbox");
@@ -53,14 +65,23 @@ function hideOverlay() {
   hideTimer = setTimeout(() => { overlay?.hide(); overlay?.blur(); }, 130);
 }
 function toggleOverlay() { if (overlay?.isVisible()) hideOverlay(); else showOverlay(false); }
+function toggleMailOverlay() {
+  if (overlay?.isVisible() && mailView?.isActive()) { hideOverlay(); return; }
+  showOverlay(false);
+  const openMail = () => overlay?.webContents.send("overlay:open-mail");
+  if (overlay?.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", openMail);
+  else openMail();
+}
 function readableHotkey(hotkey) { return hotkey ? hotkey.replaceAll("Control", "Ctrl").replaceAll("+", " + ") : "Unavailable"; }
 function refreshTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: `Shortcut: ${readableHotkey(hotkeys?.getActive())}`, enabled: false },
+    { label: `Notebook: ${readableHotkey(hotkeys?.getActive())}`, enabled: false },
+    { label: `Mail: ${readableHotkey(mailHotkeys?.getActive())}`, enabled: false },
     { type: "separator" },
     { label: "New Inbox note", click: () => showOverlay(true) },
     { label: "Show Notebook", click: () => showOverlay(false) },
+    { label: "Open Gmail", click: toggleMailOverlay },
     { type: "separator" },
     { label: "Quit", click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -74,8 +95,14 @@ function createDragFile(input) {
   const safeTitle = (title || "notebook-note").replace(/[<>:"/\\|?*\x00-\x1F]/g, " ").replace(/\s+/g, " ").trim().slice(0, 72).replace(/[. ]+$/g, "") || "notebook-note";
   const dropDir = path.join(app.getPath("userData"), "Markdown Notes");
   fs.mkdirSync(dropDir, { recursive: true });
-  const filePath = path.join(dropDir, `${safeTitle}.md`);
-  fs.writeFileSync(filePath, `${content}\n`, "utf8");
+  const desired = `${content}\n`;
+  let filePath = path.join(dropDir, `${safeTitle}.md`);
+  if (fs.existsSync(filePath) && fs.readFileSync(filePath, "utf8") !== desired) {
+    let counter = 2;
+    while (fs.existsSync(path.join(dropDir, `${safeTitle} (${counter}).md`))) counter += 1;
+    filePath = path.join(dropDir, `${safeTitle} (${counter}).md`);
+  }
+  fs.writeFileSync(filePath, desired, "utf8");
   return filePath;
 }
 function cleanTextDragHelper() {
@@ -104,9 +131,9 @@ function createOverlay(showWhenReady = !openedInBackground, newNoteWhenReady = f
   overlay.webContents.on("render-process-gone", (_event, details) => console.error(`Notebook renderer ended: ${details.reason}`));
   overlay.loadFile(path.join(__dirname, "../../dist/renderer/index.html"));
   overlay.once("ready-to-show", () => { if (showWhenReady) showOverlay(newNoteWhenReady); });
-  overlay.on("resize", scheduleBoundsSave); overlay.on("move", scheduleBoundsSave);
+  overlay.on("resize", () => { scheduleBoundsSave(); mailView?.resize(); }); overlay.on("move", scheduleBoundsSave);
   overlay.on("close", (event) => { if (!app.isQuitting) { event.preventDefault(); hideOverlay(); } });
-  overlay.on("closed", () => { overlay = null; });
+  overlay.on("closed", () => { mailView?.destroy(); mailView = null; overlay = null; });
 }
 function repairStartAtLogin() {
   try {
@@ -141,6 +168,14 @@ app.whenReady().then(() => {
   const savedSettings = store.getSetting("app", {});
   if (!savedSettings.hotkey || RETIRED_HOTKEYS.has(savedSettings.hotkey)) store.setSetting("app", { ...savedSettings, hotkey: DEFAULT_SETTINGS.hotkey });
   createOverlay();
+  mailView = createMailViewController({
+    WebContentsView,
+    parentWindow: overlay,
+    shell,
+    devTools: !app.isPackaged,
+    mailUrl: !app.isPackaged && process.env.NOTEBOOK_MAIL_URL ? process.env.NOTEBOOK_MAIL_URL : DEFAULT_MAIL_URL,
+    emitStatus: (status) => overlay?.webContents.send("mail:status", status),
+  });
   hotkeys = createHotkeyManager({
     globalShortcut,
     onTriggered: toggleOverlay,
@@ -152,9 +187,18 @@ app.whenReady().then(() => {
     },
   });
   hotkeys.start(settings().hotkey);
+  mailHotkeys = createHotkeyManager({
+    globalShortcut,
+    onTriggered: toggleMailOverlay,
+    onChange: (active) => {
+      refreshTrayMenu();
+      if (!active) console.error(`Notebook mail shortcut ${MAIL_HOTKEY} is unavailable.`);
+    },
+  });
+  mailHotkeys.start(MAIL_HOTKEY);
   createTray();
-  const hotkeyRepairInterval = setInterval(() => hotkeys.repair(), 15_000); hotkeyRepairInterval.unref();
-  const repairAfterWake = () => setTimeout(() => hotkeys?.repair(), 1_000);
+  const hotkeyRepairInterval = setInterval(() => { hotkeys.repair(); mailHotkeys.repair(); }, 15_000); hotkeyRepairInterval.unref();
+  const repairAfterWake = () => setTimeout(() => { hotkeys?.repair(); mailHotkeys?.repair(); }, 1_000);
   powerMonitor.on("resume", repairAfterWake); powerMonitor.on("unlock-screen", repairAfterWake);
   repairStartAtLogin();
   const startupRepairInterval = setInterval(repairStartAtLogin, 10 * 60 * 1000); startupRepairInterval.unref();
@@ -175,6 +219,11 @@ app.whenReady().then(() => {
   ipcMain.handle("slash-commands:create", (_event, input) => store.createSlashCommand(slashCommandInput.partial().parse(input || {})));
   ipcMain.handle("slash-commands:update", (_event, id, input) => store.updateSlashCommand(z.string().parse(id), slashCommandInput.parse(input)));
   ipcMain.handle("slash-commands:remove", (_event, id) => store.deleteSlashCommand(z.string().parse(id)));
+  ipcMain.handle("daily:get", () => store.dailyDashboard());
+  ipcMain.handle("daily:create", (_event, input) => store.createDailyTask(dailyTaskInput.parse(input)));
+  ipcMain.handle("daily:update", (_event, id, text) => store.updateDailyTask(z.string().parse(id), z.string().trim().min(1).max(500).parse(text)));
+  ipcMain.handle("daily:complete", (_event, id, completed) => store.completeDailyTask(z.string().parse(id), z.boolean().parse(completed)));
+  ipcMain.handle("daily:remove", (_event, id) => store.deleteDailyTask(z.string().parse(id)));
   ipcMain.handle("folders:list", () => store.listFolders());
   ipcMain.handle("folders:create", (_event, name) => store.createFolder(z.string().max(80).parse(name)));
   ipcMain.handle("folders:rename", (_event, id, name) => store.renameFolder(z.string().parse(id), z.string().min(1).max(80).parse(name)));
@@ -204,9 +253,16 @@ app.whenReady().then(() => {
     const data = store.exportData();
     if (isMarkdown) {
       const notes = data.notes.filter((note) => !note.deleted_at).map((note) => `# ${note.title || "Untitled"}\n\n${note.body}\n\n---\n`);
+      const dailyByDate = new Map();
+      for (const task of data.dailyTasks.filter((item) => item.status !== "carried")) {
+        const date = task.completed_on || task.task_date;
+        if (!dailyByDate.has(date)) dailyByDate.set(date, []);
+        dailyByDate.get(date).push(`- [${task.status === "done" ? "x" : " "}] ${task.text}`);
+      }
+      const daily = [...dailyByDate.entries()].sort(([left], [right]) => right.localeCompare(left)).map(([date, tasks]) => `# Daily: ${date}\n\n${tasks.join("\n")}\n\n---\n`);
       const skills = data.skills.map((skill) => `# Skill: ${skill.name || "Untitled skill"}\n\nCategory: ${skill.category || "Unsorted"}\n\n${skill.body}\n\n---\n`);
       const slashCommands = data.slashCommands.map((item) => `# Slash command: ${item.name || "Untitled command"}\n\n${item.command ? `Command: ${item.command}\n\n` : ""}${item.body}\n\n---\n`);
-      fs.writeFileSync(filePath, [...notes, ...skills, ...slashCommands].join("\n"), "utf8");
+      fs.writeFileSync(filePath, [...daily, ...notes, ...skills, ...slashCommands].join("\n"), "utf8");
     } else {
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
     }
@@ -215,14 +271,23 @@ app.whenReady().then(() => {
   ipcMain.handle("data:import", async () => {
     const { filePaths, canceled } = await dialog.showOpenDialog({ title: "Import Notebook JSON", filters: [{ name: "JSON", extensions: ["json"] }], properties: ["openFile"] });
     if (canceled || !filePaths[0]) return { canceled: true };
-    const notes = store.importData(JSON.parse(fs.readFileSync(filePaths[0], "utf8")));
-    return { notes };
+    let data;
+    try { data = JSON.parse(fs.readFileSync(filePaths[0], "utf8")); }
+    catch { throw new Error("That file is not valid JSON."); }
+    return { notes: store.importData(data) };
   });
   ipcMain.handle("backups:list", () => store.listBackups());
   ipcMain.handle("backups:create", () => store.createBackup());
   ipcMain.handle("backups:restore", (_event, name) => { store.createBackup(); return store.restoreBackup(z.string().max(180).parse(name)); });
   ipcMain.handle("data:location", () => store.userDataPath);
   ipcMain.handle("clipboard:write-text", (_event, text) => { clipboard.writeText(z.string().max(2_000_000).parse(text)); });
+  ipcMain.handle("mail:show", () => {
+    if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
+    return mailView.show();
+  });
+  ipcMain.handle("mail:hide", () => mailView.hide());
+  ipcMain.handle("mail:reload", () => mailView.reload());
+  ipcMain.handle("mail:open-external", () => mailView.openExternal());
   ipcMain.handle("compressor:status", compressorStatus);
   ipcMain.handle("compressor:start", startCompressor);
   ipcMain.handle("compressor:compress", async (_event, text, rate) => {
@@ -236,7 +301,16 @@ app.whenReady().then(() => {
   ipcMain.handle("window:hide", hideOverlay);
   ipcMain.handle("window:new-note", () => showOverlay(true));
 });
-app.on("before-quit", () => { app.isQuitting = true; persistWindowBounds(); });
-app.on("will-quit", () => hotkeys?.stop());
+app.on("before-quit", (event) => {
+  app.isQuitting = true;
+  persistWindowBounds();
+  if (!quitFlushed && overlay && !overlay.isDestroyed()) {
+    event.preventDefault();
+    overlay.webContents.send("overlay:flush-editor");
+    quitFlushed = true;
+    setTimeout(() => app.quit(), 400);
+  }
+});
+app.on("will-quit", () => { hotkeys?.stop(); mailHotkeys?.stop(); mailView?.destroy(); });
 app.on("window-all-closed", () => {});
 app.on("activate", () => showOverlay(false));

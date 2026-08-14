@@ -1,6 +1,6 @@
 {
   "name": "note-overlay",
-  "version": "0.7.6",
+  "version": "0.7.8",
   "private": true,
   "description": "A local always-saving notebook with an optional local prompt compressor.",
   "author": "Local Notebook",
@@ -14,12 +14,14 @@
     "shot": "node scripts/shot.mjs",
     "test:bounds": "node scripts/window-bounds-test.cjs",
     "test:hotkey": "node scripts/hotkey-test.cjs",
+    "test:mail": "node scripts/mail-view-test.cjs",
+    "test:mail-window": "npm run build && node scripts/mail-window-state-test.mjs",
     "test:startup": "node scripts/startup-test.cjs",
     "test:storage": "set ELECTRON_RUN_AS_NODE=1&& electron scripts/storage-test.cjs",
     "test:drag": "npm run build:drag-helper && node scripts/drag-test.mjs",
     "test:drag-live": "npm run build:drag-helper && npm run build && node scripts/clean-drag-live-test.mjs",
     "test:app": "npm run build && node scripts/app-test.mjs",
-    "test": "npm run test:storage && npm run test:bounds && npm run test:hotkey && npm run test:startup && npm run test:drag && npm run test:app",
+    "test": "npm run test:storage && npm run test:bounds && npm run test:hotkey && npm run test:mail && npm run test:mail-window && npm run test:startup && npm run test:drag && npm run test:app",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "pack": "npm run build:drag-helper && npm run icon && npm run build && electron-builder --win nsis --publish never",
     "pack:release": "npm run build:drag-helper && npm run icon && npm run build && electron-builder --win nsis --publish never --config.win.forceCodeSigning=true",
@@ -44,7 +46,7 @@
     "appId": "com.notebook.local",
     "productName": "Notebook",
     "directories": {
-      "output": "release-v18"
+      "output": "release-v20"
     },
     "electronDist": "release-v03/win-unpacked.tmp",
     "files": [

@@ -14,6 +14,39 @@ const mockSlashCommands = [
   { id: "starter-command-guide", name: "Markdown, skills, and slash commands", command: "", body: "## Markdown (`.md`)\nA text-file format. It can hold instructions but is not automatically a command.\n\n## Custom prompt\nA Markdown file in `.codex/prompts`. `gitpush.md` becomes `/prompts:gitpush`.\n\n## Skill\nA folder containing `SKILL.md` and optional scripts. Invoke it with `$name`.\n\n## Slash command\nA `/` command parsed by Codex. Built-ins use top-level names; custom prompts use `/prompts:<name>`.\n\n## Script\nThe executable that performs deterministic work after a prompt or skill invokes it.", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ];
 const mockFolders = [{ id: "inbox", name: "Inbox", is_inbox: true, note_count: 0 }];
+function dateKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function moveDate(value, days) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return dateKey(date);
+}
+const mockDailyDate = dateKey();
+const mockDailyTasks = new URLSearchParams(location.search).get("daily") === "demo" ? [
+  { id: "daily-carried", task_date: mockDailyDate, text: "Finish the onboarding flow", status: "open", carried_from_id: "yesterday-task", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: "daily-done", task_date: mockDailyDate, text: "Review yesterday's notes", status: "done", completed_on: mockDailyDate, completed_at: new Date().toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: "daily-tomorrow", task_date: moveDate(mockDailyDate, 1), text: "Prepare the launch checklist", status: "open", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+] : [];
+function mockDailyDashboard() {
+  const tomorrow = moveDate(mockDailyDate, 1);
+  const hydrate = (task) => ({ ...task, carried: Boolean(task.carried_from_id) });
+  const history = Array.from({ length: 7 }, (_value, offset) => {
+    const date = moveDate(mockDailyDate, -offset);
+    return { date, completed: mockDailyTasks.filter((task) => task.status === "done" && task.completed_on === date).length };
+  });
+  const today = mockDailyTasks.filter((task) => task.task_date === mockDailyDate && task.status === "open").map(hydrate);
+  return {
+    date: mockDailyDate,
+    tomorrowDate: tomorrow,
+    today,
+    done: mockDailyTasks.filter((task) => task.status === "done" && task.completed_on === mockDailyDate).map(hydrate),
+    tomorrow: mockDailyTasks.filter((task) => task.task_date === tomorrow && task.status === "open").map(hydrate),
+    history,
+    carriedCount: today.filter((task) => task.carried).length,
+  };
+}
 const mockApi = {
   notes: {
     list: async () => mockNotes.filter((note) => !note.deleted_at).map((note) => ({ ...note })),
@@ -88,6 +121,38 @@ const mockApi = {
       if (index >= 0) mockSlashCommands.splice(index, 1);
     },
   },
+  daily: {
+    get: async () => {
+      const state = new URLSearchParams(location.search).get("daily");
+      if (state === "error") throw new Error("Daily preview error");
+      if (state === "loading") return new Promise(() => {});
+      return mockDailyDashboard();
+    },
+    create: async (input) => {
+      const completed = Boolean(input.completed) && input.bucket !== "tomorrow";
+      const timestamp = new Date().toISOString();
+      mockDailyTasks.push({ id: crypto.randomUUID(), task_date: input.bucket === "tomorrow" ? moveDate(mockDailyDate, 1) : mockDailyDate, text: input.text.trim(), status: completed ? "done" : "open", completed_on: completed ? mockDailyDate : null, completed_at: completed ? timestamp : null, created_at: timestamp, updated_at: timestamp });
+      return mockDailyDashboard();
+    },
+    update: async (id, text) => {
+      const task = mockDailyTasks.find((item) => item.id === id);
+      task.text = text.trim(); task.updated_at = new Date().toISOString();
+      return mockDailyDashboard();
+    },
+    complete: async (id, completed) => {
+      const task = mockDailyTasks.find((item) => item.id === id);
+      task.status = completed ? "done" : "open";
+      task.task_date = mockDailyDate;
+      task.completed_on = completed ? mockDailyDate : null;
+      task.completed_at = completed ? new Date().toISOString() : null;
+      return mockDailyDashboard();
+    },
+    remove: async (id) => {
+      const index = mockDailyTasks.findIndex((item) => item.id === id);
+      if (index >= 0) mockDailyTasks.splice(index, 1);
+      return mockDailyDashboard();
+    },
+  },
   folders: {
     list: async () => mockFolders.map((folder) => ({
       ...folder,
@@ -128,17 +193,30 @@ const mockApi = {
     restore: async () => mockNotes.map((note) => ({ ...note })),
   },
   settings: {
-    version: async () => "0.7.6",
+    version: async () => "0.7.8",
     export: async () => ({ filePath: "C:\\Temp\\notebook-backup.json" }),
     dataLocation: async () => "C:\\Notebook data",
   },
   clipboard: { writeText: async (text) => navigator.clipboard.writeText(text) },
+  mail: {
+    show: async () => {
+      const state = new URLSearchParams(location.search).get("mail");
+      if (state === "error") return { status: "error", message: "Google blocked the embedded sign-in in this preview." };
+      if (state === "loading") return { status: "loading", message: "" };
+      return { status: "ready", message: "" };
+    },
+    hide: async () => ({ status: "ready" }),
+    reload: async () => ({ status: "loading" }),
+    openExternal: async () => true,
+  },
   window: { hide: async () => {} },
   onNewInboxNote: () => {},
   onFocusEditor: () => {},
   onFlushEditor: () => {},
   onOverlayHiding: () => {},
   onOverlayShown: () => {},
+  onOpenMail: () => () => {},
+  onMailStatus: () => () => {},
 };
 const api = window.hushnote || mockApi;
 
@@ -153,6 +231,11 @@ function noteName(note) {
 
 function skillName(skill) {
   return skill.name?.trim() || preview({ body: skill.body }).slice(0, 42) || "Untitled skill";
+}
+
+function skillPreview(skill) {
+  const text = (skill.body || "").split("\n").map((line) => line.replace(/^#{1,6}\s+/, "").trim()).filter(Boolean).join(" ");
+  return text || "No instructions yet";
 }
 
 function slashCommandName(item) {
@@ -174,6 +257,56 @@ function SlashCommandList({ items, currentId, onSelect, onRemove }) {
       </div>)}
     </section>)}
   </div>;
+}
+
+function SkillList({ items, currentId, onSelect, onRemove, grouped }) {
+  if (!items.length) return <div className="notes"><p className="empty-list">No skills found.<br />Use + to save one.</p></div>;
+  const groups = grouped
+    ? [...new Set(items.map((skill) => skill.category?.trim() || "Unsorted"))].sort((left, right) => left.localeCompare(right)).map((category) => ({ label: category, items: items.filter((skill) => (skill.category?.trim() || "Unsorted") === category) }))
+    : [{ label: "", items }];
+  return <div className="notes skill-list" aria-live="polite">
+    {groups.map((group) => <section className="slash-group" key={group.label || "all"}>
+      {group.label ? <div className="slash-group-label"><span>{group.label}</span><small>{group.items.length}</small></div> : null}
+      {group.items.map((skill) => <div className={`note-row ${currentId === skill.id ? "selected" : ""}`} key={skill.id}>
+        <button className="note-open" onClick={() => onSelect(skill)}><strong>{skillName(skill)}</strong><span>{skillPreview(skill)}</span><small>{shortTime(skill.updated_at)}</small></button>
+        <button className="note-delete" aria-label={`Delete ${skillName(skill)}`} onClick={() => onRemove(skill)}>×</button>
+      </div>)}
+    </section>)}
+  </div>;
+}
+
+function CategoryFilters({ categories, active, onSelect }) {
+  const scroller = useRef(null);
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+
+  const refresh = () => {
+    const element = scroller.current;
+    if (!element) return;
+    setOverflow({ left: element.scrollLeft > 1, right: element.scrollLeft + element.clientWidth < element.scrollWidth - 1 });
+  };
+
+  useEffect(() => {
+    refresh();
+    const element = scroller.current;
+    if (!element) return;
+    element.addEventListener("scroll", refresh, { passive: true });
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(refresh) : null;
+    observer?.observe(element);
+    window.addEventListener("resize", refresh);
+    return () => { element.removeEventListener("scroll", refresh); observer?.disconnect(); window.removeEventListener("resize", refresh); };
+  }, [categories]);
+
+  const nudge = (direction) => scroller.current?.scrollBy({ left: direction * 140, behavior: "smooth" });
+
+  return (
+    <div className="category-filters" aria-label="Skill categories">
+      {overflow.left && <button type="button" className="category-arrow" onClick={() => nudge(-1)} aria-label="Scroll categories back">‹</button>}
+      <div className="category-scroller" ref={scroller} onWheel={(event) => { if (event.deltaY) scroller.current.scrollLeft += event.deltaY; }}>
+        {categories.map((category) => <button key={category} className={active === category ? "active" : ""} onClick={() => onSelect(category)}>{category}</button>)}
+      </div>
+      {overflow.right && <button type="button" className="category-arrow" onClick={() => nudge(1)} aria-label="Scroll categories forward">›</button>}
+    </div>
+  );
 }
 
 function shortTime(value) {
@@ -202,6 +335,89 @@ function todoItems(body = "") {
   }).filter(Boolean);
 }
 
+function dailyDate(value, options = {}) {
+  return new Date(`${value}T12:00:00`).toLocaleDateString([], { weekday: options.short ? "short" : "long", month: options.short ? undefined : "long", day: "numeric" });
+}
+
+function DailySidebar({ daily, status }) {
+  if (!daily) return <div className="daily-sidebar"><p className="empty-list">{status}</p></div>;
+  return <div className="daily-sidebar">
+    <section className="daily-routine-card">
+      <span className="daily-kicker">Daily loop</span>
+      <strong>Keep the chain moving.</strong>
+      <p>Open work rolls into the next day. Completed work stays in your history.</p>
+      <div className="routine-step"><span>Morning</span><b>{daily.carriedCount ? `${daily.carriedCount} carried` : "Reviewed"}</b></div>
+      <div className="routine-step"><span>Evening</span><b>{daily.tomorrow.length ? `${daily.tomorrow.length} ready` : "Plan next"}</b></div>
+    </section>
+    <section className="daily-history" aria-label="Seven day completion history">
+      <span className="daily-kicker">Last 7 days</span>
+      {daily.history.map((day) => <div key={day.date}><span>{day.date === daily.date ? "Today" : dailyDate(day.date, { short: true })}</span><b>{day.completed}</b></div>)}
+    </section>
+  </div>;
+}
+
+function DailyAddForm({ label, placeholder, onAdd }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(event) {
+    event.preventDefault();
+    if (!value.trim() || busy) return;
+    setBusy(true);
+    const saved = await onAdd(value.trim());
+    if (saved) setValue("");
+    setBusy(false);
+  }
+  return <form className="daily-add" onSubmit={submit}>
+    <input value={value} onChange={(event) => setValue(event.target.value)} placeholder={placeholder} aria-label={label} maxLength={500} />
+    <button type="submit" disabled={!value.trim() || busy} aria-label={`Add ${label.toLowerCase()}`}>+</button>
+  </form>;
+}
+
+function DailyTaskRow({ task, completed = false, checkable = true, onToggle, onLocalEdit, onSave, onRemove }) {
+  return <div className={`daily-task ${completed ? "is-done" : ""}`}>
+    {checkable ? <input type="checkbox" checked={completed} onChange={(event) => onToggle(task.id, event.target.checked)} aria-label={`${completed ? "Reopen" : "Complete"} ${task.text}`} /> : <span className="daily-task-marker" aria-hidden="true">○</span>}
+    <div className="daily-task-copy">
+      <textarea rows="1" value={task.text} onChange={(event) => onLocalEdit(task.id, event.target.value)} onBlur={() => onSave(task)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} aria-label={`Edit task: ${task.text}`} maxLength={500} />
+      {task.carried && !completed ? <small>Carried forward</small> : null}
+    </div>
+    <button className="daily-task-remove" onClick={() => onRemove(task.id)} aria-label={`Delete ${task.text}`}>×</button>
+  </div>;
+}
+
+function DailyPlanner({ daily, status, onAdd, onToggle, onLocalEdit, onSave, onRemove, onHide, onRetry }) {
+  const failed = status.startsWith("Could not");
+  if (!daily) return <section className="editor daily-editor"><header className="editor-bar"><div className="editor-context"><span className={`save-state ${failed ? "failed" : ""}`}>{status}</span></div><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></header><div className="daily-loading"><strong>{failed ? "Daily plan unavailable" : "Opening today…"}</strong><span>{failed ? "Your notes are safe. Try loading the daily plan again." : "Checking yesterday and preparing today."}</span>{failed && <button className="plain-button" onClick={onRetry}>Try again</button>}</div></section>;
+  const planned = daily.today.length + daily.done.length;
+  const percent = planned ? Math.round((daily.done.length / planned) * 100) : 0;
+  const taskProps = { onToggle, onLocalEdit, onSave, onRemove };
+  return <section className="editor daily-editor">
+    <header className="editor-bar"><div className="editor-context"><span className={`save-state ${failed ? "failed" : ""}`}>{status}</span><span className="notebook-name">Daily</span></div><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></header>
+    <div className="daily-scroll">
+      <header className="daily-heading"><div><span className="daily-kicker">Today</span><h1>{dailyDate(daily.date)}</h1><p>Do today’s work. Capture wins. Set up tomorrow.</p></div><div className="daily-progress"><strong>{daily.done.length}/{planned}</strong><span>done</span><div><i style={{ width: `${percent}%` }} /></div></div></header>
+      {daily.carriedCount > 0 && <div className="daily-rollover" role="status"><span>↻</span><div><strong>Morning review complete</strong><p>{daily.carriedCount} unfinished {daily.carriedCount === 1 ? "task was" : "tasks were"} carried into today.</p></div></div>}
+      <div className="daily-columns">
+        <div className="daily-column">
+          <section className="daily-section"><header><div><h2>Today</h2><p>What needs to move now</p></div><span>{daily.today.length}</span></header>
+            <div className="daily-tasks">{daily.today.map((task) => <DailyTaskRow key={task.id} task={task} {...taskProps} />)}{!daily.today.length && <p className="daily-empty">Nothing open. Add the next useful thing.</p>}</div>
+            <DailyAddForm label="Today task" placeholder="Add something for today…" onAdd={(text) => onAdd(text, "today", false)} />
+          </section>
+          <section className="daily-section daily-done"><header><div><h2>Done today</h2><p>Your running record</p></div><span>{daily.done.length}</span></header>
+            <div className="daily-tasks">{daily.done.map((task) => <DailyTaskRow key={task.id} task={task} completed {...taskProps} />)}{!daily.done.length && <p className="daily-empty">Completed work will collect here.</p>}</div>
+            <DailyAddForm label="Completed task" placeholder="Log something you finished…" onAdd={(text) => onAdd(text, "today", true)} />
+          </section>
+        </div>
+        <div className="daily-column">
+          <section className="daily-section daily-tomorrow"><header><div><h2>Tomorrow</h2><p>{dailyDate(daily.tomorrowDate)}</p></div><span>{daily.tomorrow.length}</span></header>
+            <div className="daily-tasks">{daily.tomorrow.map((task) => <DailyTaskRow key={task.id} task={task} checkable={false} {...taskProps} />)}{!daily.tomorrow.length && <p className="daily-empty">Before you finish, leave tomorrow a clear start.</p>}</div>
+            <DailyAddForm label="Tomorrow task" placeholder="Set up tomorrow…" onAdd={(text) => onAdd(text, "tomorrow", false)} />
+          </section>
+          <aside className="daily-loop-note"><span>End-of-day reset</span><p>Review what moved, log anything missing, then choose tomorrow’s first concrete tasks. Anything still open follows you automatically.</p></aside>
+        </div>
+      </div>
+    </div>
+  </section>;
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
@@ -225,6 +441,8 @@ function App() {
   const [slashCommands, setSlashCommands] = useState([]);
   const [currentSlashCommand, setCurrentSlashCommand] = useState(null);
   const [slashCommandFilter, setSlashCommandFilter] = useState("");
+  const [daily, setDaily] = useState(null);
+  const [dailyStatus, setDailyStatus] = useState("Loading…");
   const [saveState, setSaveState] = useState("Loading…");
   const [compressOpen, setCompressOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
@@ -232,10 +450,12 @@ function App() {
   const [dataLocation, setDataLocation] = useState("");
   const [recoveryMessage, setRecoveryMessage] = useState("");
   const [closing, setClosing] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [showTick, setShowTick] = useState(0);
   const [editorMode, setEditorMode] = useState("write");
   const [notebookEditor, setNotebookEditor] = useState(null);
   const [appVersion, setAppVersion] = useState("");
+  const [mailStatus, setMailStatus] = useState({ status: "idle", message: "" });
   const saveTimer = useRef();
   const skillSaveTimer = useRef();
   const slashCommandSaveTimer = useRef();
@@ -245,6 +465,8 @@ function App() {
   const currentRef = useRef(null);
   const currentSkillRef = useRef(null);
   const currentSlashCommandRef = useRef(null);
+  const viewRef = useRef("notes");
+  const previousViewRef = useRef("notes");
 
   const load = async () => {
     const [list, savedSkills, savedSlashCommands, savedNotebooks, version] = await Promise.all([api.notes.list(), api.skills.list(), api.slashCommands.list(), api.folders.list(), api.settings.version()]);
@@ -265,22 +487,39 @@ function App() {
     if (savedSkills.length) setCurrentSkill(savedSkills[0]);
     if (savedSlashCommands.length) setCurrentSlashCommand(savedSlashCommands[0]);
     setSaveState("Saved");
+    await loadDaily();
   };
+
+  async function loadDaily() {
+    setDailyStatus("Loading…");
+    try { setDaily(await api.daily.get()); setDailyStatus("Saved"); }
+    catch { setDailyStatus("Could not load daily plan"); }
+  }
 
   useEffect(() => {
     load().catch(() => setSaveState("Could not load notes"));
     api.onNewInboxNote(() => createNote("inbox"));
     api.onFocusEditor(() => setTimeout(() => editorRef.current?.focus(), 0));
     api.onFlushEditor(() => { if (currentRef.current) saveNow(currentRef.current); if (currentSkillRef.current) saveSkillNow(currentSkillRef.current); if (currentSlashCommandRef.current) saveSlashCommandNow(currentSlashCommandRef.current); });
-    api.onOverlayHiding(() => setClosing(true));
-    api.onOverlayShown(() => { setClosing(false); setShowTick((tick) => tick + 1); });
+    api.onOverlayHiding(() => {
+      setClosing(true);
+      if (viewRef.current === "mail") {
+        api.mail.hide().catch(() => {});
+        setView(previousViewRef.current);
+      }
+    });
+    api.onOverlayShown(() => { setClosing(false); setShowTick((tick) => tick + 1); loadDaily(); });
     return () => { clearTimeout(saveTimer.current); clearTimeout(skillSaveTimer.current); clearTimeout(slashCommandSaveTimer.current); clearTimeout(noticeTimer.current); };
   }, []);
 
   useEffect(() => {
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    setOpening(true);
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      const timer = setTimeout(() => setOpening(false), 360);
+      return () => clearTimeout(timer);
+    }
     const surface = surfaceRef.current;
-    if (!surface?.animate) return;
+    if (!surface?.animate) { setOpening(false); return; }
     const animation = surface.animate(
       [
         { opacity: 0, transform: "translateY(34px) scale(0.96)" },
@@ -289,12 +528,20 @@ function App() {
       ],
       { duration: 360, easing: "cubic-bezier(0.22, 1.32, 0.36, 1)" }
     );
-    return () => animation.cancel();
+    animation.onfinish = () => setOpening(false);
+    const timer = setTimeout(() => setOpening(false), 380);
+    return () => { clearTimeout(timer); animation.cancel(); };
   }, [showTick]);
 
   useEffect(() => { currentRef.current = current; }, [current]);
   useEffect(() => { currentSkillRef.current = currentSkill; }, [currentSkill]);
   useEffect(() => { currentSlashCommandRef.current = currentSlashCommand; }, [currentSlashCommand]);
+  useEffect(() => { viewRef.current = view; if (view !== "mail") previousViewRef.current = view; }, [view]);
+  useEffect(() => {
+    const stopOpen = api.onOpenMail?.(() => openMail());
+    const stopStatus = api.onMailStatus?.((next) => setMailStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Gmail returned an invalid status." }));
+    return () => { stopOpen?.(); stopStatus?.(); };
+  }, []);
   useEffect(() => {
     const closeMenus = (event) => document.querySelectorAll("details[open]").forEach((details) => { if (!details.contains(event.target)) details.open = false; });
     const closeOnEscape = (event) => { if (event.key === "Escape") document.querySelectorAll("details[open]").forEach((details) => { details.open = false; }); };
@@ -332,6 +579,44 @@ function App() {
       setCurrentSlashCommand(item);
       setSaveState("Saved");
     } catch { setSaveState("Could not create command"); }
+  }
+
+  async function runDailyAction(action) {
+    setDailyStatus("Saving…");
+    try {
+      setDaily(await action());
+      setDailyStatus("Saved");
+      return true;
+    } catch {
+      try { setDaily(await api.daily.get()); } catch { /* Keep the last visible state. */ }
+      setDailyStatus("Could not save daily plan");
+      return false;
+    }
+  }
+
+  function addDailyTask(text, bucket, completed) {
+    return runDailyAction(() => api.daily.create({ text, bucket, completed }));
+  }
+
+  function toggleDailyTask(id, completed) {
+    return runDailyAction(() => api.daily.complete(id, completed));
+  }
+
+  function editDailyTaskLocal(id, text) {
+    setDaily((value) => value ? {
+      ...value,
+      today: value.today.map((task) => task.id === id ? { ...task, text } : task),
+      done: value.done.map((task) => task.id === id ? { ...task, text } : task),
+      tomorrow: value.tomorrow.map((task) => task.id === id ? { ...task, text } : task),
+    } : value);
+  }
+
+  function saveDailyTask(task) {
+    return runDailyAction(() => api.daily.update(task.id, task.text));
+  }
+
+  function removeDailyTask(id) {
+    return runDailyAction(() => api.daily.remove(id));
   }
 
   async function saveNow(note) {
@@ -518,6 +803,7 @@ function App() {
       setNotes(restoredNotes.filter((note) => !note.deleted_at)); setCurrent(restoredNotes.find((note) => !note.deleted_at && note.folder_id === inboxId) || restoredNotes.find((note) => !note.deleted_at) || null);
       if (restoredSkills) { setSkills(restoredSkills); setCurrentSkill(restoredSkills[0] || null); }
       if (restoredSlashCommands) { setSlashCommands(restoredSlashCommands); setCurrentSlashCommand(restoredSlashCommands[0] || null); }
+      await loadDaily();
       setRecoveryMessage("Backup restored.");
     } catch { setRecoveryMessage("Could not restore that backup."); }
   }
@@ -617,6 +903,44 @@ function App() {
     edit({ body: lines.join("\n") });
   }
 
+  function flushOpenEditors() {
+    if (currentRef.current) saveNow(currentRef.current);
+    if (currentSkillRef.current) saveSkillNow(currentSkillRef.current);
+    if (currentSlashCommandRef.current) saveSlashCommandNow(currentSlashCommandRef.current);
+  }
+
+  async function openMail() {
+    flushOpenEditors();
+    if (viewRef.current !== "mail") previousViewRef.current = viewRef.current;
+    setCompressOpen(false);
+    setRecoveryOpen(false);
+    setMailStatus({ status: "loading", message: "" });
+    setView("mail");
+    try {
+      const next = await api.mail.show();
+      if (next?.status) setMailStatus(next);
+    } catch {
+      setMailStatus({ status: "error", message: "Gmail could not open." });
+    }
+  }
+
+  function selectNotebookView(nextView) {
+    setView(nextView);
+    setCompressOpen(false);
+    if (nextView === "daily") loadDaily();
+  }
+
+  async function closeMail() {
+    await api.mail.hide().catch(() => {});
+    setView(previousViewRef.current);
+  }
+
+  async function reloadMail() {
+    setMailStatus({ status: "loading", message: "" });
+    try { await api.mail.reload(); }
+    catch { setMailStatus({ status: "error", message: "Gmail could not reload." }); }
+  }
+
   const visible = notes.filter((note) => !note.deleted_at && (activeNotebookId === "all" || note.folder_id === activeNotebookId) && `${noteName(note)} ${note.body || ""}`.toLowerCase().includes(filter.toLowerCase()));
   const activeNotebook = notebooks.find((notebook) => notebook.id === activeNotebookId);
   const tasks = todoItems(current?.body);
@@ -626,10 +950,22 @@ function App() {
     return matchesSearch && (skillCategory === "All" || (skill.category?.trim() || "Unsorted") === skillCategory);
   });
   const visibleSlashCommands = slashCommands.filter((item) => `${slashCommandName(item)} ${item.command || ""} ${item.body || ""}`.toLowerCase().includes(slashCommandFilter.toLowerCase()));
-  return <div className={`window-surface ${closing ? "is-closing" : ""}`} ref={surfaceRef}><main className="notebook">
-    <aside className="note-list" aria-label={view === "notes" ? "Notes" : view === "skills" ? "Skills" : "Slash commands"}>
-      <div className="list-top"><strong>Notebook</strong><div><button className="utility" onClick={openRecovery} aria-label="Backups and settings" title="Backups and settings">···</button><button className="new-note" onClick={view === "notes" ? () => createNote() : view === "skills" ? createSkill : createSlashCommand} aria-label={view === "notes" ? "New note" : view === "skills" ? "New skill" : "New slash command"}>+</button></div></div>
-      <nav className="view-switch" aria-label="Notebook pages"><button className={view === "notes" ? "active" : ""} onClick={() => { setView("notes"); setCompressOpen(false); }}>Notes</button><button className={view === "skills" ? "active" : ""} onClick={() => { setView("skills"); setCompressOpen(false); }}>Skills</button><button className={view === "slash-commands" ? "active" : ""} onClick={() => { setView("slash-commands"); setCompressOpen(false); }} aria-label="Slash commands">Slash</button></nav>
+  if (view === "mail") return <div className={`window-surface ${closing ? "is-closing" : ""}${opening ? " is-opening" : ""}`} ref={surfaceRef}><MailScreen status={mailStatus} preview={!window.hushnote} onBack={closeMail} onReload={reloadMail} onExternal={() => api.mail.openExternal()} onHide={() => api.window.hide()} /></div>;
+  return <div className={`window-surface ${closing ? "is-closing" : ""}${opening ? " is-opening" : ""}`} ref={surfaceRef}><main className="notebook">
+    <aside className="note-list" aria-label={view === "notes" ? "Notes" : view === "daily" ? "Daily plan" : view === "skills" ? "Skills" : "Slash commands"}>
+      <div className="list-top"><strong>Notebook</strong><div><button className="utility" onClick={openRecovery} aria-label="Backups and settings" title="Backups and settings">···</button>{view !== "daily" && <button className="new-note" onClick={view === "notes" ? () => createNote() : view === "skills" ? createSkill : createSlashCommand} aria-label={view === "notes" ? "New note" : view === "skills" ? "New skill" : "New slash command"}>+</button>}</div></div>
+      <nav className="view-switch" aria-label="Notebook pages">
+        <button className={view === "notes" ? "active" : ""} onClick={() => selectNotebookView("notes")}>Notes</button>
+        <button className={view === "daily" ? "active" : ""} onClick={() => selectNotebookView("daily")}>Daily</button>
+        <button onClick={openMail} aria-label="Mail">Mail</button>
+        <details className={`page-switch-more ${view === "skills" || view === "slash-commands" ? "active" : ""}`}>
+          <summary role="button" aria-label="More pages">{view === "skills" ? "Skills" : view === "slash-commands" ? "Slash" : "More"}<span aria-hidden="true">⌄</span></summary>
+          <div className="page-switch-menu">
+            <button className={view === "skills" ? "active" : ""} onClick={(event) => { event.currentTarget.closest("details").open = false; selectNotebookView("skills"); }} aria-label="Skills"><strong>Skills</strong><small>Reusable instructions</small></button>
+            <button className={view === "slash-commands" ? "active" : ""} onClick={(event) => { event.currentTarget.closest("details").open = false; selectNotebookView("slash-commands"); }} aria-label="Slash commands"><strong>Slash</strong><small>Commands and guides</small></button>
+          </div>
+        </details>
+      </nav>
       {view === "notes" ? <>
         <div className="notebook-picker">
           <select value={activeNotebookId} onChange={(event) => openNotebook(event.target.value)} aria-label="Current notebook">
@@ -648,27 +984,20 @@ function App() {
           </div>)}
           {!visible.length && <p className="empty-list">No notes here.<br />Use + to create one.</p>}
         </div>
-      </> : view === "skills" ? <>
+      </> : view === "daily" ? <DailySidebar daily={daily} status={dailyStatus} /> : view === "skills" ? <>
         <label className="search"><span>⌕</span><input value={skillFilter} onChange={(event) => setSkillFilter(event.target.value)} placeholder="Find a skill" aria-label="Find a skill" /></label>
-        <div className="category-filters" aria-label="Skill categories">{categories.map((category) => <button key={category} className={skillCategory === category ? "active" : ""} onClick={() => setSkillCategory(category)}>{category}</button>)}</div>
-        <div className="notes" aria-live="polite">
-          {visibleSkills.map((skill) => <div className={`note-row ${currentSkill?.id === skill.id ? "selected" : ""}`} key={skill.id}>
-            <button className="note-open" onClick={() => setCurrentSkill(skill)}><strong>{skillName(skill)}</strong><span>{skill.category?.trim() || "Unsorted"} · {preview({ body: skill.body })}</span><small>{shortTime(skill.updated_at)}</small></button>
-            <button className="note-delete" aria-label={`Delete ${skillName(skill)}`} onClick={() => removeSkill(skill)}>×</button>
-          </div>)}
-          {!visibleSkills.length && <p className="empty-list">No skills found.<br />Use + to save one.</p>}
-        </div>
+        <CategoryFilters categories={categories} active={skillCategory} onSelect={setSkillCategory} />
+        <SkillList items={visibleSkills} currentId={currentSkill?.id} onSelect={setCurrentSkill} onRemove={removeSkill} grouped={skillCategory === "All"} />
       </> : <>
         <label className="search"><span>⌕</span><input value={slashCommandFilter} onChange={(event) => setSlashCommandFilter(event.target.value)} placeholder="Find in Slash" aria-label="Find a slash command" /></label>
         <SlashCommandList items={visibleSlashCommands} currentId={currentSlashCommand?.id} onSelect={setCurrentSlashCommand} onRemove={removeSlashCommand} />
       </>}
-      <p className="local-note">Local only{appVersion ? ` · v${appVersion}` : ""}</p>
     </aside>
     {view === "notes" ? <section className="editor">
       <header className="editor-bar">
         <div className="editor-context"><span className={`save-state ${saveState === "Save failed" ? "failed" : ""}`}>{saveState}</span>{current && <span className="notebook-name">{notebooks.find((notebook) => notebook.id === current.folder_id)?.name}</span>}</div>
         <div className="editor-actions">
-          <div className={`drag-action ${current && (current.body?.trim() || current.title?.trim()) ? "" : "is-disabled"}`} role="button" tabIndex="0" draggable={Boolean(current && (current.body?.trim() || current.title?.trim()))} aria-disabled={Boolean(!current || !(current.body?.trim() || current.title?.trim()))} onDragStart={dragCurrent} onDragEnd={() => showSaveNotice("Drag finished", 900)} onClick={copyDragName} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); copyDragName(); } }} title={current && (current.body?.trim() || current.title?.trim()) ? "Drag a clean Markdown filename, or click to copy it" : "Write something before dragging a Markdown file"}>⠿ Drag .md</div>
+          <button type="button" className={`drag-action ${current && (current.body?.trim() || current.title?.trim()) ? "" : "is-disabled"}`} draggable={Boolean(current && (current.body?.trim() || current.title?.trim()))} disabled={Boolean(!current || !(current.body?.trim() || current.title?.trim()))} aria-disabled={Boolean(!current || !(current.body?.trim() || current.title?.trim()))} onDragStart={dragCurrent} onDragEnd={() => showSaveNotice("Drag finished", 900)} onClick={copyDragName} title={current && (current.body?.trim() || current.title?.trim()) ? "Drag a clean Markdown filename, or click to copy it" : "Write something before dragging a Markdown file"}>⠿ Drag .md</button>
           <details className="action-menu"><summary role="button" aria-label="More note actions" title="More note actions">···</summary><div className="menu-popover editor-menu"><button onClick={(event) => { event.currentTarget.closest("details").open = false; copyCurrent(); }}>Copy Markdown</button><button onClick={(event) => { event.currentTarget.closest("details").open = false; copyDragPath(); }}>Copy .md path</button><button onClick={(event) => { event.currentTarget.closest("details").open = false; setCompressOpen((value) => !value); }}>Compress</button>{current && <label><span>Move to</span><select value={current.folder_id} onChange={(event) => { event.currentTarget.closest("details").open = false; moveCurrentTo(event.target.value); }} aria-label="Move note to notebook">{notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name}</option>)}</select></label>}</div></details>
           <button className="hide" onClick={() => api.window.hide()} aria-label="Hide notebook">×</button>
         </div>
@@ -681,10 +1010,37 @@ function App() {
           {!tasks.length && <div className="checklist-empty"><strong>No to-dos yet</strong><span>Add one and it will be stored as <code>- [ ]</code> in this Markdown note.</span><button className="plain-button" onClick={addTodo}>Add to-do</button></div>}
         </div>}
       </div> : <div className="empty-editor"><strong>{activeNotebook?.name || "This notebook"} is empty</strong><span>Create a Markdown note to get started.</span><button className="plain-button" onClick={() => createNote()}>New note</button></div>}
-    </section> : view === "skills" ? <SkillsEditor skill={currentSkill} categories={categories.slice(1)} saveState={saveState} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onHide={() => api.window.hide()} /> : <SlashCommandEditor item={currentSlashCommand} saveState={saveState} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onHide={() => api.window.hide()} />}
+    </section> : view === "daily" ? <DailyPlanner daily={daily} status={dailyStatus} onAdd={addDailyTask} onToggle={toggleDailyTask} onLocalEdit={editDailyTaskLocal} onSave={saveDailyTask} onRemove={removeDailyTask} onHide={() => api.window.hide()} onRetry={loadDaily} /> : view === "skills" ? <SkillsEditor skill={currentSkill} categories={categories.slice(1)} saveState={saveState} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onHide={() => api.window.hide()} /> : <SlashCommandEditor item={currentSlashCommand} saveState={saveState} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onHide={() => api.window.hide()} />}
     {view === "notes" && compressOpen && <Compressor note={current} onClose={() => setCompressOpen(false)} />}
-    {recoveryOpen && <Recovery backups={backups} message={recoveryMessage} dataLocation={dataLocation} onClose={() => setRecoveryOpen(false)} onBackup={makeBackup} onRestore={restoreBackup} onExport={exportNotes} />}
+    {recoveryOpen && <Recovery backups={backups} message={recoveryMessage} dataLocation={dataLocation} appVersion={appVersion} onClose={() => setRecoveryOpen(false)} onBackup={makeBackup} onRestore={restoreBackup} onExport={exportNotes} />}
   </main></div>;
+}
+
+function MailScreen({ status, preview, onBack, onReload, onExternal, onHide }) {
+  const loading = status.status === "loading" || status.status === "idle";
+  const failed = status.status === "error";
+  return <main className="mail-screen">
+    <header className="mail-toolbar">
+      <button className="mail-back" onClick={onBack} aria-label="Back to Notebook">← <span>Notebook</span></button>
+      <span className={`mail-state ${failed ? "failed" : ""}`}>{loading ? "Loading Gmail…" : failed ? "Gmail unavailable" : "Gmail"}</span>
+      <div className="mail-toolbar-actions"><button onClick={onReload} aria-label="Reload Gmail">Reload</button><button onClick={onExternal} aria-label="Open Gmail externally">Open external</button><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></div>
+    </header>
+    {failed ? <section className="mail-error"><strong>Gmail couldn’t load</strong><span>{status.message || "Check your connection. Google may also block sign-in inside embedded apps."}</span><div><button className="plain-button" onClick={onReload}>Try again</button><button className="text-action" onClick={onExternal}>Open Gmail externally</button></div></section> : preview && !loading ? <MailPreview /> : <section className="mail-underlay" aria-live="polite"><span>{loading ? "Connecting to Gmail…" : "Gmail is open."}</span></section>}
+  </main>;
+}
+
+function MailPreview() {
+  return <section className="mail-preview" aria-label="Gmail preview">
+    <div className="mail-preview-top"><strong>Gmail</strong><label><span>⌕</span><input readOnly placeholder="Search mail" aria-label="Search mail preview" /></label><span className="mail-avatar">K</span></div>
+    <div className="mail-preview-body">
+      <aside><button>＋ Compose</button><strong>Inbox <span>3</span></strong><span>Starred</span><span>Sent</span><span>Drafts</span></aside>
+      <div className="mail-inbox"><header><span>☐</span><span>↻</span><small>1–3 of 3</small></header>{[
+        ["Project Team", "Launch notes are ready", "The final review is complete and everything is ready to share.", "10:42 AM"],
+        ["Google Calendar", "Reminder: Weekly planning", "Your event starts in 30 minutes.", "9:30 AM"],
+        ["Design Updates", "New feedback on Notebook", "Two comments were added to the latest mockup.", "Yesterday"],
+      ].map(([sender, subject, excerpt, time]) => <article key={subject}><strong>{sender}</strong><div><b>{subject}</b><span> — {excerpt}</span></div><small>{time}</small></article>)}</div>
+    </div>
+  </section>;
 }
 
 function SkillsEditor({ skill, categories, saveState, onEdit, onSave, onCopy, onRemove, onHide }) {
@@ -696,6 +1052,7 @@ function SkillsEditor({ skill, categories, saveState, onEdit, onSave, onCopy, on
     </header>
     <input className="title" value={skill.name || ""} onChange={(event) => onEdit({ name: event.target.value })} placeholder="Skill name" aria-label="Skill name" autoFocus />
     <label className="skill-category"><span>Category</span><input value={skill.category || ""} onChange={(event) => onEdit({ category: event.target.value })} onBlur={() => onSave(skill)} list="skill-categories" placeholder="Unsorted" aria-label="Skill category" /><datalist id="skill-categories">{categories.map((category) => <option key={category} value={category} />)}</datalist></label>
+    <div className="slash-notes-heading"><span>Instructions</span><small>Markdown supported</small></div>
     <textarea className="writing skill-writing" value={skill.body || ""} onChange={(event) => onEdit({ body: event.target.value })} onBlur={() => onSave(skill)} placeholder="Paste the prompt, workflow, command, or instructions here." aria-label="Skill notes" />
   </section>;
 }
@@ -714,7 +1071,7 @@ function SlashCommandEditor({ item, saveState, onEdit, onSave, onCopy, onRemove,
   </section>;
 }
 
-function Recovery({ backups, message, dataLocation, onClose, onBackup, onRestore, onExport }) {
+function Recovery({ backups, message, dataLocation, appVersion, onClose, onBackup, onRestore, onExport }) {
   return <aside className="recovery" aria-label="Backups and settings">
     <header><div><strong>Backups</strong><span>Stored only on this computer</span></div><button className="hide" onClick={onClose} aria-label="Close backups">×</button></header>
     <p className="recovery-copy">Notebook makes one rotating backup per day and keeps the latest 21.</p>
@@ -725,6 +1082,7 @@ function Recovery({ backups, message, dataLocation, onClose, onBackup, onRestore
       {!backups.length && <p className="empty-list">No backups yet.</p>}
     </div>
     {dataLocation && <p className="data-location" title={dataLocation}>Data: {dataLocation}</p>}
+    {appVersion && <p className="data-location">Notebook v{appVersion} · local only</p>}
   </aside>;
 }
 

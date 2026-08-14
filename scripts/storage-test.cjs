@@ -13,6 +13,14 @@ try {
   assert.ok(store.listSlashCommands().some((item) => item.command === "/prompts:gitpush"));
   assert.ok(store.listSlashCommands().some((item) => item.name === "Markdown, skills, and slash commands"));
   store.setTags(note.id, ["work"]);
+  store.createDailyTask({ text: "Carry this forward", bucket: "today" }, "2026-08-13");
+  store.createDailyTask({ text: "Planned last night", bucket: "tomorrow" }, "2026-08-13");
+  let daily = store.dailyDashboard("2026-08-14");
+  assert.deepEqual(daily.today.map((task) => task.text), ["Planned last night", "Carry this forward"]);
+  assert.equal(daily.carriedCount, 1);
+  daily = store.completeDailyTask(daily.today[0].id, true, "2026-08-14");
+  assert.equal(daily.done[0].text, "Planned last night");
+  store.createDailyTask({ text: "Set up Friday", bucket: "tomorrow" }, "2026-08-14");
   const backup = store.createBackup();
   assert.equal(store.listBackups()[0].name, backup.name);
   store.updateNote(note.id, { title: "Changed", body: "This should be replaced.", folderId: "inbox" });
@@ -26,6 +34,12 @@ try {
   assert.equal(store.listSkills()[0].category, "Automation");
   assert.equal(restored.slashCommands.find((item) => item.id === slashCommand.id).name, "Deploy");
   assert.equal(restored.slashCommands.find((item) => item.id === slashCommand.id).command, "/prompts:deploy");
+  daily = store.dailyDashboard("2026-08-14");
+  assert.equal(daily.done[0].text, "Planned last night");
+  assert.equal(daily.tomorrow[0].text, "Set up Friday");
+  assert.equal(daily.history[0].completed, 1);
+  assert.equal(daily.carriedCount, 1);
+  assert.equal(store.exportData().version, 5);
   const notebook = store.createFolder("To-do");
   const taskNote = store.createNote({ title: "Launch", body: "- [ ] Ship it", folderId: notebook.id });
   assert.equal(store.listFolders().find((folder) => folder.id === notebook.id).note_count, 1);
