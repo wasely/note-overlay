@@ -14,3 +14,4 @@ scripts/*.exe
 # Local dev-run logs
 /dev-run.log
 /dev-run.err.log
+/dev-run.out.log
