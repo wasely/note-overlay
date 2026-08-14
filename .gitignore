@@ -15,3 +15,4 @@ scripts/*.exe
 /dev-run.log
 /dev-run.err.log
 /dev-run.out.log
+dev-run.out.log
