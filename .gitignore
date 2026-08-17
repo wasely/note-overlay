@@ -16,3 +16,12 @@ scripts/*.exe
 /dev-run.err.log
 /dev-run.out.log
 dev-run.out.log
+/preview.log
+/preview.err.log
+
+# UI verification screenshots (the README overview is curated separately)
+/screenshots/bots-*.png
+/screenshots/commands-*.png
+/screenshots/live-*.png
+/screenshots/projects-*.png
+/screenshots/tray-area.png

@@ -8,7 +8,7 @@ $compiler = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path -LiteralPath $compiler)) { throw "Windows C# compiler was not found." }
 
 $dragOutput = Join-Path $root "build\clean-text-drag.exe"
-$dragSource = Join-Path $root "build\CleanTextDrag.cs"
+$dragSource = Join-Path $root "src\native\CleanTextDrag.cs"
 & $compiler /nologo /target:exe /optimize+ "/out:$dragOutput" /reference:System.Windows.Forms.dll $dragSource
 if ($LASTEXITCODE -ne 0) { throw "Could not build clean text drag helper." }
 

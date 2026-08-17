@@ -12,13 +12,15 @@ A tiny, local-first Windows overlay notebook. Press `Ctrl+Alt+Shift+N`, type, an
 - Standard Markdown to-dos (`- [ ]`) with a clickable checklist view.
 - Dedicated **Daily** loop: today’s work, completed wins, tomorrow planning, automatic carry-forward, and a seven-day completion history.
 - Copies full Markdown, or drags a clean `Title.md` reference into terminals and other apps while the real file stays in local app data.
-- Searchable **Skills** library with custom categories and autosaving instructions.
+- Ranked **Skill Stack** landing page: active workflow first, archived references grouped by reason, plus searchable autosaving skill instructions.
 - Separate **Slash Commands** library with autosaving invocation and documentation pages.
+- Local **Bots** operations registry for Discord/Telegram setup, app-open health checks, cron evidence, job history, commands, runbooks, MCP/Skill links, and archive/restore. See [Bot operations](docs/bot-operations.md).
 - Full-window Gmail view from the **Mail** tab or `Ctrl+Alt+Shift+M`, with an external-browser fallback when Google blocks embedded sign-in.
+- Full-window Notion view from the **Notion** tab or `Ctrl+Alt+Shift+O`, with its own persistent sign-in session and external-browser fallback.
 - Rotating local backups; export/import JSON and Markdown from the `···` menu.
 - Optional local LLMLingua compressor.
 
-No Notebook account, cloud sync, telemetry, or auto-update service. Notes never leave your computer. The Gmail view connects directly to Google only when you open it.
+No Notebook account, cloud sync, telemetry, or auto-update service. Notes never leave your computer. Gmail and Notion connect directly to their services only when you open those views.
 
 ## Install
 
@@ -48,7 +50,7 @@ See [CLAUDE.md](CLAUDE.md) for architecture, safety, and release instructions.
 
 ## Data
 
-Your notes live at `%APPDATA%\note-overlay` — a `hushnote.sqlite` database plus rotating JSON backups in `backups`. Gmail cookies stay in a separate persistent Electron session under the same app-data folder so you remain signed in.
+Your notes live at `%APPDATA%\note-overlay` — a `hushnote.sqlite` database plus rotating JSON backups in `backups`. Gmail and Notion cookies stay in separate persistent Electron sessions under the same app-data folder so you remain signed in.
 
 ## License
 

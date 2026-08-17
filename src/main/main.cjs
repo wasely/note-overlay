@@ -4,23 +4,38 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { z } = require("zod");
 const { createStorage } = require("./storage.cjs");
+const { createBotMonitorService } = require("./bot-monitor.cjs");
+const { botInput, mcpServerInput } = require("./bot-schemas.cjs");
+const projectsService = require("./projects.cjs");
 const { validBounds, boundsForDisplay } = require("./window-bounds.cjs");
 const { createHotkeyManager } = require("./hotkey-manager.cjs");
 const { DEFAULT_MAIL_URL, createMailViewController } = require("./mail-view.cjs");
+const { DEFAULT_NOTION_URL, createNotionViewController } = require("./notion-view.cjs");
 const { syncStartAtLogin } = require("./startup.cjs");
 
 const DEFAULT_SETTINGS = { hotkey: "Control+Alt+Shift+N", startAtLogin: true, compressorDir: "C:\\Code\\llmlingua-local" };
 const FALLBACK_HOTKEYS = ["Control+Alt+N"];
 const MAIL_HOTKEY = "Control+Alt+Shift+M";
+const NOTION_HOTKEY = "Control+Alt+Shift+O";
 const RETIRED_HOTKEYS = new Set(["Control+Shift+Space", "Control+Alt+N", "F8"]);
 const COMPRESSOR_URL = process.env.NOTEBOOK_COMPRESSOR_URL || "http://127.0.0.1:8787";
 const noteInput = z.object({ title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional(), folderId: z.string().max(120).optional(), pinned: z.boolean().optional(), archived: z.boolean().optional() });
 const skillInput = z.object({ name: z.string().max(240).optional(), category: z.string().max(80).optional(), body: z.string().max(2_000_000).optional() });
 const slashCommandInput = z.object({ name: z.string().max(240).optional(), command: z.string().max(1_000).optional(), body: z.string().max(2_000_000).optional() });
-const dailyTaskInput = z.object({ text: z.string().trim().min(1).max(500), bucket: z.enum(["today", "tomorrow"]), completed: z.boolean().optional() });
+const dailyTaskInput = z.object({ text: z.string().trim().min(1).max(500), bucket: z.enum(["today", "tomorrow"]), completed: z.boolean().optional(), priority: z.number().int().min(1).max(3).optional(), owner: z.enum(["me", "agent"]).optional() });
+const dailyTaskPatch = z.object({ text: z.string().trim().min(1).max(500).optional(), bucket: z.enum(["today", "tomorrow"]).optional(), priority: z.number().int().min(1).max(3).optional(), owner: z.enum(["me", "agent"]).optional() }).refine((input) => Object.keys(input).length > 0);
+const projectStatus = z.enum(["active", "paused", "blocked", "completed", "archived"]);
+const projectPriority = z.enum(["critical", "high", "medium", "low", "none"]);
+const projectInput = z.object({ name: z.string().trim().min(1).max(240), description: z.string().max(4_000).optional(), status: projectStatus.optional(), priority: projectPriority.optional(), manualRank: z.number().int().min(0).max(100_000).optional(), localPath: z.string().max(1_000).nullable().optional(), gitRoot: z.string().max(1_000).nullable().optional(), githubUrl: z.string().url().max(2_000).nullable().optional(), primaryLanguage: z.string().max(80).optional(), tags: z.array(z.string().max(80)).max(24).optional(), nextAction: z.string().max(1_000).optional(), notes: z.string().max(100_000).optional(), pushAfterCommit: z.boolean().optional(), lastWorkedAt: z.string().datetime().nullable().optional() });
+const projectPatch = projectInput.partial().refine((input) => Object.keys(input).length > 0);
+const projectTaskInput = z.object({ title: z.string().trim().min(1).max(500), description: z.string().max(10_000).optional(), status: z.enum(["todo", "in_progress", "blocked", "done", "archived"]).optional(), priority: projectPriority.optional(), manualOrder: z.number().int().min(0).max(100_000).optional(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), tags: z.array(z.string().max(80)).max(24).optional(), related: z.string().max(2_000).optional() });
+const projectTaskPatch = projectTaskInput.partial().refine((input) => Object.keys(input).length > 0);
+const projectAssignments = z.object({ skillIds: z.array(z.string().max(120)).max(200).optional(), slashCommandIds: z.array(z.string().max(120)).max(200).optional() });
+const repositoryFilesInput = z.object({ root: z.string().max(1_000), files: z.array(z.string().max(2_000)).min(1).max(500) });
+const commitInput = repositoryFilesInput.extend({ message: z.string().trim().min(1).max(5_000), push: z.boolean().optional(), acknowledgeSensitive: z.boolean().optional() });
 const dragNoteInput = z.object({ id: z.string().max(120).optional(), title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional() });
 const compressionInput = z.object({ noteId: z.string().nullable().optional(), sourceText: z.string().min(1).max(2_000_000), compressedText: z.string().min(1).max(2_000_000), preset: z.string().max(40), rate: z.number().min(0.1).max(1), originTokens: z.number().optional(), compressedTokens: z.number().optional(), ratio: z.string().optional() });
-let overlay; let tray; let store; let boundsTimer; let hideTimer; let hotkeys; let mailHotkeys; let mailView; let quitFlushed = false;
+let overlay; let tray; let store; let botMonitor; let boundsTimer; let hideTimer; let hotkeys; let mailHotkeys; let notionHotkeys; let mailView; let notionView; let quitFlushed = false;
 const isPrimaryInstance = app.requestSingleInstanceLock();
 const openedInBackground = process.argv.includes("--background");
 
@@ -72,16 +87,25 @@ function toggleMailOverlay() {
   if (overlay?.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", openMail);
   else openMail();
 }
+function toggleNotionOverlay() {
+  if (overlay?.isVisible() && notionView?.isActive()) { hideOverlay(); return; }
+  showOverlay(false);
+  const openNotion = () => overlay?.webContents.send("overlay:open-notion");
+  if (overlay?.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", openNotion);
+  else openNotion();
+}
 function readableHotkey(hotkey) { return hotkey ? hotkey.replaceAll("Control", "Ctrl").replaceAll("+", " + ") : "Unavailable"; }
 function refreshTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: `Notebook: ${readableHotkey(hotkeys?.getActive())}`, enabled: false },
     { label: `Mail: ${readableHotkey(mailHotkeys?.getActive())}`, enabled: false },
+    { label: `Notion: ${readableHotkey(notionHotkeys?.getActive())}`, enabled: false },
     { type: "separator" },
     { label: "New Inbox note", click: () => showOverlay(true) },
     { label: "Show Notebook", click: () => showOverlay(false) },
     { label: "Open Gmail", click: toggleMailOverlay },
+    { label: "Open Notion", click: toggleNotionOverlay },
     { type: "separator" },
     { label: "Quit", click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -117,6 +141,51 @@ function startCleanNameDrag(input) {
   const child = spawn(helper, [path.basename(filePath)], { detached: true, windowsHide: true, stdio: "ignore" });
   child.unref();
 }
+async function openBotSetup(botId, connectionId, action) {
+  const bot = store.getBot(z.string().max(120).parse(botId));
+  if (!bot) throw new Error("Bot not found.");
+  const connection = bot.connections.find((item) => item.id === z.string().max(160).parse(connectionId));
+  if (!connection) throw new Error("Platform connection not found.");
+  const requested = z.enum(["portal", "install"]).parse(action);
+  let url;
+  if (connection.platform === "discord") {
+    if (requested === "portal") url = connection.externalBotId ? `https://discord.com/developers/applications/${connection.externalBotId}` : "https://discord.com/developers/applications";
+    else {
+      if (!/^\d{5,30}$/.test(connection.externalBotId || "")) throw new Error("Verify the Discord identity or add its application ID before installing it.");
+      if (!/^\d{1,24}$/.test(connection.installPermissions || "0")) throw new Error("Discord permissions must be a numeric bitfield.");
+      const invite = new URL("https://discord.com/oauth2/authorize");
+      invite.searchParams.set("client_id", connection.externalBotId);
+      invite.searchParams.set("scope", "bot applications.commands");
+      invite.searchParams.set("permissions", connection.installPermissions || "0");
+      url = invite.toString();
+    }
+  } else if (connection.platform === "telegram") {
+    if (requested === "portal") url = "https://t.me/BotFather";
+    else {
+      if (!/^[A-Za-z0-9_]{5,32}$/.test(connection.username || "")) throw new Error("Verify the Telegram identity or add its username before opening it.");
+      url = `https://t.me/${connection.username}`;
+    }
+  } else throw new Error("Unsupported platform connection.");
+  await shell.openExternal(url);
+  return true;
+}
+async function openBotResource(botId, kind) {
+  const bot = store.getBot(z.string().max(120).parse(botId));
+  if (!bot) throw new Error("Bot not found.");
+  const resource = z.enum(["repository", "project", "deployment", "logs", "scheduler"]).parse(kind);
+  const value = resource === "repository" ? bot.repositoryUrl : resource === "project" ? bot.localProjectPath : resource === "deployment" ? bot.deploymentUrl : resource === "logs" ? bot.logsLocation : bot.schedulerUrl;
+  if (!value) throw new Error("That resource is not configured.");
+  if (/^https?:\/\//i.test(value)) {
+    const url = new URL(value);
+    if (!new Set(["http:", "https:"]).has(url.protocol) || url.username || url.password) throw new Error("Only safe HTTP or HTTPS resources can be opened.");
+    await shell.openExternal(url.toString());
+  } else {
+    const resolved = path.resolve(value);
+    if (!fs.existsSync(resolved)) throw new Error("The configured local resource does not exist.");
+    const error = await shell.openPath(resolved); if (error) throw new Error(error);
+  }
+  return true;
+}
 function createTray() {
   tray = new Tray(icon()); tray.setToolTip("Notebook");
   refreshTrayMenu();
@@ -131,9 +200,9 @@ function createOverlay(showWhenReady = !openedInBackground, newNoteWhenReady = f
   overlay.webContents.on("render-process-gone", (_event, details) => console.error(`Notebook renderer ended: ${details.reason}`));
   overlay.loadFile(path.join(__dirname, "../../dist/renderer/index.html"));
   overlay.once("ready-to-show", () => { if (showWhenReady) showOverlay(newNoteWhenReady); });
-  overlay.on("resize", () => { scheduleBoundsSave(); mailView?.resize(); }); overlay.on("move", scheduleBoundsSave);
+  overlay.on("resize", () => { scheduleBoundsSave(); mailView?.resize(); notionView?.resize(); }); overlay.on("move", scheduleBoundsSave);
   overlay.on("close", (event) => { if (!app.isQuitting) { event.preventDefault(); hideOverlay(); } });
-  overlay.on("closed", () => { mailView?.destroy(); mailView = null; overlay = null; });
+  overlay.on("closed", () => { mailView?.destroy(); notionView?.destroy(); mailView = null; notionView = null; overlay = null; });
 }
 function repairStartAtLogin() {
   try {
@@ -162,6 +231,7 @@ app.whenReady().then(() => {
     contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   });
   store = createStorage(app.getPath("userData"));
+  botMonitor = createBotMonitorService({ store, emit: (update) => overlay?.webContents.send("bots:status", update) });
   try { store.ensureDailyBackup(); } catch (error) { console.error(`Notebook automatic backup failed: ${error.message}`); }
   const backupInterval = setInterval(() => { try { store.ensureDailyBackup(); } catch (error) { console.error(`Notebook automatic backup failed: ${error.message}`); } }, 6 * 60 * 60 * 1000);
   backupInterval.unref();
@@ -175,6 +245,14 @@ app.whenReady().then(() => {
     devTools: !app.isPackaged,
     mailUrl: !app.isPackaged && process.env.NOTEBOOK_MAIL_URL ? process.env.NOTEBOOK_MAIL_URL : DEFAULT_MAIL_URL,
     emitStatus: (status) => overlay?.webContents.send("mail:status", status),
+  });
+  notionView = createNotionViewController({
+    WebContentsView,
+    parentWindow: overlay,
+    shell,
+    devTools: !app.isPackaged,
+    notionUrl: !app.isPackaged && process.env.NOTEBOOK_NOTION_URL ? process.env.NOTEBOOK_NOTION_URL : DEFAULT_NOTION_URL,
+    emitStatus: (status) => overlay?.webContents.send("notion:status", status),
   });
   hotkeys = createHotkeyManager({
     globalShortcut,
@@ -196,10 +274,20 @@ app.whenReady().then(() => {
     },
   });
   mailHotkeys.start(MAIL_HOTKEY);
+  notionHotkeys = createHotkeyManager({
+    globalShortcut,
+    onTriggered: toggleNotionOverlay,
+    onChange: (active) => {
+      refreshTrayMenu();
+      if (!active) console.error(`Notebook Notion shortcut ${NOTION_HOTKEY} is unavailable.`);
+    },
+  });
+  notionHotkeys.start(NOTION_HOTKEY);
   createTray();
-  const hotkeyRepairInterval = setInterval(() => { hotkeys.repair(); mailHotkeys.repair(); }, 15_000); hotkeyRepairInterval.unref();
-  const repairAfterWake = () => setTimeout(() => { hotkeys?.repair(); mailHotkeys?.repair(); }, 1_000);
+  const hotkeyRepairInterval = setInterval(() => { hotkeys.repair(); mailHotkeys.repair(); notionHotkeys.repair(); }, 15_000); hotkeyRepairInterval.unref();
+  const repairAfterWake = () => setTimeout(() => { hotkeys?.repair(); mailHotkeys?.repair(); notionHotkeys?.repair(); botMonitor?.start(); botMonitor?.checkAllBots().catch(() => {}); }, 1_000);
   powerMonitor.on("resume", repairAfterWake); powerMonitor.on("unlock-screen", repairAfterWake);
+  botMonitor.start();
   repairStartAtLogin();
   const startupRepairInterval = setInterval(repairStartAtLogin, 10 * 60 * 1000); startupRepairInterval.unref();
   ipcMain.handle("notes:list", () => store.listNotes());
@@ -215,13 +303,72 @@ app.whenReady().then(() => {
   ipcMain.handle("skills:create", (_event, input) => store.createSkill(skillInput.partial().parse(input || {})));
   ipcMain.handle("skills:update", (_event, id, input) => store.updateSkill(z.string().parse(id), skillInput.parse(input)));
   ipcMain.handle("skills:remove", (_event, id) => store.deleteSkill(z.string().parse(id)));
+  ipcMain.handle("mcp-servers:list", () => store.listMcpServers());
+  ipcMain.handle("mcp-servers:create", (_event, input) => store.createMcpServer(mcpServerInput.parse(input)));
+  ipcMain.handle("mcp-servers:update", (_event, id, input) => store.updateMcpServer(z.string().max(120).parse(id), mcpServerInput.parse(input)));
+  ipcMain.handle("mcp-servers:remove", (_event, id) => store.deleteMcpServer(z.string().max(120).parse(id)));
+  ipcMain.handle("mcp-servers:related-bots", (_event, id) => store.listRelatedBots("mcp", z.string().max(120).parse(id)));
+  ipcMain.handle("skills:related-bots", (_event, id) => store.listRelatedBots("skill", z.string().max(120).parse(id)));
+  ipcMain.handle("bots:list", (_event, options) => store.listBots(z.object({ includeArchived: z.boolean().optional() }).parse(options || {})));
+  ipcMain.handle("bots:get", (_event, id) => store.getBot(z.string().max(120).parse(id)));
+  ipcMain.handle("bots:create", (_event, input) => { const bot = store.createBot(botInput.parse(input)); botMonitor.start(); return bot; });
+  ipcMain.handle("bots:update", (_event, id, input) => { const bot = store.updateBot(z.string().max(120).parse(id), botInput.parse(input)); botMonitor.start(); return bot; });
+  ipcMain.handle("bots:archive", (_event, id) => { const bot = store.archiveBot(z.string().max(120).parse(id)); botMonitor.start(); return bot; });
+  ipcMain.handle("bots:restore", (_event, id) => { const bot = store.restoreBot(z.string().max(120).parse(id)); botMonitor.start(); return bot; });
+  ipcMain.handle("bots:check", (_event, id) => botMonitor.checkBot(z.string().max(120).parse(id)));
+  ipcMain.handle("bots:check-all", () => botMonitor.checkAllBots());
+  ipcMain.handle("bots:test-monitoring", (_event, input) => botMonitor.testConfiguration(botInput.parse(input)));
+  ipcMain.handle("bots:verify-connection", (_event, botId, connectionId) => botMonitor.verifyPlatformConnection(z.string().max(120).parse(botId), z.string().max(160).parse(connectionId)));
+  ipcMain.handle("bots:activity", (_event, id) => store.getBotActivity(z.string().max(120).parse(id)));
+  ipcMain.handle("bots:runs", (_event, id) => store.listBotRuns(z.string().max(120).parse(id)));
+  ipcMain.handle("bots:upcoming", (_event, limit) => store.getUpcomingJobs(new Date(), z.number().int().min(1).max(100).optional().parse(limit)));
+  ipcMain.handle("bots:open-setup", (_event, botId, connectionId, action) => openBotSetup(botId, connectionId, action));
+  ipcMain.handle("bots:open-resource", (_event, botId, kind) => openBotResource(botId, kind));
   ipcMain.handle("slash-commands:list", () => store.listSlashCommands());
   ipcMain.handle("slash-commands:create", (_event, input) => store.createSlashCommand(slashCommandInput.partial().parse(input || {})));
   ipcMain.handle("slash-commands:update", (_event, id, input) => store.updateSlashCommand(z.string().parse(id), slashCommandInput.parse(input)));
   ipcMain.handle("slash-commands:remove", (_event, id) => store.deleteSlashCommand(z.string().parse(id)));
+  ipcMain.handle("projects:list", () => store.listProjects());
+  ipcMain.handle("projects:create", (_event, input) => store.createProject(projectInput.parse(input)));
+  ipcMain.handle("projects:update", (_event, id, input) => store.updateProject(z.string().max(120).parse(id), projectPatch.parse(input)));
+  ipcMain.handle("projects:reorder", (_event, ids) => store.reorderProjects(z.array(z.string().max(120)).max(1_000).parse(ids)));
+  ipcMain.handle("projects:remove", (_event, id) => store.removeProject(z.string().max(120).parse(id)));
+  ipcMain.handle("project-tasks:create", (_event, projectId, input) => store.createProjectTask(z.string().max(120).parse(projectId), projectTaskInput.parse(input)));
+  ipcMain.handle("project-tasks:update", (_event, id, input) => store.updateProjectTask(z.string().max(120).parse(id), projectTaskPatch.parse(input)));
+  ipcMain.handle("project-tasks:remove", (_event, id) => store.removeProjectTask(z.string().max(120).parse(id)));
+  ipcMain.handle("projects:assign", (_event, projectId, input) => store.setProjectAssignments(z.string().max(120).parse(projectId), projectAssignments.parse(input)));
+  ipcMain.handle("projects:choose-folder", async () => {
+    const result = await dialog.showOpenDialog({ title: "Add local project", properties: ["openDirectory"] });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true };
+    return { canceled: false, project: await projectsService.inspectFolder(result.filePaths[0]) };
+  });
+  ipcMain.handle("projects:choose-parent", async () => {
+    const result = await dialog.showOpenDialog({ title: "Discover Git repositories", properties: ["openDirectory"] });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true, projects: [] };
+    return { canceled: false, projects: await projectsService.discoverRepositories(result.filePaths[0]) };
+  });
+  ipcMain.handle("projects:inspect", (_event, value) => projectsService.inspectFolder(z.string().max(1_000).parse(value)));
+  ipcMain.handle("projects:status", (_event, root) => projectsService.repositoryStatus(z.string().max(1_000).parse(root)));
+  ipcMain.handle("projects:diff", (_event, input) => { const data = z.object({ root: z.string().max(1_000), path: z.string().max(2_000), staged: z.boolean().optional() }).parse(input); return projectsService.diff(data.root, data.path, data.staged); });
+  ipcMain.handle("projects:stage", (_event, input) => { const data = repositoryFilesInput.parse(input); return projectsService.mutateFiles(data.root, "stage", data.files); });
+  ipcMain.handle("projects:unstage", (_event, input) => { const data = repositoryFilesInput.parse(input); return projectsService.mutateFiles(data.root, "unstage", data.files); });
+  ipcMain.handle("projects:commit", async (_event, input) => { const data = commitInput.parse(input); const result = await projectsService.commit(data.root, data); const project = store.listProjects().find((item) => item.git_root && path.resolve(item.git_root).toLowerCase() === path.resolve(data.root).toLowerCase()); if (project) { store.addProjectActivity(project.id, "commit", `Committed ${result.shortHash}`, result.message); store.updateProject(project.id, { lastWorkedAt: new Date().toISOString() }); } return result; });
+  ipcMain.handle("projects:fetch", (_event, root) => projectsService.fetchRepository(z.string().max(1_000).parse(root)));
+  ipcMain.handle("projects:agents-read", (_event, root) => projectsService.readAgents(z.string().max(1_000).parse(root)));
+  ipcMain.handle("projects:agents-write", (_event, input) => { const data = z.object({ root: z.string().max(1_000), content: z.string().max(2_000_000), version: z.string().max(128).nullable().optional() }).parse(input); return projectsService.writeAgents(data.root, data); });
+  ipcMain.handle("projects:readme", (_event, root) => projectsService.readReadme(z.string().max(1_000).parse(root)));
+  ipcMain.handle("projects:open", async (_event, input) => {
+    const data = z.object({ kind: z.enum(["folder", "terminal", "editor", "github"]), path: z.string().max(2_000).optional(), url: z.string().url().max(2_000).optional() }).parse(input);
+    if (data.kind === "github") { const url = new URL(data.url); if (url.protocol !== "https:" || url.hostname !== "github.com") throw new Error("Only GitHub repository links can be opened."); await shell.openExternal(url.toString()); return true; }
+    const target = fs.realpathSync.native(path.resolve(data.path));
+    if (data.kind === "folder") { const error = await shell.openPath(target); if (error) throw new Error(error); }
+    else if (data.kind === "terminal") spawn("powershell.exe", ["-NoExit", "-Command", "Set-Location -LiteralPath $args[0]", target], { detached: true, windowsHide: false, stdio: "ignore" }).unref();
+    else { const candidates = [path.join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "Code.exe"), path.join(process.env.ProgramFiles || "", "Microsoft VS Code", "Code.exe")]; const editor = candidates.find((candidate) => fs.existsSync(candidate)); if (!editor) throw new Error("Visual Studio Code is not installed in a supported location."); const child = spawn(editor, [target], { detached: true, windowsHide: true, stdio: "ignore", shell: false }); child.unref(); }
+    return true;
+  });
   ipcMain.handle("daily:get", () => store.dailyDashboard());
   ipcMain.handle("daily:create", (_event, input) => store.createDailyTask(dailyTaskInput.parse(input)));
-  ipcMain.handle("daily:update", (_event, id, text) => store.updateDailyTask(z.string().parse(id), z.string().trim().min(1).max(500).parse(text)));
+  ipcMain.handle("daily:update", (_event, id, input) => store.updateDailyTask(z.string().parse(id), dailyTaskPatch.parse(input)));
   ipcMain.handle("daily:complete", (_event, id, completed) => store.completeDailyTask(z.string().parse(id), z.boolean().parse(completed)));
   ipcMain.handle("daily:remove", (_event, id) => store.deleteDailyTask(z.string().parse(id)));
   ipcMain.handle("folders:list", () => store.listFolders());
@@ -283,11 +430,20 @@ app.whenReady().then(() => {
   ipcMain.handle("clipboard:write-text", (_event, text) => { clipboard.writeText(z.string().max(2_000_000).parse(text)); });
   ipcMain.handle("mail:show", () => {
     if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
+    notionView.hide();
     return mailView.show();
   });
   ipcMain.handle("mail:hide", () => mailView.hide());
   ipcMain.handle("mail:reload", () => mailView.reload());
   ipcMain.handle("mail:open-external", () => mailView.openExternal());
+  ipcMain.handle("notion:show", () => {
+    if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
+    mailView.hide();
+    return notionView.show();
+  });
+  ipcMain.handle("notion:hide", () => notionView.hide());
+  ipcMain.handle("notion:reload", () => notionView.reload());
+  ipcMain.handle("notion:open-external", () => notionView.openExternal());
   ipcMain.handle("compressor:status", compressorStatus);
   ipcMain.handle("compressor:start", startCompressor);
   ipcMain.handle("compressor:compress", async (_event, text, rate) => {
@@ -311,6 +467,6 @@ app.on("before-quit", (event) => {
     setTimeout(() => app.quit(), 400);
   }
 });
-app.on("will-quit", () => { hotkeys?.stop(); mailHotkeys?.stop(); mailView?.destroy(); });
+app.on("will-quit", () => { botMonitor?.stop(); hotkeys?.stop(); mailHotkeys?.stop(); notionHotkeys?.stop(); mailView?.destroy(); notionView?.destroy(); });
 app.on("window-all-closed", () => {});
 app.on("activate", () => showOverlay(false));

@@ -2,7 +2,7 @@
 
 ## Product
 
-Notebook is a Windows-only, local-first Markdown notebook. `Ctrl+Alt+Shift+N` toggles a compact, centered, always-on-top overlay on the monitor under the cursor for fast notes. Notes can be organized into separate notebooks and use standard Markdown task syntax with a clickable checklist view. It also has a separate Skills page for reusable instructions: name, custom category, and freeform notes. It autosaves, supports full-note copy and terminal drag-out as a `.md` file, and has an optional local LLMLingua compressor. No Notebook accounts, telemetry, cloud sync, or background network requests. The user-triggered Mail view connects directly to Gmail and keeps its cookies in an isolated persistent Electron session.
+Notebook is a Windows-only, local-first Markdown notebook. `Ctrl+Alt+Shift+N` toggles a compact, centered, always-on-top overlay on the monitor under the cursor for fast notes. Notes can be organized into separate notebooks and use standard Markdown task syntax with a clickable checklist view. Its Skills page opens on a ranked Skill Stack dashboard, with active workflow groups first and archived references retained by reason; individual skills keep autosaving name, category, and instructions. It autosaves, supports full-note copy and terminal drag-out as a `.md` file, and has an optional local LLMLingua compressor. No Notebook accounts, telemetry, cloud sync, or background network requests. User-triggered Gmail and Notion views connect directly to those services and keep cookies in separate isolated persistent Electron sessions.
 
 The Daily page keeps dated today/done/tomorrow task lists. Opening the app on a new local calendar day carries every unfinished older task into today once, while preserving completion history. Daily tasks are included in JSON backups and Markdown exports.
 
@@ -10,14 +10,17 @@ It also has a Slash Commands page for saving command invocations and usage notes
 
 The Mail tab and `Ctrl+Alt+Shift+M` open Gmail in a sandboxed full-window `WebContentsView`. Google may reject embedded sign-in, so the toolbar must always retain the external-browser fallback.
 
+The Notion tab and `Ctrl+Alt+Shift+O` open Notion in a separate sandboxed full-window `WebContentsView`. Keep its external-browser fallback available for blocked sign-in flows.
+
 Supported target: normal Windows apps and borderless/windowed games. Do not promise support for exclusive-fullscreen games; Windows, GPU presentation, and anti-cheat can block normal desktop overlays.
 
 Keep the UI intentionally small. User-facing notebooks are backed by the existing folders table. Skills use custom category text and category filters; do not add a separate category-management screen. Do not surface tags/archive functionality unless the user explicitly asks; the storage support remains for compatibility/imports.
 
 ## Architecture
 
-- `src/main/main.cjs`: Electron lifecycle, single-instance lock, global shortcuts, tray, window placement, validated IPC, drag-out, Gmail view wiring, compressor process/service calls.
+- `src/main/main.cjs`: Electron lifecycle, single-instance lock, global shortcuts, tray, window placement, validated IPC, drag-out, Gmail/Notion view wiring, compressor process/service calls.
 - `src/main/mail-view.cjs`: isolated Gmail `WebContentsView`, bounds, navigation allowlist, persistent session, external fallback, and lifecycle.
+- `src/main/notion-view.cjs`: isolated Notion `WebContentsView`, bounds, navigation allowlist, persistent session, external fallback, and lifecycle.
 - `src/main/preload.cjs`: the only renderer bridge. Add every native capability here as a narrowly scoped function.
 - `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill operations, JSON export/import, rotating backups and restores.
 - `src/renderer/main.jsx`: React UI. `window.hushnote` is real in Electron and mocked for browser screenshots.
