@@ -18,9 +18,9 @@ A small, local-first Windows notebook. Press `Ctrl+Alt+Shift+N` anywhere, write,
 - Search everything (`Ctrl+K`) across notes, tasks, skills, and commands.
 - Copy full Markdown, or drag a clean `Title.md` file into a terminal or editor while the real file stays in local app data.
 - Light, dark, or system theme.
-- Rotating local backups, JSON/Markdown export, and an optional private GitHub repository backup.
+- Rotating local backups, JSON/Markdown export, and automatic two-way sync through the private `blixvip/notebook-cloud` repository.
 
-Notebook itself has no account, telemetry, or auto-update feed. Notes are never sent to an embedded website automatically. Websites communicate with their own providers only after you open and use them; GitHub receives notebook data only when you enable backup.
+Notebook has no telemetry or auto-update feed. Sign in as `@blixvip` through GitHub CLI on each device; saved notes, notebooks, Today pages, skills, commands, projects, and bot definitions then merge automatically after edits and every 30 seconds. Device paths and encrypted account credentials remain local.
 
 ## Keyboard
 
@@ -48,7 +48,7 @@ npm run pack:release   # signed NSIS installer (requires signing credentials)
 
 ## Develop
 
-Requires Node.js 20+ and the .NET Framework 4.x C# compiler (for the drag helper).
+Requires Node.js 20+, GitHub CLI, and the .NET Framework 4.x C# compiler (for the drag helper).
 
 ```powershell
 npm install
@@ -62,7 +62,7 @@ See [CLAUDE.md](CLAUDE.md) for architecture, safety rules, and release steps.
 
 ## Data
 
-Everything lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus rotating JSON backups in `backups`. Notebook keeps one automatic backup per day and holds the newest 21.
+Local data lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus rotating JSON backups in `backups`. Notebook keeps one automatic backup per day and holds the newest 21. Signed-in devices also merge the content snapshot through the private `blixvip/notebook-cloud` repository; every remote restore creates a local safety backup first.
 
 ## License
 

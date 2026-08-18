@@ -53,15 +53,39 @@ const botFactoryInput = z.object({
   discordApplicationId: z.union([z.string().regex(/^\d{5,30}$/), z.literal("")]).optional(), discordPermissions: z.string().regex(/^\d{1,24}$/).default("0"), discordSecretRef: z.string().regex(/^[A-Z_][A-Z0-9_]{1,127}$/).default("DISCORD_BOT_TOKEN"), telegramUsername: z.union([z.string().regex(/^[A-Za-z0-9_]{5,32}$/), z.literal("")]).optional(), telegramSecretRef: z.string().regex(/^[A-Z_][A-Z0-9_]{1,127}$/).default("TELEGRAM_BOT_TOKEN"),
   publishToGithub: z.boolean().default(false), githubRepository: z.string().max(140).default(""), githubVisibility: z.enum(["private", "public"]).default("private"), commitMessage: z.string().trim().min(1).max(200).default("Create bot project"),
 }).superRefine((input, context) => { if (input.publishToGithub && !/^(?:[A-Za-z0-9_.-]+\/)?[A-Za-z0-9_.-]+$/.test(input.githubRepository)) context.addIssue({ code: "custom", path: ["githubRepository"], message: "GitHub repository is required." }); });
-const cloudInput = z.object({ repository: z.string().trim().min(1).max(140), visibility: z.enum(["private", "public"]).optional(), autoUpload: z.boolean().optional() });
+const cloudInput = z.object({ repository: z.string().trim().max(140).optional(), visibility: z.enum(["private", "public"]).optional(), autoUpload: z.boolean().optional() }).default({});
 const dragNoteInput = z.object({ id: z.string().max(120).optional(), title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional() });
 const compressionInput = z.object({ noteId: z.string().nullable().optional(), sourceText: z.string().min(1).max(2_000_000), compressedText: z.string().min(1).max(2_000_000), preset: z.string().max(40), rate: z.number().min(0.1).max(1), originTokens: z.number().optional(), compressedTokens: z.number().optional(), ratio: z.string().optional() });
-let overlay; let tray; let store; let botMonitor; let botFactory; let botProcesses; let botSecrets; let botProvisioning; let githubSync; let boundsTimer; let hideTimer; let focusTimer; let placementTimer; let hotkeys; let mailHotkeys; let notionHotkeys; let twitterHotkeys; let mailView; let notionView; let twitterView; let aiViews = {}; let quitFlushed = false;
+let overlay; let tray; let store; let botMonitor; let botFactory; let botProcesses; let botSecrets; let botProvisioning; let githubSync; let cloudSyncTimer; let cloudSyncRunning; let boundsTimer; let hideTimer; let focusTimer; let placementTimer; let hotkeys; let mailHotkeys; let notionHotkeys; let twitterHotkeys; let mailView; let notionView; let twitterView; let aiViews = {}; let quitFlushed = false;
 const isolatedTestInstance = process.env.NOTEBOOK_TEST_ISOLATED === "1";
 const isPrimaryInstance = isolatedTestInstance || app.requestSingleInstanceLock();
 const openedInBackground = process.argv.includes("--background");
 
 function settings() { return { ...DEFAULT_SETTINGS, ...store.getSetting("app", {}) }; }
+function wait(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
+function announceCloudUpdate(result) {
+  if (result?.remoteChanged && overlay && !overlay.isDestroyed()) overlay.webContents.send("github-sync:updated", result);
+}
+async function performCloudSync({ manual = false, force = false } = {}) {
+  if (!githubSync) return null;
+  if (cloudSyncRunning) return cloudSyncRunning;
+  cloudSyncRunning = (async () => {
+    if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:flush-editor");
+    await wait(650);
+    const result = await githubSync.sync({ automatic: !manual, force });
+    announceCloudUpdate(result);
+    return result;
+  })().finally(() => { cloudSyncRunning = null; });
+  return cloudSyncRunning;
+}
+function scheduleCloudSync(delay = 1_500) {
+  if (isolatedTestInstance || !githubSync) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    performCloudSync().catch((error) => console.error(`Notebook cloud sync failed: ${error.message}`));
+  }, delay);
+  cloudSyncTimer.unref();
+}
 function icon() { return nativeImage.createFromPath(path.join(__dirname, "../../build/notebook.ico")); }
 function savedWindowBounds() { const bounds = store.getSetting("windowBounds", null); return validBounds(bounds) ? bounds : null; }
 function savedBoundsByDisplay() { const saved = store.getSetting("windowBoundsByDisplay", {}); return saved && typeof saved === "object" ? saved : {}; }
@@ -290,25 +314,22 @@ app.whenReady().then(() => {
   app.on("web-contents-created", (_event, contents) => {
     contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   });
-  store = createStorage(app.getPath("userData"));
+  store = createStorage(app.getPath("userData"), { onChange: () => scheduleCloudSync() });
   botMonitor = createBotMonitorService({ store, emit: (update) => overlay?.webContents.send("bots:status", update) });
   botFactory = createBotFactory({ run: projectsService.run });
   botSecrets = createBotSecretStore({ userDataPath: app.getPath("userData"), safeStorage });
   botProcesses = createBotProcessService({ run: projectsService.run, resolveSecret: (reference) => { try { return botSecrets.get(reference); } catch { return undefined; } } });
   botProvisioning = createBotProvisioning({ env: process.env, fetchImpl: fetch, openExternal: (url) => shell.openExternal(url), getSetting: (key, fallback) => store.getSetting(key, fallback), setSetting: (key, value) => store.setSetting(key, value), secrets: botSecrets });
-  githubSync = createGithubSync({ userDataPath: app.getPath("userData"), store, run: projectsService.run, authStatus: projectsService.githubAuthStatus });
+  githubSync = createGithubSync({ userDataPath: app.getPath("userData"), store, run: projectsService.run, authStatus: projectsService.githubAuthStatus, signIn: projectsService.githubSignIn });
   try { store.ensureDailyBackup(); } catch (error) { console.error(`Notebook automatic backup failed: ${error.message}`); }
   const backupInterval = setInterval(() => { try { store.ensureDailyBackup(); } catch (error) { console.error(`Notebook automatic backup failed: ${error.message}`); } }, 6 * 60 * 60 * 1000);
   backupInterval.unref();
-  let cloudAutoUploading = false;
-  const cloudInterval = setInterval(async () => {
-    const config = store.getSetting("githubSync", {}); if (!config.autoUpload || !config.repository || cloudAutoUploading) return;
-    cloudAutoUploading = true; try { await githubSync.push(config); } catch (error) { console.error(`Notebook GitHub auto-upload failed: ${error.message}`); } finally { cloudAutoUploading = false; }
-  }, 5 * 60 * 1000);
+  const cloudInterval = setInterval(() => scheduleCloudSync(0), 30_000);
   cloudInterval.unref();
   const savedSettings = store.getSetting("app", {});
   if (!savedSettings.hotkey || RETIRED_HOTKEYS.has(savedSettings.hotkey)) store.setSetting("app", { ...savedSettings, hotkey: DEFAULT_SETTINGS.hotkey });
   createOverlay();
+  scheduleCloudSync(1_000);
   mailView = createMailViewController({
     WebContentsView,
     parentWindow: overlay,
@@ -513,10 +534,11 @@ app.whenReady().then(() => {
     return { ...result, project: store.getProject(project.id) };
   });
   ipcMain.handle("github-sync:status", () => githubSync.status());
-  ipcMain.handle("github-sync:sign-in", () => projectsService.githubSignIn());
+  ipcMain.handle("github-sync:sign-in", async () => { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:flush-editor"); await wait(650); const result = await githubSync.connect(); announceCloudUpdate(result); return result; });
   ipcMain.handle("github-sync:configure", (_event, input) => githubSync.configure(cloudInput.parse(input)));
-  ipcMain.handle("github-sync:push", (_event, input) => githubSync.push(cloudInput.parse(input)));
-  ipcMain.handle("github-sync:pull", (_event, input) => githubSync.pull(cloudInput.parse(input)));
+  ipcMain.handle("github-sync:sync", () => performCloudSync({ manual: true, force: true }));
+  ipcMain.handle("github-sync:push", () => performCloudSync({ manual: true, force: true }));
+  ipcMain.handle("github-sync:pull", () => performCloudSync({ manual: true, force: true }));
   ipcMain.handle("github-sync:open", async () => { const value = await githubSync.status(); if (!value.url) throw new Error("Configure a cloud repository first."); await shell.openExternal(value.url); return true; });
   ipcMain.handle("projects:agents-read", (_event, root) => projectsService.readAgents(z.string().max(1_000).parse(root)));
   ipcMain.handle("projects:agents-write", (_event, input) => { const data = z.object({ root: z.string().max(1_000), content: z.string().max(2_000_000), version: z.string().max(128).nullable().optional() }).parse(input); const result = projectsService.writeAgents(data.root, data); const project = store.listProjects().find((item) => item.local_path && path.resolve(item.local_path).toLowerCase() === path.resolve(data.root).toLowerCase()); if (project) store.updateProject(project.id, { lastWorkedAt: new Date().toISOString() }); return result; });
@@ -661,9 +683,13 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     overlay.webContents.send("overlay:flush-editor");
     quitFlushed = true;
-    setTimeout(() => app.quit(), 400);
+    setTimeout(async () => {
+      try { await Promise.race([githubSync?.sync({ automatic: true, force: true }), wait(4_000)]); }
+      catch (error) { console.error(`Notebook final cloud sync failed: ${error.message}`); }
+      app.quit();
+    }, 400);
   }
 });
-app.on("will-quit", () => { botMonitor?.stop(); botProcesses?.stopAll(); hotkeys?.stop(); mailHotkeys?.stop(); notionHotkeys?.stop(); twitterHotkeys?.stop(); mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); destroyAiViews(); });
+app.on("will-quit", () => { clearTimeout(cloudSyncTimer); botMonitor?.stop(); botProcesses?.stopAll(); hotkeys?.stop(); mailHotkeys?.stop(); notionHotkeys?.stop(); twitterHotkeys?.stop(); mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); destroyAiViews(); });
 app.on("window-all-closed", () => {});
 app.on("activate", () => showOverlay(false));

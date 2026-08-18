@@ -23,7 +23,9 @@ const LANGUAGE_MARKERS = [
 
 function run(executable, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { cwd: options.cwd, windowsHide: true, shell: false, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    const environment = { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(options.env || {}) };
+    if (options.stripGithubTokens) { delete environment.GH_TOKEN; delete environment.GITHUB_TOKEN; }
+    const child = spawn(executable, args, { cwd: options.cwd, windowsHide: true, shell: false, env: environment });
     const stdout = []; const stderr = []; let size = 0; let settled = false;
     const timer = setTimeout(() => { child.kill(); finish(new Error(`${path.basename(executable)} timed out.`)); }, options.timeout || 15_000);
     function collect(target, chunk) { size += chunk.length; if (size <= (options.maxOutput || MAX_OUTPUT)) target.push(chunk); else child.kill(); }
@@ -40,22 +42,30 @@ function run(executable, args, options = {}) {
 async function git(root, args, options = {}) { return run("git.exe", args, { ...options, cwd: root }); }
 async function githubAuthStatus() {
   try {
-    const version = await run("gh.exe", ["--version"], { allowFailure: true, timeout: 10_000 });
+    const version = await run("gh.exe", ["--version"], { allowFailure: true, timeout: 10_000, stripGithubTokens: true });
     if (version.code) return { available: false, authenticated: false, login: null };
-    const account = await run("gh.exe", ["api", "user", "--jq", ".login"], { allowFailure: true, timeout: 20_000 });
+    const account = await run("gh.exe", ["api", "user", "--jq", ".login"], { allowFailure: true, timeout: 20_000, stripGithubTokens: true });
     const login = account.code ? "" : account.stdout.trim();
     return { available: true, authenticated: Boolean(login), login: login || null };
   } catch {
     return { available: false, authenticated: false, login: null };
   }
 }
-async function githubSignIn() {
+async function githubSignIn(expectedLogin = null) {
   const current = await githubAuthStatus();
   if (!current.available) throw new Error("GitHub CLI is not installed. Install it to sign in from Notebook.");
-  if (!current.authenticated) await run("gh.exe", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--clipboard"], { timeout: 10 * 60_000 });
-  await run("gh.exe", ["auth", "setup-git", "--hostname", "github.com"], { timeout: 30_000 });
+  const expected = String(expectedLogin || "").trim();
+  if (expected) await run("gh.exe", ["auth", "switch", "--hostname", "github.com", "--user", expected], { allowFailure: true, timeout: 30_000, stripGithubTokens: true });
+  let selected = await githubAuthStatus();
+  if (!selected.authenticated || (expected && selected.login.toLowerCase() !== expected.toLowerCase())) {
+    await run("gh.exe", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--clipboard"], { timeout: 10 * 60_000, stripGithubTokens: true });
+    if (expected) await run("gh.exe", ["auth", "switch", "--hostname", "github.com", "--user", expected], { allowFailure: true, timeout: 30_000, stripGithubTokens: true });
+    selected = await githubAuthStatus();
+  }
+  await run("gh.exe", ["auth", "setup-git", "--hostname", "github.com"], { timeout: 30_000, stripGithubTokens: true });
   const result = await githubAuthStatus();
   if (!result.authenticated) throw new Error("GitHub sign-in was not completed.");
+  if (expected && result.login.toLowerCase() !== expected.toLowerCase()) throw new Error(`Sign in as @${expected} to use this Notebook cloud.`);
   return result;
 }
 function githubRepositoryName(value, login) {

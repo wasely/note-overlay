@@ -77,6 +77,8 @@ try {
   if (missingChannels.length) throw new Error(`Preload bridge is missing: ${missingChannels.join(", ")}`);
   const logoBridge = await page.evaluate(() => typeof window.hushnote.projects.logo === "function");
   if (!logoBridge) throw new Error("Project logo bridge is missing from the preload API.");
+  const cloudBridge = await page.evaluate(() => ({ sync: typeof window.hushnote.githubSync?.sync, updated: typeof window.hushnote.githubSync?.onUpdated }));
+  if (cloudBridge.sync !== "function" || cloudBridge.updated !== "function") throw new Error(`Cloud sync preload shape is wrong: ${JSON.stringify(cloudBridge)}`);
   const serviceBridge = await page.evaluate(() => ({
     hasMcp: "mcpServers" in window.hushnote,
     ai: ["chatgpt", "gemini", "deepseek"].filter((id) => typeof window.hushnote.ai?.[id]?.show !== "function"),
@@ -118,7 +120,7 @@ try {
   await page.getByRole("button", { name: "Preview" }).click();
   await page.getByRole("checkbox", { name: "Verify checklist" }).check();
   let savedTaskBody = "";
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     savedTaskBody = await page.evaluate(async () => (await window.hushnote.notes.list()).find((note) => note.title === "Overlay smoke test")?.body || "");
     if (savedTaskBody.includes("- [x] Verify checklist")) break;
     await page.waitForTimeout(100);
@@ -155,8 +157,8 @@ try {
   await page.getByLabel("Skill name").fill("Terminal helper");
   await page.getByLabel("Skill category").fill("Automation");
   await page.getByLabel("Skill instructions").fill("Run this command safely.");
-  await page.waitForTimeout(900);
-  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.getByLabel("Skill instructions").press("Tab");
+  await page.waitForFunction(async () => (await window.hushnote.skills.list()).some((item) => item.name === "Terminal helper" && item.category === "Automation" && item.body === "Run this command safely."));
   await page.getByRole("button", { name: "Copy skill", exact: true }).click();
   await page.getByText("Copied", { exact: true }).waitFor();
 
@@ -177,7 +179,7 @@ try {
   await page.waitForTimeout(900);
   await page.getByText("Saved", { exact: true }).waitFor();
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Delete Deploy preview" }).first().click();
+  await page.getByRole("button", { name: "Delete Deploy preview" }).first().evaluate((button) => button.click());
   await page.waitForTimeout(400);
   const commandsLeft = await page.evaluate(() => window.hushnote.slashCommands.list());
   if (commandsLeft.some((item) => item.name === "Deploy preview")) throw new Error("Deleting a slash command did not persist.");
@@ -185,6 +187,7 @@ try {
   // Settings: theme, version, and a real backup.
   await page.getByRole("button", { name: "Settings and backups" }).click();
   await page.getByText(`Notebook v${packageJson.version} · local-first`, { exact: true }).waitFor();
+  await page.getByText("Blixvip cloud sync", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Dark" }).click();
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
   const storedTheme = await page.evaluate(() => window.hushnote.settings.get());

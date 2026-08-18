@@ -6,7 +6,8 @@ const { createStorage } = require("../src/main/storage.cjs");
 const Database = require("better-sqlite3");
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-storage-"));
-const store = createStorage(userData);
+let cloudSaveSignals = 0;
+const store = createStorage(userData, { onChange: () => { cloudSaveSignals += 1; } });
 try {
   const note = store.createNote({ title: "Before backup", body: "This stays safe." });
   const skill = store.createSkill({ name: "Terminal helper", category: "Automation", body: "Run this command safely." });
@@ -94,6 +95,7 @@ try {
   assert.equal(daily.history[0].completed, 1);
   assert.equal(daily.carriedCount, 1);
   assert.equal(store.exportData().version, 9);
+  assert(cloudSaveSignals > 10, "content mutations must schedule cloud sync");
   const notebook = store.createFolder("To-do");
   const taskNote = store.createNote({ title: "Launch", body: "- [ ] Ship it", folderId: notebook.id });
   assert.equal(store.listFolders().find((folder) => folder.id === notebook.id).note_count, 1);

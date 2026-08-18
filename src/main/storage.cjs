@@ -97,7 +97,7 @@ const STARTER_SLASH_COMMANDS = [
   },
 ];
 
-function createStorage(userDataPath) {
+function createStorage(userDataPath, { onChange } = {}) {
   fs.mkdirSync(userDataPath, { recursive: true });
   const db = new Database(path.join(userDataPath, "hushnote.sqlite"));
   db.pragma("journal_mode = WAL");
@@ -647,7 +647,28 @@ function createStorage(userDataPath) {
   seedSkills();
   seedSlashCommands();
   migrateLegacyJson();
-  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, moveProject, removeProject, setProjectLogo, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  const api = { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, moveProject, removeProject, setProjectLogo, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  const mutations = new Set([
+    "createNote", "updateNote", "setTags", "moveToTrash", "restoreNote", "deleteForever",
+    "createFolder", "renameFolder", "removeFolder", "createSkill", "updateSkill", "deleteSkill",
+    "createSlashCommand", "updateSlashCommand", "deleteSlashCommand", "createProject", "updateProject",
+    "reorderProjects", "moveProject", "removeProject", "setProjectLogo", "createProjectTask",
+    "updateProjectTask", "removeProjectTask", "createProjectCanvasItem", "updateProjectCanvasItem",
+    "removeProjectCanvasItem", "setProjectAssignments", "addProjectActivity", "createDailyTask",
+    "updateDailyTask", "completeDailyTask", "deleteDailyTask", "createCompression", "importData",
+    "restoreBackup", "archiveBot", "createBot", "importBotData", "recordBotEvent", "recordBotRun",
+    "restoreBot", "saveBotRuntime", "updateBot", "updateConnectionVerification",
+  ]);
+  for (const name of mutations) {
+    if (typeof api[name] !== "function") continue;
+    const mutate = api[name];
+    api[name] = (...args) => {
+      const result = mutate(...args);
+      if (typeof onChange === "function") onChange(name);
+      return result;
+    };
+  }
+  return api;
 }
 
 module.exports = { createStorage };

@@ -13,9 +13,9 @@ Its primary notebook pages are:
 
 Two explicit workspaces follow the notebook pages: **Projects** for local project/Git priorities, and **Bots** for Discord/Telegram operations. The sidebar also has optional Gmail/Notion/Twitter web apps plus a separate fixed **AI** strip with ChatGPT, Gemini, and DeepSeek. AI buttons are side by side and open one full-window embedded website at a time.
 
-Search (`Ctrl+K`) spans notes, tasks, skills, and commands. Settings holds theme (system/light/dark), start-at-login, the keyboard reference, local backups, JSON/Markdown export, and optional GitHub repository backup.
+Search (`Ctrl+K`) spans notes, tasks, skills, and commands. Settings holds theme (system/light/dark), start-at-login, the keyboard reference, local backups, JSON/Markdown export, and automatic `@blixvip` cloud sync.
 
-Notebook itself has no account or telemetry. Embedded websites make their normal provider requests only after the user opens them. Notebook content is never injected into those sites. The other outbound path is the GitHub backup the user configures.
+Notebook has no telemetry. Embedded websites make their normal provider requests only after the user opens them, and Notebook content is never injected into those sites. After GitHub sign-in, content snapshots merge through the private `blixvip/notebook-cloud` repository; device paths and encrypted credentials stay local.
 
 Supported target: normal Windows apps and borderless/windowed games. Do not promise support for exclusive-fullscreen games.
 
@@ -27,7 +27,7 @@ Supported target: normal Windows apps and borderless/windowed games. Do not prom
 - `src/main/ai-view.cjs`: sandboxed ChatGPT/Gemini/DeepSeek `WebContentsView` lifecycle, URL allowlists, persistent partitions, and bounds.
 - `src/main/preload.cjs`: the only renderer bridge. Add every native capability here as a narrowly scoped function.
 - `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill/command/daily operations, JSON export/import, rotating backups and restores. `dailyPage(viewDate, today)` returns one day's lines plus the next day's; `dailyMonth(month)` returns the per-day totals the calendar draws.
-- `src/main/github-sync.cjs` + `src/main/command-runner.cjs`: optional Notebook-data backup and the sandboxed `gh`/`git` runner it needs.
+- `src/main/github-sync.cjs` + the runner in `src/main/projects.cjs`: fixed-account two-way merge, conflict retry, private repository creation, and sandboxed `gh`/`git` execution.
 - `src/main/projects.cjs` + `src/renderer/ProjectsPage.jsx`: categorized Now/Next/Later/Parked ordering, local repository status, scoped commits, pushes, and explicit GitHub setup.
 - `src/main/hotkey-manager.cjs`, `window-bounds.cjs`, `startup.cjs`: shortcut recovery, multi-monitor placement, start-at-login repair.
 - `src/renderer/main.jsx`: the whole React UI. `window.hushnote` is real in Electron and mocked for the browser preview.
@@ -37,7 +37,7 @@ Supported target: normal Windows apps and borderless/windowed games. Do not prom
 
 Legacy MCP rows remain dormant so an upgrade never destroys user data. They are excluded from hydrated bots, renderer APIs, IPC, and UI.
 
-User data lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus `backups\notebook-backup-*.json`. Never delete, reset, or overwrite this data without explicit user approval. Restore always creates a safety backup first.
+User data lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus `backups\notebook-backup-*.json`. Never delete or reset this data. Cloud replacement and manual restore always create a local safety backup first.
 
 ## Development and verification
 

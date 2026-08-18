@@ -286,17 +286,19 @@ const mockApi = {
     restore: async () => mockNotes.map((note) => ({ ...note })),
   },
   githubSync: {
-    status: async () => ({ available: true, authenticated: true, login: "preview-user", repository: "preview-user/notebook-cloud", visibility: "private", autoUpload: false, remoteExists: true, lastPushedAt: null, lastPulledAt: null, url: "https://github.com/preview-user/notebook-cloud" }),
-    signIn: async () => ({ available: true, authenticated: true, login: "preview-user" }),
-    configure: async (input) => ({ available: true, authenticated: true, login: "preview-user", repository: input.repository, visibility: input.visibility || "private", remoteExists: false }),
-    push: async (input) => ({ available: true, authenticated: true, login: "preview-user", repository: input.repository, visibility: input.visibility || "private", remoteExists: true, changed: true, lastPushedAt: new Date().toISOString() }),
-    pull: async (input) => ({ sync: { available: true, authenticated: true, login: "preview-user", repository: input.repository, lastPulledAt: new Date().toISOString() }, restored: { notes: mockNotes } }),
+    status: async () => ({ available: true, authenticated: true, login: "blixvip", expectedLogin: "blixvip", accountMatches: true, repository: "blixvip/notebook-cloud", visibility: "private", autoSync: true, remoteExists: true, lastSyncedAt: new Date().toISOString(), url: "https://github.com/blixvip/notebook-cloud" }),
+    signIn: async () => ({ available: true, authenticated: true, login: "blixvip", accountMatches: true, repository: "blixvip/notebook-cloud", remoteExists: true }),
+    configure: async () => ({ available: true, authenticated: true, login: "blixvip", accountMatches: true, repository: "blixvip/notebook-cloud", remoteExists: true }),
+    sync: async () => ({ available: true, authenticated: true, login: "blixvip", accountMatches: true, repository: "blixvip/notebook-cloud", remoteExists: true, changed: true, lastSyncedAt: new Date().toISOString() }),
+    push: async () => ({ available: true, authenticated: true, login: "blixvip", accountMatches: true, repository: "blixvip/notebook-cloud", remoteExists: true, changed: true, lastSyncedAt: new Date().toISOString() }),
+    pull: async () => ({ available: true, authenticated: true, login: "blixvip", accountMatches: true, repository: "blixvip/notebook-cloud", remoteExists: true, remoteChanged: true, lastSyncedAt: new Date().toISOString() }),
     open: async () => true,
+    onUpdated: () => () => {},
   },
   settings: {
     get: async () => ({ ...mockSettings }),
     set: async (patch) => { mockSettings = { ...mockSettings, ...patch }; return { ...mockSettings }; },
-    version: async () => "0.10.0",
+    version: async () => "0.11.0",
     export: async () => ({ filePath: "C:\\Temp\\notebook-backup.json" }),
     dataLocation: async () => "C:\\Notebook data",
   },
@@ -848,17 +850,8 @@ const SHORTCUTS = [
   ["Esc", "Clear search, close a panel, or hide the window"],
 ];
 
-function SettingsPanel({ backups, message, dataLocation, appVersion, settings, github, githubBusy, onTheme, onStartAtLogin, onGithubConnect, onGithubConfigure, onGithubPush, onGithubPull, onGithubOpen, onClose, onBackup, onRestore, onExport }) {
-  const [repository, setRepository] = useState(github?.repository || "");
-  const [visibility, setVisibility] = useState(github?.visibility || "private");
-  const [autoUpload, setAutoUpload] = useState(Boolean(github?.autoUpload));
-  useEffect(() => {
-    if (github?.repository) setRepository(github.repository);
-    else if (github?.login) setRepository(`${github.login}/notebook-cloud`);
-    if (github?.visibility) setVisibility(github.visibility);
-    setAutoUpload(Boolean(github?.autoUpload));
-  }, [github?.repository, github?.visibility, github?.login, github?.autoUpload]);
-  const cloudInput = { repository, visibility, autoUpload };
+function SettingsPanel({ backups, message, dataLocation, appVersion, settings, github, githubBusy, onTheme, onStartAtLogin, onGithubConnect, onGithubSync, onGithubOpen, onClose, onBackup, onRestore, onExport }) {
+  const connected = Boolean(github?.accountMatches);
   const themes = [["system", "System", Monitor], ["light", "Light", Sun], ["dark", "Dark", Moon]];
   return <aside className="settings" aria-label="Settings">
     <header><h2>Settings</h2><IconButton className="close" label="Close settings" onClick={onClose}><X size={18} strokeWidth={1.8} /></IconButton></header>
@@ -878,7 +871,7 @@ function SettingsPanel({ backups, message, dataLocation, appVersion, settings, g
 
       <section>
         <h3>Backups</h3>
-        <p className="settings-copy">Notebook keeps one local backup per day and holds the newest 21. Everything stays on this computer.</p>
+        <p className="settings-copy">Notebook keeps one local backup per day and holds the newest 21. These safety copies never leave this computer.</p>
         <div className="button-row">
           <button type="button" className="button" onClick={onBackup}>Back up now</button>
           <button type="button" className="button subtle" onClick={() => onExport("json")}>Export JSON</button>
@@ -894,22 +887,18 @@ function SettingsPanel({ backups, message, dataLocation, appVersion, settings, g
       </section>
 
       <section>
-        <h3><Cloud size={15} strokeWidth={1.8} />GitHub backup</h3>
-        <p className="settings-copy">Optional. Copies this Notebook into a private GitHub repository so another computer can download it.</p>
+        <h3><Cloud size={15} strokeWidth={1.8} />Blixvip cloud sync</h3>
+        <p className="settings-copy">Your Notebook follows your @blixvip account. Changes sync automatically after saving and are checked on every device every 30 seconds.</p>
         <div className="cloud-account">
-          <span className={github?.authenticated ? "is-connected" : ""}>{github?.authenticated ? `Signed in as @${github.login}` : github?.available === false ? "GitHub CLI required" : "Not connected"}</span>
-          <button type="button" className="button subtle" onClick={onGithubConnect} disabled={githubBusy === "connect" || github?.available === false}>{githubBusy === "connect" ? "Signing in…" : github?.authenticated ? "Reconnect" : "Sign in"}</button>
+          <span className={connected ? "is-connected" : ""}>{connected ? "Connected as @blixvip" : github?.available === false ? "GitHub CLI required on this device" : github?.authenticated ? `Signed in as @${github.login}; @blixvip required` : "Not connected"}</span>
+          {!connected && <button type="button" className="button subtle" onClick={onGithubConnect} disabled={githubBusy === "connect" || github?.available === false}>{githubBusy === "connect" ? "Signing in…" : "Sign in as @blixvip"}</button>}
         </div>
-        <label className="field"><span>Repository</span><input value={repository} onChange={(event) => setRepository(event.target.value)} placeholder={github?.login ? `${github.login}/notebook-cloud` : "owner/notebook-cloud"} /></label>
-        <label className="field"><span>Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value)}><option value="private">Private (recommended)</option><option value="public">Public</option></select></label>
-        <label className="switch"><input type="checkbox" checked={autoUpload} onChange={(event) => setAutoUpload(event.target.checked)} /><span>Upload automatically every 5 minutes</span></label>
         <div className="button-row">
-          <button type="button" className="button" onClick={() => onGithubConfigure(cloudInput)} disabled={!github?.authenticated || !repository || Boolean(githubBusy)}>Save</button>
-          <button type="button" className="button subtle" onClick={() => onGithubPush(cloudInput)} disabled={!github?.authenticated || !repository || Boolean(githubBusy)}>{githubBusy === "push" ? "Uploading…" : "Upload"}</button>
-          <button type="button" className="button subtle" onClick={() => onGithubPull(cloudInput)} disabled={!github?.authenticated || !repository || Boolean(githubBusy)}>{githubBusy === "pull" ? "Downloading…" : "Download"}</button>
+          <button type="button" className="button" onClick={onGithubSync} disabled={!connected || Boolean(githubBusy)}>{githubBusy === "sync" ? "Syncing…" : "Sync now"}</button>
           {github?.url && <button type="button" className="link-button" onClick={onGithubOpen}>Open repository</button>}
         </div>
-        <p className="settings-copy">{github?.lastPushedAt ? `Last upload ${fullTime(github.lastPushedAt)}` : "Never uploaded"}{github?.lastPulledAt ? ` · Last download ${fullTime(github.lastPulledAt)}` : ""}</p>
+        <p className="settings-copy">{github?.lastSyncedAt ? `Last synced ${fullTime(github.lastSyncedAt)}` : connected ? "Ready for first sync" : "Sign in on each device to load the same Notebook."}</p>
+        <p className="settings-copy">Sync includes notes, notebooks, Today, skills, commands, projects, and bot definitions. Device paths and encrypted account credentials stay local.</p>
       </section>
 
       {message && <p className="settings-message" role="status">{message}</p>}
@@ -1142,6 +1131,7 @@ function App() {
     addEventListener("hashchange", onHashChange);
     const stopBotStatus = api.bots.onStatus?.((update) => { if (update?.bot?.id) setBots((items) => items.map((item) => item.id === update.bot.id ? update.bot : item)); });
     const stopServiceEvents = [
+      api.githubSync.onUpdated?.((update) => { setGithubCloud(update); load().then(() => setSaveState("Synced")).catch(() => setSaveState("Cloud refresh failed")); }),
       api.onOpenMail?.(() => openService("mail")),
       api.onMailStatus?.((next) => setMailStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Gmail returned an invalid status." })),
       api.onOpenNotion?.(() => openService("notion")),
@@ -1487,28 +1477,20 @@ function App() {
     catch (error) { setAppSettings(previous); setSettingsMessage(error.message || "Could not save that setting."); }
   }
   async function connectGithubCloud() {
-    setGithubCloudBusy("connect"); setSettingsMessage("Opening secure GitHub sign-in…");
-    try { await api.githubSync.signIn(); const cloud = await api.githubSync.status(); setGithubCloud(cloud); setSettingsMessage(`Connected as @${cloud.login}.`); }
+    setGithubCloudBusy("connect"); setSettingsMessage("Opening secure @blixvip sign-in…");
+    try { const cloud = await api.githubSync.signIn(); setGithubCloud(cloud); setSettingsMessage("Connected to @blixvip and synced."); }
     catch (error) { setSettingsMessage(error.message || "GitHub sign-in failed."); }
     finally { setGithubCloudBusy(""); }
   }
-  async function configureGithubCloud(input) {
-    setGithubCloudBusy("configure"); setSettingsMessage("Saving cloud repository…");
-    try { const cloud = await api.githubSync.configure(input); setGithubCloud(cloud); setSettingsMessage("Cloud repository saved."); }
-    catch (error) { setSettingsMessage(error.message || "Could not configure cloud backup."); }
+  async function syncGithubCloud() {
+    setGithubCloudBusy("sync"); setSettingsMessage("Syncing with @blixvip…");
+    try {
+      const cloud = await (api.githubSync.sync ? api.githubSync.sync() : api.githubSync.push());
+      setGithubCloud(cloud);
+      setSettingsMessage(cloud.remoteChanged ? "Synced changes from another device." : cloud.changed ? "Saved to @blixvip." : "Everything is already synced.");
+    }
+    catch (error) { setSettingsMessage(error.message || "GitHub sync failed."); }
     finally { setGithubCloudBusy(""); }
-  }
-  async function pushGithubCloud(input) {
-    setGithubCloudBusy("push"); setSettingsMessage("Uploading to GitHub…");
-    try { const cloud = await api.githubSync.push(input); setGithubCloud(cloud); setSettingsMessage(cloud.changed ? "Uploaded this Notebook to GitHub." : "GitHub already has the current data."); }
-    catch (error) { setSettingsMessage(error.message || "GitHub upload failed."); }
-    finally { setGithubCloudBusy(""); }
-  }
-  async function pullGithubCloud(input) {
-    if (!window.confirm("Replace this computer’s Notebook data with the GitHub copy? A local safety backup is made first.")) return;
-    setGithubCloudBusy("pull"); setSettingsMessage("Downloading and restoring GitHub data…");
-    try { await api.githubSync.pull(input); setSettingsMessage("Downloaded. Reloading Notebook…"); window.location.reload(); }
-    catch (error) { setSettingsMessage(error.message || "GitHub download failed."); setGithubCloudBusy(""); }
   }
   async function makeBackup() {
     setSettingsMessage("Creating backup…");
@@ -1817,9 +1799,7 @@ function App() {
       onTheme={(theme) => updateSettings({ theme })}
       onStartAtLogin={(startAtLogin) => updateSettings({ startAtLogin })}
       onGithubConnect={connectGithubCloud}
-      onGithubConfigure={configureGithubCloud}
-      onGithubPush={pushGithubCloud}
-      onGithubPull={pullGithubCloud}
+      onGithubSync={syncGithubCloud}
       onGithubOpen={() => api.githubSync.open()}
       onClose={() => setSettingsOpen(false)}
       onBackup={makeBackup}

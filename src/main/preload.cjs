@@ -38,7 +38,10 @@ contextBridge.exposeInMainWorld("hushnote", {
   compressor: { status: () => call("compressor:status"), start: () => call("compressor:start"), compress: (text, rate) => call("compressor:compress", text, rate) },
   settings: { get: () => call("settings:get"), set: (settings) => call("settings:set", settings), version: () => call("app:version"), export: (format) => call("data:export", format), import: () => call("data:import"), dataLocation: () => call("data:location") },
   backups: { list: () => call("backups:list"), create: () => call("backups:create"), restore: (name) => call("backups:restore", name) },
-  githubSync: { status: () => call("github-sync:status"), signIn: () => call("github-sync:sign-in"), configure: (data) => call("github-sync:configure", data), push: (data) => call("github-sync:push", data), pull: (data) => call("github-sync:pull", data), open: () => call("github-sync:open") },
+  githubSync: {
+    status: () => call("github-sync:status"), signIn: () => call("github-sync:sign-in"), configure: (data) => call("github-sync:configure", data), sync: () => call("github-sync:sync"), push: (data) => call("github-sync:push", data), pull: (data) => call("github-sync:pull", data), open: () => call("github-sync:open"),
+    onUpdated: (handler) => { const listener = (_event, update) => handler(update); ipcRenderer.on("github-sync:updated", listener); return () => ipcRenderer.removeListener("github-sync:updated", listener); },
+  },
   clipboard: { writeText: (text) => call("clipboard:write-text", text), writeRich: (data) => call("clipboard:write-rich", data) },
   googleDocs: { create: () => call("docs:new") },
   mail: { show: () => call("mail:show"), hide: () => call("mail:hide"), reload: () => call("mail:reload"), openExternal: () => call("mail:open-external") },
