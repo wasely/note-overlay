@@ -1,428 +1,256 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  AlertTriangle, ArrowUpRight, CheckCircle2, Code2, FolderOpen, GitBranch,
-  GitCommit, GitFork as Github, GripVertical, MoreHorizontal, Plus, RefreshCw, Search,
-  SquareTerminal, Upload, X,
-} from "lucide-react";
 import "./projects.css";
 
 const STATUSES = ["active", "paused", "blocked", "completed", "archived"];
-const TIERS = [
-  { id: 1, name: "Now", hint: "What you are actively moving." },
-  { id: 2, name: "Next", hint: "Ready when Now has room." },
-  { id: 3, name: "Later", hint: "Worth doing, not urgent." },
-  { id: 4, name: "Parked", hint: "Kept without taking focus." },
+const PRIORITIES = ["critical", "high", "medium", "low", "none"];
+const TASK_STATES = [["todo", "To Do"], ["in_progress", "In Progress"], ["blocked", "Blocked"], ["done", "Done"]];
+const PRIORITY_WEIGHT = { critical: 0, high: 1, medium: 2, low: 3, none: 4 };
+const AGENTS_STARTER = "# Project Instructions\n\n## Purpose\n\n## Architecture\n\n## Development Commands\n\n## Important Files\n\n## Implementation Rules\n\n## Testing and Verification\n\n## Current Priorities\n";
+
+function words(value) { return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function relativeTime(value) {
+  if (!value) return "Never"; const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return "Just now"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`; return new Date(value).toLocaleDateString();
+}
+function taskProgress(project) { const tasks = project.tasks?.filter((task) => task.status !== "archived") || []; const done = tasks.filter((task) => task.status === "done").length; return { done, total: tasks.length, percent: tasks.length ? Math.round(done / tasks.length * 100) : 0 }; }
+function attention(project, status) {
+  const items = []; if (!project.local_path) items.push("Missing local path"); else if (status?.available === false) items.push("Repository unavailable");
+  if (project.status === "blocked") items.push("Project blocked"); if (status?.counts?.conflicts) items.push(`${status.counts.conflicts} conflict${status.counts.conflicts === 1 ? "" : "s"}`);
+  if (status?.clean === false) { const count = status.files?.length || 0; items.push(`${count} uncommitted file${count === 1 ? "" : "s"}`); } if (status?.ahead) items.push(`${status.ahead} commit${status.ahead === 1 ? "" : "s"} ahead`);
+  const overdue = (project.tasks || []).filter((task) => task.status !== "done" && task.due_date && task.due_date < new Date().toISOString().slice(0, 10)).length; if (overdue) items.push(`${overdue} overdue task${overdue === 1 ? "" : "s"}`);
+  if (project.git_root && !project.github_url && !status?.remote) items.push("Missing GitHub remote");
+  if (project.status === "active" && project.last_worked_at && Date.now() - new Date(project.last_worked_at).getTime() > 30 * 86400000) items.push("Project is stale");
+  return items;
+}
+function MarkdownPreview({ content, label }) {
+  let code = false;
+  return <div className="markdown-preview" aria-label={label}>{String(content || "").split(/\r?\n/).map((line, index) => {
+    if (line.startsWith("```")) { code = !code; return <span className="markdown-fence" key={index}>{line}</span>; }
+    if (code) return <code key={index}>{line || " "}</code>;
+    const heading = line.match(/^(#{1,3})\s+(.+)/); if (heading) { const Tag = `h${heading[1].length}`; return <Tag key={index}>{heading[2]}</Tag>; }
+    const list = line.match(/^\s*[-*]\s+(.+)/); if (list) return <p className="markdown-list" key={index}>• {list[1]}</p>;
+    return line ? <p key={index}>{line}</p> : <br key={index} />;
+  })}</div>;
+}
+function Notice({ notice }) { return notice ? <div className={`project-notice ${notice.error ? "error" : ""}`} role="status">{notice.text}</div> : null; }
+// Importance is expressed as Rank 1-3 in the UI and stored in the existing priority
+// column, so nothing about the database or older projects has to change.
+const RANKS = [
+  { rank: 1, priority: "critical", label: "Rank 1", heading: "Rank 1 · Working on it", blurb: "The projects you are actually moving right now." },
+  { rank: 2, priority: "high", label: "Rank 2", heading: "Rank 2 · Next", blurb: "Real projects, waiting their turn." },
+  { rank: 3, priority: "medium", label: "Rank 3", heading: "Rank 3 · Someday", blurb: "Kept on purpose, not being worked on." },
 ];
-const SECRET_FILE = /(^|[\\/])(\.env(?:\..+)?|.*(?:credential|secret|token|service[-_]?account)|id_(rsa|dsa|ecdsa|ed25519)|.*\.(pem|p12|pfx|key))$/i;
+const PRIORITY_TO_RANK = { critical: 1, high: 2, medium: 3 };
+const RANK_TO_PRIORITY = { 1: "critical", 2: "high", 3: "medium", 0: "none" };
+function rankOf(project) { return PRIORITY_TO_RANK[project.priority] || 0; }
+
+function RankPill({ project, compact = false }) {
+  const rank = rankOf(project);
+  // Focus-queue cards are a quarter of the row, so the pill there is the digit alone.
+  const label = compact ? (rank || "—") : (rank ? `Rank ${rank}` : "Unranked");
+  return <span className={`project-pill rank-pill rank-pill-${rank}`} title={rank ? `Rank ${rank}` : "Unranked"}>{label}</span>;
+}
+
+function RankPicker({ project, onRank }) {
+  const current = rankOf(project);
+  return <div className="rank-picker" role="group" aria-label={`Importance for ${project.name}`}>
+    {RANKS.map(({ rank, label }) => <button
+      type="button"
+      key={rank}
+      className={`rank-chip rank-${rank} ${current === rank ? "is-active" : ""}`}
+      aria-pressed={current === rank}
+      title={label}
+      onClick={(event) => { event.stopPropagation(); onRank(project, current === rank ? 0 : rank); }}
+    >{rank}</button>)}
+  </div>;
+}
+
+// Inline explanation. Saves on blur so a project can be described without opening it.
+function ProjectExplanation({ project, onExplain }) {
+  const [value, setValue] = useState(project.description || "");
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setValue(project.description || ""); }, [project.id, project.description]);
+  if (!editing) return <button type="button" className={`project-explain ${project.description ? "" : "is-empty"}`} onClick={(event) => { event.stopPropagation(); setEditing(true); }} title="Explain what this project is">
+    {project.description || "Explain what this is…"}
+  </button>;
+  return <textarea
+    className="project-explain-input"
+    autoFocus
+    value={value}
+    aria-label={`What ${project.name} is`}
+    placeholder="What is this project, and why is it worth keeping?"
+    onClick={(event) => event.stopPropagation()}
+    onChange={(event) => setValue(event.target.value)}
+    onBlur={() => { setEditing(false); if (value !== (project.description || "")) onExplain(project, value); }}
+    onKeyDown={(event) => { if (event.key === "Escape") { setValue(project.description || ""); setEditing(false); } }}
+  />;
+}
+
+function StatusPill({ value, kind = "status" }) { return <span className={`project-pill ${kind}-${value}`}>{words(value)}</span>; }
 const logoCache = new Map();
-
-function words(value) {
-  return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function projectCategory(project) {
-  return String(project.category || "Uncategorized").trim() || "Uncategorized";
-}
-
-function projectTier(project) {
-  if (Number(project.tier) >= 1 && Number(project.tier) <= 4) return Number(project.tier);
-  return ({ critical: 1, high: 2, medium: 3 }[project.priority] || 4);
-}
-
-function githubUrl(project, repo) {
-  return project.github_url || repo?.githubUrl || null;
-}
-
 function ProjectLogo({ project, load }) {
   const [source, setSource] = useState(() => logoCache.get(project.id) || null);
   useEffect(() => {
     if (!project.logo_path || !load) { setSource(null); return undefined; }
     if (logoCache.has(project.id)) { setSource(logoCache.get(project.id)); return undefined; }
     let active = true;
-    load(project.id).then((value) => {
-      logoCache.set(project.id, value || null);
-      if (active) setSource(value || null);
-    }).catch(() => logoCache.set(project.id, null));
+    load(project.id).then((value) => { logoCache.set(project.id, value || null); if (active) setSource(value || null); }).catch(() => { logoCache.set(project.id, null); });
     return () => { active = false; };
   }, [project.id, project.logo_path, load]);
-  return source
-    ? <img className="project-logo" src={source} alt="" draggable={false} />
-    : <span className="project-logo project-logo-fallback"><GitBranch size={15} /></span>;
+  if (!source) return <span className="project-repo-icon">◇</span>;
+  return <img className="project-repo-logo" src={source} alt="" draggable={false} />;
 }
 
-function Notice({ value }) {
-  return value ? <div className={`project-notice ${value.error ? "is-error" : ""}`} role="status">{value.text}</div> : null;
-}
+function Empty({ title, body, action }) { return <div className="projects-empty"><span>⌂</span><strong>{title}</strong><p>{body}</p>{action}</div>; }
 
-function Empty({ title, body, action }) {
-  return <div className="project-empty"><span><GitBranch size={21} /></span><strong>{title}</strong><p>{body}</p>{action}</div>;
-}
-
-function repoSummary(project, repo) {
-  if (!project.local_path) return { tone: "warn", text: "Folder unavailable" };
-  if (!project.git_root) return { tone: "muted", text: "Git not set up" };
-  if (!repo || repo.loading) return { tone: "muted", text: "Checking Git…" };
-  if (repo.error) return { tone: "warn", text: "Repository unavailable" };
-  if (repo.counts?.conflicts) return { tone: "danger", text: `${repo.counts.conflicts} conflict${repo.counts.conflicts === 1 ? "" : "s"}` };
-  if (repo.clean === false) return { tone: "warn", text: `${repo.files?.length || 0} change${repo.files?.length === 1 ? "" : "s"}` };
-  if (repo.ahead) return { tone: "warn", text: `${repo.ahead} ready to push` };
-  if (!githubUrl(project, repo)) return { tone: "muted", text: "GitHub not connected" };
-  return { tone: "good", text: "GitHub current" };
-}
-
-function ProjectMenu({ project, repo, onEdit, onMove, onAction }) {
-  return <details className="project-menu">
-    <summary aria-label={`Actions for ${project.name}`}><MoreHorizontal size={17} /></summary>
-    <div>
-      <button onClick={() => onEdit(project)}>Edit project</button>
-      <span>Move to</span>
-      <div className="project-menu-tiers">{TIERS.map((tier) => <button key={tier.id} className={projectTier(project) === tier.id ? "is-current" : ""} onClick={() => onMove(project.id, tier.id, null)}>{tier.name}</button>)}</div>
-      {project.local_path && <>
-        <button onClick={() => onAction("folder", project)}><FolderOpen size={14} /> Open folder</button>
-        <button onClick={() => onAction("editor", project)}><Code2 size={14} /> Open editor</button>
-        <button onClick={() => onAction("terminal", project)}><SquareTerminal size={14} /> Open terminal</button>
-      </>}
-      {githubUrl(project, repo) && <button onClick={() => onAction("github", project, repo)}><Github size={14} /> Open GitHub</button>}
-      <button onClick={() => onAction("archive", project)}>Archive</button>
-      <button className="is-danger" onClick={() => onAction("remove", project)}>Remove from Notebook</button>
-    </div>
-  </details>;
-}
-
-function ProjectCard({ project, repo, api, onEdit, onMove, onAction, onPointerDrag, archived }) {
-  const git = repoSummary(project, repo);
-  return <article
-    className={`priority-card ${archived ? "is-archived" : ""}`}
-    data-project-id={project.id}
-  >
-    <header>
-      {!archived && <button type="button" className="priority-drag" aria-label={`Drag ${project.name} to another rank`} onPointerDown={(event) => onPointerDrag(event, project.id)}><GripVertical size={15} /></button>}
-      <button className="priority-title" onClick={() => onEdit(project)}><ProjectLogo project={project} load={api.logo} /><strong>{project.name}</strong></button>
-      <ProjectMenu project={project} repo={repo} onEdit={onEdit} onMove={onMove} onAction={onAction} />
-    </header>
-    <div className="priority-meta"><span>{projectCategory(project)}</span>{project.primary_language && <span>{project.primary_language}</span>}</div>
-    <p className={project.description ? "" : "is-empty"}>{project.description || "Add a one-line purpose"}</p>
-    <button className="priority-next" onClick={() => onEdit(project)}><small>Next</small><span>{project.next_action || "Set the next action"}</span></button>
-    <footer><span className={`repo-summary is-${git.tone}`}>{git.tone === "good" ? <CheckCircle2 size={12} /> : git.tone === "muted" ? <GitBranch size={12} /> : <AlertTriangle size={12} />}{git.text}</span></footer>
+function ProjectCard({ project, repo, viewMode, onOpen, onRefresh, onQuickAction, onRank, onExplain, onDragStart, onDrop, onLogo }) {
+  const progress = taskProgress(project); const alerts = attention(project, repo); const counts = repo?.counts || {};
+  return <article className={`project-card ${viewMode === "list" ? "is-list" : ""}`} draggable onDragStart={(event) => onDragStart(event, project.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDrop(event, project.id)}>
+    <header><button className="project-card-title" onClick={() => onOpen(project.id)}><ProjectLogo project={project} load={onLogo} /><span><strong>{project.name}</strong></span></button><RankPicker project={project} onRank={onRank} /><details><summary aria-label={`Actions for ${project.name}`}>•••</summary><div className="project-menu"><button onClick={() => onOpen(project.id)}>Open project</button>{project.git_root && <><button onClick={() => onOpen(project.id, "changes")}>View changes</button><button onClick={() => onOpen(project.id, "commit")}>Commit changes</button></>}<button onClick={() => onRefresh(project)}>Refresh status</button>{project.local_path && <><button onClick={() => onQuickAction("folder", project)}>Open local folder</button><button onClick={() => onQuickAction("terminal", project)}>Open in terminal</button><button onClick={() => onQuickAction("editor", project)}>Open in editor</button><button onClick={() => onQuickAction("copy", project)}>Copy local path</button></>}{project.github_url && <button onClick={() => onQuickAction("github", project)}>Open GitHub</button>}<button onClick={() => onQuickAction(project.status === "paused" ? "resume" : "pause", project)}>{project.status === "paused" ? "Resume" : "Pause"}</button><button onClick={() => onQuickAction("complete", project)}>Mark complete</button><button onClick={() => onQuickAction("archive", project)}>Archive</button><button className="project-menu-danger" onClick={() => onQuickAction("remove", project)}>Remove from Notebook</button></div></details></header>
+    <ProjectExplanation project={project} onExplain={onExplain} />
+    <div className="project-card-meta"><StatusPill value={project.status} />{project.primary_language && <span>{project.primary_language}</span>}{repo?.branch && <span className="mono">⑂ {repo.branch}</span>}</div>
+    {project.tags?.length > 0 && <div className="project-tags">{project.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>}
+    <button className="project-next" onClick={() => onOpen(project.id)}><small>NEXT ACTION</small><strong>{project.next_action || "Set the next action"}</strong></button>
+    <div className="project-progress"><span><i style={{ width: `${progress.percent}%` }} /></span><small>{progress.done}/{progress.total} tasks</small></div>
+    <div className="project-git-line"><span title="Modified">● {counts.modified || 0}</span><span title="Added">+ {counts.added || counts.untracked || 0}</span><span title="Deleted">− {counts.deleted || 0}</span><span title="Staged">▣ {counts.staged || 0}</span><span title="Ahead / behind">↑{repo?.ahead || 0} ↓{repo?.behind || 0}</span></div>
+    {repo?.lastCommit && <div className="project-last-commit" title={repo.lastCommit.message}><span>{repo.lastCommit.message}</span><small>{relativeTime(repo.lastCommit.committedAt)}</small></div>}
+    {alerts.length > 0 && <div className="project-alerts">{alerts.slice(0, 2).map((item) => <span key={item}>! {item}</span>)}</div>}
+    <footer><span>{project.git_root ? project.git_root.split(/[\\/]/).pop() : project.local_path ? project.local_path.split(/[\\/]/).pop() : "No local folder"}</span><span>{relativeTime(project.last_worked_at || project.updated_at)}</span><span>{project.skill_ids?.length || 0}S · {project.slash_command_ids?.length || 0}/</span></footer>
   </article>;
 }
 
-function PriorityBoard({ projects, repos, api, category, query, onEdit, onMove, onAction, dragRef, draggedId, setDraggedId }) {
-  const archived = category === "Archived";
-  const visible = projects.filter((project) => {
-    const isArchived = ["completed", "archived"].includes(project.status);
-    if (archived !== isArchived) return false;
-    if (!archived && category !== "All" && projectCategory(project) !== category) return false;
-    const haystack = `${project.name} ${project.description} ${project.next_action} ${projectCategory(project)} ${project.local_path || ""}`.toLowerCase();
-    return !query || haystack.includes(query.toLowerCase());
-  });
-
-  if (archived) return visible.length
-    ? <div className="archived-projects">{visible.map((project) => <ProjectCard key={project.id} project={project} repo={repos[project.id]} api={api} onEdit={onEdit} onMove={onMove} onAction={onAction} archived />)}</div>
-    : <Empty title="No archived projects" body="Completed and archived projects will stay available here." />;
-
-  function startPointerDrag(event, id) {
-    event.preventDefault();
-    const handle = event.currentTarget;
-    const card = handle.closest(".priority-card");
-    dragRef.current = id; setDraggedId(id); card?.classList.add("is-dragging");
-    handle.setPointerCapture?.(event.pointerId);
-    const finish = (pointerEvent) => {
-      const target = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY);
-      const lane = target?.closest(".priority-lane");
-      const targetCard = target?.closest(".priority-card");
-      const beforeId = targetCard?.dataset.projectId || null;
-      if (lane && beforeId !== id) onMove(id, Number(lane.dataset.tier), beforeId);
-      card?.classList.remove("is-dragging"); dragRef.current = null; setDraggedId(null);
-      handle.removeEventListener("pointerup", finish); handle.removeEventListener("pointercancel", cancel);
-    };
-    const cancel = () => {
-      card?.classList.remove("is-dragging"); dragRef.current = null; setDraggedId(null);
-      handle.removeEventListener("pointerup", finish); handle.removeEventListener("pointercancel", cancel);
-    };
-    handle.addEventListener("pointerup", finish); handle.addEventListener("pointercancel", cancel);
-  }
-
-  return <div className={`priority-board ${draggedId ? "is-dragging" : ""}`}>{TIERS.map((tier) => {
-    const items = visible.filter((project) => projectTier(project) === tier.id).sort((a, b) => (a.tier_order ?? a.manual_rank ?? 0) - (b.tier_order ?? b.manual_rank ?? 0));
-    return <section
-      className={`priority-lane tier-${tier.id}`}
-      key={tier.id}
-      data-tier={tier.id}
-    >
-      <header><span className="tier-number">{tier.id}</span><div><h2>{tier.name}</h2><p>{tier.hint}</p></div><strong>{items.length}</strong></header>
-      <div className="priority-lane-cards">{items.map((project) => <ProjectCard
-        key={project.id}
-        project={project}
-        repo={repos[project.id]}
-        api={api}
-        onEdit={onEdit}
-        onMove={onMove}
-        onAction={onAction}
-        onPointerDrag={startPointerDrag}
-      />)}{!items.length && <div className="priority-drop">Drop a project here</div>}</div>
-    </section>;
-  })}</div>;
-}
-
-function ProjectEditor({ project, categories, api, onClose, onSaved, setNotice }) {
-  const [draft, setDraft] = useState({ name: project.name, category: projectCategory(project), tier: projectTier(project), description: project.description || "", nextAction: project.next_action || "", status: project.status });
-  const [busy, setBusy] = useState(false);
-  async function save(event) {
-    event.preventDefault(); setBusy(true);
-    try {
-      let updated = await api.update(project.id, { name: draft.name, category: draft.category, description: draft.description, nextAction: draft.nextAction, status: draft.status });
-      let all = null;
-      if (draft.tier !== projectTier(project)) all = await api.move({ id: project.id, tier: draft.tier, beforeId: null });
-      onSaved(updated, all); onClose(); setNotice({ text: `${draft.name} saved.` });
-    } catch (error) { setNotice({ error: true, text: error.message }); }
-    finally { setBusy(false); }
-  }
-  return <div className="project-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <form className="project-modal project-editor" role="dialog" aria-modal="true" aria-label="Edit project" onSubmit={save}>
-      <header><div><strong>Edit project</strong><small>{project.local_path || "No local folder"}</small></div><button type="button" onClick={onClose} aria-label="Close"><X size={17} /></button></header>
-      <label>Name<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label>
-      <div className="project-form-row"><label>Category<input list="project-categories" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} required /><datalist id="project-categories">{categories.map((item) => <option key={item} value={item} />)}</datalist></label><label>Rank<select value={draft.tier} onChange={(event) => setDraft({ ...draft, tier: Number(event.target.value) })}>{TIERS.map((tier) => <option key={tier.id} value={tier.id}>{tier.id} · {tier.name}</option>)}</select></label></div>
-      <label>Purpose<textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="What is this project for?" /></label>
-      <label>Next action<input value={draft.nextAction} onChange={(event) => setDraft({ ...draft, nextAction: event.target.value })} placeholder="The first thing to do when you return" /></label>
-      <label>Status<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>{STATUSES.map((status) => <option key={status} value={status}>{words(status)}</option>)}</select></label>
-      <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy}>{busy ? "Saving…" : "Save project"}</button></footer>
-    </form>
-  </div>;
-}
-
-function AddProjectDialog({ api, categories, projects, onClose, onAdded, setNotice }) {
-  const [mode, setMode] = useState("choose");
-  const [draft, setDraft] = useState(null);
-  const [found, setFound] = useState([]);
-  const [selected, setSelected] = useState(new Set());
-  const [busy, setBusy] = useState(false);
+function AddProjectDialog({ api, projects, onClose, onAdded, setNotice }) {
+  const [mode, setMode] = useState("choose"); const [draft, setDraft] = useState(null); const [found, setFound] = useState([]); const [selected, setSelected] = useState(new Set()); const [busy, setBusy] = useState(false);
   async function choose(single) {
-    setBusy(true);
-    try {
-      if (single) {
-        const result = await api.chooseFolder();
-        if (!result.canceled) { setDraft({ ...result.project, category: "Uncategorized", tier: 4, nextAction: "" }); setMode("edit"); }
-      } else {
-        const result = await api.chooseParent();
-        if (!result.canceled) {
-          const existing = new Set(projects.flatMap((item) => [item.local_path, item.git_root, item.github_url]).filter(Boolean).map((item) => item.toLowerCase()));
-          const available = result.projects.filter((item) => ![item.localPath, item.gitRoot, item.githubUrl].filter(Boolean).some((value) => existing.has(value.toLowerCase())));
-          setFound(available); setSelected(new Set(available.map((item) => item.gitRoot))); setMode("discover");
-        }
-      }
-    } catch (error) { setNotice({ error: true, text: error.message }); }
-    finally { setBusy(false); }
+    setBusy(true); try {
+      if (single) { const result = await api.chooseFolder(); if (!result.canceled) { setDraft({ ...result.project, status: "active", priority: "none", tags: [], nextAction: "" }); setMode("edit"); } }
+      else { const result = await api.chooseParent(); if (!result.canceled) { const duplicates = new Set(projects.flatMap((item) => [item.local_path, item.git_root, item.github_url]).filter(Boolean).map((item) => item.toLowerCase())); const available = result.projects.filter((item) => ![item.localPath, item.gitRoot, item.githubUrl].filter(Boolean).some((value) => duplicates.has(value.toLowerCase()))); setFound(available); setSelected(new Set(available.map((item) => item.gitRoot))); setMode("discover"); } }
+    } catch (error) { setNotice({ error: true, text: error.message }); } finally { setBusy(false); }
   }
   async function save(event) {
-    event.preventDefault(); setBusy(true);
-    try { const item = await api.create({ ...draft, status: "active" }); onAdded([item]); onClose(); }
-    catch (error) { setNotice({ error: true, text: /UNIQUE/.test(error.message) ? "That repository is already a project." : error.message }); }
-    finally { setBusy(false); }
+    event.preventDefault(); setBusy(true); try { const item = await api.create(draft); onAdded([item]); onClose(); } catch (error) { setNotice({ error: true, text: /UNIQUE/.test(error.message) ? "That repository is already a project." : error.message }); } finally { setBusy(false); }
   }
-  async function importFound() {
-    setBusy(true);
-    try {
-      const added = [];
-      for (const item of found.filter((entry) => selected.has(entry.gitRoot))) added.push(await api.create({ ...item, status: "active", category: "Uncategorized", tier: 4, nextAction: "" }));
-      onAdded(added); onClose();
-    } catch (error) { setNotice({ error: true, text: error.message }); }
-    finally { setBusy(false); }
-  }
-  return <div className="project-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="project-modal" role="dialog" aria-modal="true" aria-label="Add project">
-    <header><div><strong>Add project</strong><small>Connect a folder without changing it.</small></div><button onClick={onClose} aria-label="Close"><X size={17} /></button></header>
-    {mode === "choose" && <div className="add-project-choices"><button onClick={() => choose(true)} disabled={busy}><FolderOpen size={22} /><strong>Choose one folder</strong><small>Git repository or regular project folder</small></button><button onClick={() => choose(false)} disabled={busy}><Search size={22} /><strong>Find repositories</strong><small>Scan one parent folder</small></button></div>}
-    {mode === "edit" && draft && <form className="add-project-form" onSubmit={save}>
-      <label>Name<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label>
-      <div className="project-form-row"><label>Category<input list="new-project-categories" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} required /><datalist id="new-project-categories">{categories.map((item) => <option key={item} value={item} />)}</datalist></label><label>Starting rank<select value={draft.tier} onChange={(event) => setDraft({ ...draft, tier: Number(event.target.value) })}>{TIERS.map((tier) => <option key={tier.id} value={tier.id}>{tier.id} · {tier.name}</option>)}</select></label></div>
-      <label>Purpose<textarea value={draft.description || ""} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-      <label>Next action<input value={draft.nextAction || ""} onChange={(event) => setDraft({ ...draft, nextAction: event.target.value })} /></label>
-      <code>{draft.localPath}</code>
-      <footer><button type="button" onClick={() => setMode("choose")}>Back</button><button className="primary" disabled={busy}>{busy ? "Adding…" : "Add project"}</button></footer>
-    </form>}
-    {mode === "discover" && <div className="discover-projects"><p>{found.length ? `${found.length} repositories found.` : "No new repositories found."}</p>{found.map((item) => <label key={item.gitRoot}><input type="checkbox" checked={selected.has(item.gitRoot)} onChange={(event) => setSelected((current) => { const next = new Set(current); event.target.checked ? next.add(item.gitRoot) : next.delete(item.gitRoot); return next; })} /><span><strong>{item.name}</strong><small>{item.gitRoot}</small></span></label>)}<footer><button onClick={() => setMode("choose")}>Back</button><button className="primary" onClick={importFound} disabled={busy || !selected.size}>Add {selected.size || ""}</button></footer></div>}
+  async function importFound() { setBusy(true); try { const added = []; for (const item of found.filter((entry) => selected.has(entry.gitRoot))) added.push(await api.create({ ...item, status: "active", priority: "none", tags: [], nextAction: "" })); onAdded(added); onClose(); } catch (error) { setNotice({ error: true, text: error.message }); } finally { setBusy(false); } }
+  return <div className="project-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="project-modal" role="dialog" aria-modal="true" aria-label="Add project">
+    <header><div><strong>Add Project</strong><small>Connect a local folder without changing it.</small></div><button onClick={onClose} aria-label="Close add project">×</button></header>
+    {mode === "choose" && <div className="add-project-choices"><button onClick={() => choose(true)} disabled={busy}><span>◇</span><strong>Existing folder</strong><small>Choose a repository or any child folder.</small></button><button onClick={() => choose(false)} disabled={busy}><span>⌕</span><strong>Discover repositories</strong><small>Scan one parent folder, at most two levels deep.</small></button></div>}
+    {mode === "edit" && draft && <form className="project-form" onSubmit={save}><label>Name<input aria-label="Project name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label><label>Description<textarea aria-label="Project description" value={draft.description || ""} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label><div className="project-form-row"><label>Status<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>{STATUSES.slice(0, 4).map((item) => <option key={item} value={item}>{words(item)}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value })}>{PRIORITIES.map((item) => <option key={item} value={item}>{words(item)}</option>)}</select></label></div><label>Next action<input value={draft.nextAction || ""} onChange={(event) => setDraft({ ...draft, nextAction: event.target.value })} placeholder="What should happen next?" /></label><label>Tags<input value={(draft.tags || []).join(", ")} onChange={(event) => setDraft({ ...draft, tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} placeholder="personal, app, release" /></label><div className="detected-project"><span>{draft.isGit ? `Git repository${draft.branch ? ` · ${draft.branch}` : ""}` : "Non-Git folder · limited features"}</span><code>{draft.localPath}</code>{draft.githubUrl && <code>{draft.githubUrl}</code>}</div><footer><button type="button" onClick={() => setMode("choose")}>Back</button><button className="primary" type="submit" disabled={busy}>{busy ? "Adding…" : "Add project"}</button></footer></form>}
+    {mode === "discover" && <div className="discover-projects"><p>{found.length ? `${found.length} repositories ready to import.` : "No new repositories found within two levels."}</p>{found.map((item) => <label key={item.gitRoot}><input type="checkbox" checked={selected.has(item.gitRoot)} onChange={(event) => setSelected((current) => { const next = new Set(current); event.target.checked ? next.add(item.gitRoot) : next.delete(item.gitRoot); return next; })} /><span><strong>{item.name}</strong><small>{item.gitRoot}</small></span></label>)}<footer><button onClick={() => setMode("choose")}>Back</button><button className="primary" onClick={importFound} disabled={busy || !selected.size}>Import {selected.size || ""}</button></footer></div>}
   </section></div>;
 }
 
-function githubBucket(project, repo) {
-  if (!project.local_path) return { id: "setup", reason: "Local folder unavailable" };
-  if (!project.git_root || repo?.isGit === false) return { id: "setup", reason: "Git is not initialized" };
-  if (!repo || repo.loading) return { id: "setup", reason: "Checking repository…", loading: true };
-  if (repo.error) return { id: "setup", reason: repo.error, blocked: true };
-  if (repo.counts?.conflicts) return { id: "setup", reason: "Resolve merge conflicts first", blocked: true };
-  if (repo.behind) return { id: "setup", reason: `GitHub is ${repo.behind} commit${repo.behind === 1 ? "" : "s"} ahead`, blocked: true };
-  if (repo.clean === false) return { id: "changes", reason: `${repo.files?.length || 0} changed file${repo.files?.length === 1 ? "" : "s"}` };
-  if (repo.ahead) return { id: "push", reason: `${repo.ahead} commit${repo.ahead === 1 ? "" : "s"} ready` };
-  if (!githubUrl(project, repo)) return { id: "setup", reason: "Connect a GitHub repository" };
-  return { id: "clean", reason: "Up to date" };
+function OverviewTab({ project, repo, readme, onSave, onAction }) {
+  const [draft, setDraft] = useState(project); useEffect(() => setDraft(project), [project.id, project.updated_at]); const progress = taskProgress(project);
+  return <div className="project-detail-grid"><form className="project-panel project-overview-form" onSubmit={(event) => { event.preventDefault(); onSave({ name: draft.name, description: draft.description, status: draft.status, priority: draft.priority, nextAction: draft.next_action, tags: draft.tags, notes: draft.notes }); }}><header><strong>Project overview</strong><button className="primary" type="submit">Save changes</button></header><label>Name<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label><label>Description<textarea value={draft.description || ""} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label><div className="project-form-row"><label>Status<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>{STATUSES.map((item) => <option key={item} value={item}>{words(item)}</option>)}</select></label><label>Priority<select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value })}>{PRIORITIES.map((item) => <option key={item} value={item}>{words(item)}</option>)}</select></label></div><label className="important-field">Next action<input value={draft.next_action || ""} onChange={(event) => setDraft({ ...draft, next_action: event.target.value })} placeholder="The first thing to do when you return" /></label><label>Tags<input value={(draft.tags || []).join(", ")} onChange={(event) => setDraft({ ...draft, tags: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label><label>Project notes<textarea value={draft.notes || ""} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></label></form><aside className="project-detail-rail"><section className="project-panel"><header><strong>Repository</strong><div><button onClick={() => onAction("refresh")}>Refresh</button>{project.git_root && <button onClick={() => onAction("fetch")}>Fetch</button>}</div></header><dl><div><dt>Local path</dt><dd>{project.local_path || "Not connected"}</dd></div><div><dt>GitHub</dt><dd>{project.github_url || "Not connected"}</dd></div><div><dt>Branch</dt><dd>{repo?.branch || "—"}</dd></div><div><dt>Last commit</dt><dd>{repo?.lastCommit ? `${repo.lastCommit.message} · ${relativeTime(repo.lastCommit.committedAt)}` : "—"}</dd></div><div><dt>Last worked</dt><dd>{relativeTime(project.last_worked_at)}</dd></div></dl><div className="project-quick-actions">{project.local_path && <><button onClick={() => onAction("folder")}>Folder</button><button onClick={() => onAction("terminal")}>Terminal</button><button onClick={() => onAction("editor")}>Editor</button></>}{project.github_url && <button onClick={() => onAction("github")}>GitHub</button>}</div></section><section className="project-panel"><header><strong>Progress</strong><span>{progress.percent}%</span></header><div className="large-progress"><i style={{ width: `${progress.percent}%` }} /></div><p>{progress.done} completed · {progress.total - progress.done} remaining</p></section></aside>{readme && <section className="project-panel project-readme"><header><strong>README</strong><small>{readme.path}</small></header><MarkdownPreview content={readme.content} label="README preview" /></section>}</div>;
 }
 
-function CommitDialog({ project, repo, api, auth, onClose, onDone, setNotice }) {
-  const [files, setFiles] = useState(() => new Set(repo.files.map((item) => item.path)));
-  const [activeFile, setActiveFile] = useState(repo.files[0] || null);
-  const [diff, setDiff] = useState(null);
-  const [message, setMessage] = useState(`Update ${project.name}`);
-  const canPush = Boolean(auth?.authenticated && repo?.remote && githubUrl(project, repo));
-  const [push, setPush] = useState(canPush);
-  const [ack, setAck] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const suspicious = [...files].filter((file) => SECRET_FILE.test(file));
-  useEffect(() => {
-    let live = true; setDiff(null);
-    if (activeFile) api.diff({ root: project.git_root, path: activeFile.path, staged: activeFile.staged && !activeFile.unstaged }).then((value) => { if (live) setDiff(value); }).catch((error) => { if (live) setDiff({ text: error.message, error: true }); });
-    return () => { live = false; };
-  }, [activeFile?.path]);
-  async function submit(event) {
-    event.preventDefault(); setBusy(true);
+function TasksTab({ project, onCreate, onUpdate, onRemove }) {
+  const [title, setTitle] = useState(""); const [filter, setFilter] = useState(""); const [query, setQuery] = useState("");
+  async function add(event) { event.preventDefault(); if (!title.trim()) return; await onCreate({ title, status: "todo", priority: "medium" }); setTitle(""); }
+  const visible = (task) => (!filter || task.status === filter) && (!query || `${task.title} ${task.description} ${(task.tags || []).join(" ")}`.toLowerCase().includes(query.toLowerCase()));
+  return <div className="tasks-workspace"><form className="quick-task" onSubmit={add}><input aria-label="New project task" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Add a task and press Enter…" /><button className="primary" type="submit" disabled={!title.trim()}>Add task</button></form><div className="task-toolbar"><input aria-label="Search project tasks" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks" /><select aria-label="Filter project tasks" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="">All states</option>{TASK_STATES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span>{project.tasks.filter((task) => task.status !== "done" && task.status !== "archived").length} active · {project.tasks.filter((task) => task.status === "done").length} done</span></div><div className="task-board">{TASK_STATES.map(([state, label]) => { const tasks = project.tasks.filter((task) => task.status === state && visible(task)); return <section key={state} className={`task-column state-${state}`}><header><strong>{label}</strong><span>{tasks.length}</span></header>{tasks.map((task, index) => <article key={task.id} draggable onDragStart={(event) => event.dataTransfer.setData("text/task-id", task.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const id = event.dataTransfer.getData("text/task-id"); if (id) onUpdate(id, { status: state, manualOrder: index }); }}><textarea aria-label={`Task ${task.title}`} value={task.title} onChange={(event) => onUpdate(task.id, { title: event.target.value })} /><div><StatusPill value={task.priority} kind="priority" /><select aria-label={`Move ${task.title}`} value={task.status} onChange={(event) => onUpdate(task.id, { status: event.target.value })}>{TASK_STATES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select><button aria-label={`Delete ${task.title}`} onClick={() => onRemove(task.id)}>×</button></div>{task.due_date && <small className={task.due_date < new Date().toISOString().slice(0, 10) && task.status !== "done" ? "overdue" : ""}>Due {task.due_date}</small>}</article>)}{!tasks.length && <p>Drop tasks here</p>}</section>; })}</div></div>;
+}
+
+function ChangesTab({ project, repo, api, onStatus, setNotice, autoCommit = false }) {
+  const [selected, setSelected] = useState(new Set()); const [file, setFile] = useState(null); const [diff, setDiff] = useState(null); const [busy, setBusy] = useState(false); const [commitOpen, setCommitOpen] = useState(autoCommit);
+  async function view(item) { setFile(item); setDiff(null); try { setDiff(await api.diff({ root: project.git_root, path: item.path, staged: item.staged && !item.unstaged })); } catch (error) { setNotice({ error: true, text: error.message }); } }
+  async function mutate(kind) { if (!selected.size) return; setBusy(true); try { const status = await api[kind]({ root: project.git_root, files: [...selected] }); onStatus(status); setSelected(new Set()); setNotice({ text: `${kind === "stage" ? "Staged" : "Unstaged"} selected files.` }); } catch (error) { setNotice({ error: true, text: error.message }); } finally { setBusy(false); } }
+  if (!project.git_root) return <Empty title="Git unavailable" body="Connect this project to a Git repository to review and commit changes." />;
+  if (!repo) return <Empty title="Loading repository" body="Reading the local working tree…" />;
+  if (repo.error) return <Empty title="Repository unavailable" body={repo.error} />;
+  return <div className="changes-layout"><section className="project-panel changed-files"><header><div><strong>Changed files</strong><small>{repo.clean ? "Working tree clean" : `${repo.files.length} changed`}</small></div><div><button onClick={() => mutate("stage")} disabled={busy || !selected.size}>Stage</button><button onClick={() => mutate("unstage")} disabled={busy || !selected.size}>Unstage</button><button className="primary" onClick={() => setCommitOpen(true)} disabled={repo.clean}>Commit changes</button></div></header>{repo.files.map((item) => <label key={`${item.path}-${item.index}-${item.working}`} className={file?.path === item.path ? "selected" : ""}><input type="checkbox" checked={selected.has(item.path)} onChange={(event) => setSelected((current) => { const next = new Set(current); event.target.checked ? next.add(item.path) : next.delete(item.path); return next; })} /><button onClick={() => view(item)}><span className={`file-status ${item.kind}`}>{item.kind.slice(0, 1).toUpperCase()}</span><span><strong>{item.path}</strong><small>{item.staged ? "Staged" : ""}{item.staged && item.unstaged ? " + " : ""}{item.unstaged ? "Unstaged" : ""}</small></span></button></label>)}{repo.clean && <p className="clean-repo">✓ Nothing to commit</p>}</section><section className="project-panel diff-view"><header><strong>{file?.path || "Diff preview"}</strong>{diff?.truncated && <span>Truncated</span>}</header>{diff ? <pre>{diff.text || "No textual diff available."}</pre> : <p>Select a changed file to inspect it.</p>}</section>{commitOpen && <CommitDialog project={project} repo={repo} api={api} defaultFiles={[...selected]} onClose={() => setCommitOpen(false)} onCommitted={(result) => { setCommitOpen(false); onStatus(result.status); setNotice({ text: `Committed ${result.shortHash}: ${result.message}` }); }} setNotice={setNotice} />}</div>;
+}
+
+function CommitDialog({ project, repo, api, defaultFiles, onClose, onCommitted, setNotice }) {
+  const [files, setFiles] = useState(new Set(defaultFiles.length ? defaultFiles : repo.files.map((item) => item.path))); const [message, setMessage] = useState(project.next_action ? `Update ${project.name}: ${project.next_action}`.slice(0, 120) : `Update ${project.name}`); const [push, setPush] = useState(project.push_after_commit); const [ack, setAck] = useState(false); const [busy, setBusy] = useState(false);
+  const suspicious = [...files].filter((file) => /(^|[\\/])(\.env(?:\..+)?|.*(?:credential|secret|token|service[-_]?account)|id_(rsa|dsa|ecdsa|ed25519)|.*\.(pem|p12|pfx|key))$/i.test(file));
+  async function submit(event) { event.preventDefault(); setBusy(true); try { onCommitted(await api.commit({ root: project.git_root, files: [...files], message, push, acknowledgeSensitive: ack })); } catch (error) { setNotice({ error: true, text: error.message }); } finally { setBusy(false); } }
+  return <div className="project-modal-backdrop"><form className="project-modal commit-dialog" role="dialog" aria-modal="true" aria-label="Commit changes" onSubmit={submit}><header><div><strong>Commit changes</strong><small>{repo.branch || "Detached HEAD"}{repo.upstream ? ` → ${repo.upstream}` : " · no upstream"}</small></div><button type="button" onClick={onClose}>×</button></header><div className="commit-files">{repo.files.map((item) => <label key={item.path}><input type="checkbox" checked={files.has(item.path)} onChange={(event) => setFiles((current) => { const next = new Set(current); event.target.checked ? next.add(item.path) : next.delete(item.path); return next; })} /><span>{item.path}</span><small>{words(item.kind)}</small></label>)}</div>{suspicious.length > 0 && <label className="sensitive-warning"><input type="checkbox" checked={ack} onChange={(event) => setAck(event.target.checked)} /><span><strong>Potential secret file</strong>Review {suspicious.join(", ")} and explicitly include it.</span></label>}<label className="commit-message">Commit message<textarea aria-label="Commit message" value={message} onChange={(event) => setMessage(event.target.value)} /></label><label className="push-choice"><input type="checkbox" checked={push} onChange={(event) => setPush(event.target.checked)} /><span>Commit and push after local commit</span></label><footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !message.trim() || !files.size || (suspicious.length > 0 && !ack)}>{busy ? "Committing…" : push ? "Commit and push" : "Commit locally"}</button></footer></form></div>;
+}
+
+function AgentsTab({ project, api, setNotice, onDirty }) {
+  const [file, setFile] = useState(null); const [content, setContent] = useState(""); const [mode, setMode] = useState("split"); const [dirty, setDirty] = useState(false); const [busy, setBusy] = useState(true);
+  async function load() { setBusy(true); try { const result = await api.agentsRead(project.local_path); setFile(result); setContent(result.exists ? result.content : AGENTS_STARTER); setDirty(false); onDirty(false); } catch (error) { setNotice({ error: true, text: error.message }); } finally { setBusy(false); } }
+  useEffect(() => { load(); }, [project.id]);
+  useEffect(() => { const warn = (event) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } }; addEventListener("beforeunload", warn); return () => removeEventListener("beforeunload", warn); }, [dirty]);
+  async function save() { try { const saved = await api.agentsWrite({ root: project.local_path, content, version: file?.version }); setFile(saved); setDirty(false); onDirty(false); setNotice({ text: "AGENTS.md saved." }); } catch (error) { setNotice({ error: true, text: error.message }); } }
+  if (!project.local_path) return <Empty title="No local folder" body="Connect a local folder before managing AGENTS.md." />;
+  if (busy) return <Empty title="Loading AGENTS.md" body="Checking the repository root…" />;
+  return <section className="agents-workspace"><header><div><strong>AGENTS.md</strong><small>{file?.path} {file?.modifiedAt ? `· modified ${relativeTime(file.modifiedAt)}` : "· not created yet"}</small></div><div className="segmented"><button className={mode === "edit" ? "active" : ""} onClick={() => setMode("edit")}>Edit</button><button className={mode === "split" ? "active" : ""} onClick={() => setMode("split")}>Split</button><button className={mode === "preview" ? "active" : ""} onClick={() => setMode("preview")}>Preview</button></div><button onClick={() => { if (!dirty || confirm("Discard unsaved AGENTS.md changes and reload?")) load(); }}>Reload</button><button className="primary" onClick={save} disabled={!dirty}>Save</button></header><div className={`agents-editor mode-${mode}`}>{mode !== "preview" && <textarea aria-label="AGENTS.md editor" value={content} onChange={(event) => { setContent(event.target.value); setDirty(true); onDirty(true); }} />}{mode !== "edit" && <MarkdownPreview content={content} label="AGENTS.md preview" />}</div>{dirty && <footer>Unsaved changes</footer>}</section>;
+}
+
+function AssignmentsTab({ project, skills, commands, onSave }) {
+  const [skillIds, setSkillIds] = useState(new Set(project.skill_ids)); const [commandIds, setCommandIds] = useState(new Set(project.slash_command_ids)); useEffect(() => { setSkillIds(new Set(project.skill_ids)); setCommandIds(new Set(project.slash_command_ids)); }, [project.id, project.updated_at]);
+  function toggle(setter, current, id) { setter(() => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; }); }
+  return <div className="assignments-grid"><section className="project-panel"><header><div><strong>Assigned skills</strong><small>{skillIds.size} selected</small></div></header>{skills.map((item) => <label key={item.id}><input type="checkbox" checked={skillIds.has(item.id)} onChange={() => toggle(setSkillIds, skillIds, item.id)} /><span><strong>{item.name || "Untitled skill"}</strong><small>{item.category || "Unsorted"}</small></span></label>)}{!skills.length && <p>No skills available.</p>}</section><section className="project-panel"><header><div><strong>Assigned slash commands</strong><small>{commandIds.size} selected</small></div></header>{commands.map((item) => <label key={item.id}><input type="checkbox" checked={commandIds.has(item.id)} onChange={() => toggle(setCommandIds, commandIds, item.id)} /><span><strong>{item.name || "Untitled command"}</strong><small>{item.command || "Reference"}</small></span></label>)}{!commands.length && <p>No commands available.</p>}</section><footer><button className="primary" onClick={() => onSave({ skillIds: [...skillIds], slashCommandIds: [...commandIds] })}>Save assignments</button></footer></div>;
+}
+
+function ProjectDetail({ project, repo, api, skills, commands, onBack, onChanged, onRepoChanged, onAction, setNotice, initialTab = "overview" }) {
+  const [tab, setTab] = useState(initialTab === "commit" ? "changes" : initialTab); const [readme, setReadme] = useState(null); const [agentsDirty, setAgentsDirty] = useState(false); useEffect(() => { if (project.local_path) api.readme(project.local_path).then(setReadme).catch(() => setReadme(null)); }, [project.id]);
+  const tabs = [["overview", "Overview"], ["tasks", "Tasks"], ["changes", "Changes"], ["agents", "AGENTS.md"], ["assignments", "Skills & Commands"], ["activity", "Activity"], ["settings", "Settings"]];
+  async function projectAction(kind) { if (kind === "refresh") return onAction("refresh", project); return onAction(kind, project); }
+  function changeTab(value) { if (tab === "agents" && agentsDirty && !confirm("Discard unsaved AGENTS.md changes?")) return; setTab(value); }
+  function leave() { if (tab === "agents" && agentsDirty && !confirm("Discard unsaved AGENTS.md changes?")) return; onBack(); }
+  return <section className="project-detail"><header className="project-detail-header"><button onClick={leave}>← Projects</button><div><span className="project-repo-icon">◇</span><span><h1>{project.name}</h1><p>{project.next_action || "No next action set"}</p></span></div><div><StatusPill value={project.status} /><RankPill project={project} /><button className="primary" onClick={() => changeTab("changes")}>View changes</button></div></header><nav className="project-tabs" aria-label="Project sections">{tabs.map(([value, label]) => <button key={value} className={tab === value ? "active" : ""} onClick={() => changeTab(value)}>{label}{value === "tasks" ? ` ${project.tasks.filter((task) => task.status !== "done" && task.status !== "archived").length}` : value === "changes" && repo?.files?.length ? ` ${repo.files.length}` : ""}</button>)}</nav><div className="project-detail-body">
+    {tab === "overview" && <OverviewTab project={project} repo={repo} readme={readme} onSave={(patch) => onChanged(api.update(project.id, patch))} onAction={projectAction} />}
+    {tab === "tasks" && <TasksTab project={project} onCreate={(input) => onChanged(api.tasks.create(project.id, input))} onUpdate={(id, patch) => onChanged(api.tasks.update(id, patch))} onRemove={(id) => { if (confirm("Delete this task?")) onChanged(api.tasks.remove(id)); }} />}
+    {tab === "changes" && <ChangesTab project={project} repo={repo} api={api} onStatus={onRepoChanged} setNotice={setNotice} autoCommit={initialTab === "commit"} />}
+    {tab === "agents" && <AgentsTab project={project} api={api} setNotice={setNotice} onDirty={setAgentsDirty} />}
+    {tab === "assignments" && <AssignmentsTab project={project} skills={skills} commands={commands} onSave={(input) => onChanged(api.assign(project.id, input))} />}
+    {tab === "activity" && <section className="project-panel activity-list"><header><strong>Activity</strong><small>{project.activity.length} events</small></header>{project.activity.map((item) => <article key={item.id}><span>{item.kind === "commit" ? "●" : item.kind === "task" ? "✓" : "◇"}</span><div><strong>{item.summary}</strong>{item.detail && <p>{item.detail}</p>}<small>{relativeTime(item.created_at)}</small></div></article>)}{!project.activity.length && <p>No activity yet.</p>}</section>}
+    {tab === "settings" && <section className="project-panel project-settings"><header><strong>Project settings</strong></header><label><span>Push after commit</span><input type="checkbox" checked={project.push_after_commit} onChange={(event) => onChanged(api.update(project.id, { pushAfterCommit: event.target.checked }))} /></label><div><strong>Local repository</strong><code>{project.local_path || "Not connected"}</code></div><div className="danger-zone"><strong>Remove project</strong><p>Removes the Notebook record and tasks. Repository files stay untouched.</p><button onClick={() => onAction("remove", project)}>Remove from Notebook</button></div></section>}
+  </div></section>;
+}
+
+export function ProjectsPage({ api, skills, commands, onHide }) {
+  const [projects, setProjects] = useState([]); const [repoStates, setRepoStates] = useState({}); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState(""); const [selectedId, setSelectedId] = useState(() => location.hash.match(/^#\/projects\/([^/]+)/)?.[1] || null); const [detailTab, setDetailTab] = useState("overview"); const [addOpen, setAddOpen] = useState(false); const [notice, setNotice] = useState(null); const [query, setQuery] = useState(""); const [status, setStatus] = useState(""); const [priority, setPriority] = useState(""); const [language, setLanguage] = useState(""); const [tag, setTag] = useState(""); const [attentionFilter, setAttentionFilter] = useState(""); const [sort, setSort] = useState("priority"); const [viewMode, setViewMode] = useState(() => localStorage.getItem("projects:view") || "grid"); const dragId = useRef(null);
+  async function load() { setLoading(true); setLoadError(""); try { const result = await api.list(); setProjects(result); setLoading(false); refreshAll(result); } catch (error) { setLoadError(error.message); setLoading(false); } }
+  useEffect(() => { load(); }, []); useEffect(() => { localStorage.setItem("projects:view", viewMode); }, [viewMode]); useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(null), 5000); return () => clearTimeout(timer); } }, [notice]);
+  async function refresh(project) { if (!project.git_root) return; setRepoStates((state) => ({ ...state, [project.id]: { loading: true } })); try { const next = await api.status(project.git_root); setRepoStates((state) => ({ ...state, [project.id]: next })); } catch (error) { setRepoStates((state) => ({ ...state, [project.id]: { error: error.message, available: false, files: [], counts: {} } })); } }
+  function refreshAll(list = projects) { list.filter((item) => item.git_root).forEach((item) => refresh(item)); }
+  function updateOne(result) { return Promise.resolve(result).then((updated) => { setProjects((items) => items.map((item) => item.id === updated.id ? updated : item)); setNotice({ text: "Project saved." }); return updated; }).catch((error) => setNotice({ error: true, text: error.message })); }
+  function openProject(id, tab = "overview") { setSelectedId(id); setDetailTab(tab); location.hash = `/projects/${id}`; }
+  function back() { setSelectedId(null); location.hash = "/projects"; }
+  async function quickAction(kind, project) {
     try {
-      const result = await api.commit({ root: project.git_root, files: [...files], message, push, acknowledgeSensitive: ack });
-      onDone(result.status); onClose(); setNotice({ text: push ? `Committed ${result.shortHash} and pushed to GitHub.` : `Committed ${result.shortHash} locally.` });
-    } catch (error) { setNotice({ error: true, text: error.message }); }
-    finally { setBusy(false); }
-  }
-  return <div className="project-modal-backdrop"><form className="github-commit-modal" role="dialog" aria-modal="true" aria-label={`Commit ${project.name}`} onSubmit={submit}>
-    <header><div><strong>Review and commit</strong><small>{project.name} · {repo.branch || "No branch"}</small></div><button type="button" onClick={onClose} aria-label="Close"><X size={17} /></button></header>
-    <div className="commit-workspace"><section className="commit-file-list">{repo.files.map((item) => <div key={item.path} className={activeFile?.path === item.path ? "is-active" : ""}><input aria-label={`Include ${item.path}`} type="checkbox" checked={files.has(item.path)} onChange={(event) => setFiles((current) => { const next = new Set(current); event.target.checked ? next.add(item.path) : next.delete(item.path); return next; })} /><button type="button" onClick={() => setActiveFile(item)}><span>{item.path}</span><small>{words(item.kind)}</small></button></div>)}</section><section className="commit-diff"><header>{activeFile?.path || "Diff"}</header><pre>{diff ? diff.text || "No textual diff available." : "Loading diff…"}</pre></section></div>
-    {suspicious.length > 0 && <label className="sensitive-warning"><input type="checkbox" checked={ack} onChange={(event) => setAck(event.target.checked)} /><span><strong>Potential secret file</strong>Review {suspicious.join(", ")} before including it.</span></label>}
-    <div className="commit-controls"><label>Commit message<input value={message} onChange={(event) => setMessage(event.target.value)} /></label>{canPush && <label className="commit-push"><input type="checkbox" checked={push} onChange={(event) => setPush(event.target.checked)} /> Push to GitHub after committing</label>}</div>
-    <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !message.trim() || !files.size || (suspicious.length > 0 && !ack)}>{busy ? "Working…" : push ? "Commit & push" : "Commit locally"}</button></footer>
-  </form></div>;
-}
-
-function GithubSetupDialog({ project, api, onClose, onDone, setNotice }) {
-  const suggested = project.name.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-|-$/g, "") || "project";
-  const [draft, setDraft] = useState({ mode: "create", repository: suggested, visibility: "private" });
-  const [busy, setBusy] = useState(false);
-  async function submit(event) {
-    event.preventDefault(); setBusy(true);
-    try {
-      const result = await api.githubSetup({ projectId: project.id, root: project.git_root || project.local_path, repository: draft.repository, mode: draft.mode, visibility: draft.visibility, initialize: !project.git_root, description: project.description || "" });
-      onDone(result); onClose(); setNotice({ text: result.created ? `Created ${result.repository} on GitHub.` : `Connected ${result.repository}.` });
-    } catch (error) { setNotice({ error: true, text: error.message }); }
-    finally { setBusy(false); }
-  }
-  return <div className="project-modal-backdrop"><form className="project-modal github-setup-modal" role="dialog" aria-modal="true" aria-label={`Set up GitHub for ${project.name}`} onSubmit={submit}>
-    <header><div><strong>Set up GitHub</strong><small>{project.name}</small></div><button type="button" onClick={onClose} aria-label="Close"><X size={17} /></button></header>
-    {!project.git_root && <p className="setup-note"><GitBranch size={15} /> This folder will be initialized as a Git repository.</p>}
-    <div className="setup-mode"><button type="button" className={draft.mode === "create" ? "is-active" : ""} onClick={() => setDraft({ ...draft, mode: "create" })}>Create new</button><button type="button" className={draft.mode === "connect" ? "is-active" : ""} onClick={() => setDraft({ ...draft, mode: "connect" })}>Connect existing</button></div>
-    <label>Repository<input value={draft.repository} onChange={(event) => setDraft({ ...draft, repository: event.target.value })} placeholder="owner/project or project" required /></label>
-    {draft.mode === "create" && <label>Visibility<select value={draft.visibility} onChange={(event) => setDraft({ ...draft, visibility: event.target.value })}><option value="private">Private</option><option value="public">Public</option></select></label>}
-    <p className="setup-copy">No files are committed or pushed during setup. You review them next.</p>
-    <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy}>{busy ? "Setting up…" : draft.mode === "create" ? "Create repository" : "Connect repository"}</button></footer>
-  </form></div>;
-}
-
-function GithubRow({ project, repo, auth, api, bucket, busy, onCommit, onSetup, onPush, onAction }) {
-  const url = githubUrl(project, repo);
-  let action = null;
-  if (bucket.id === "changes") action = <button className="primary" onClick={() => onCommit(project)}>Review & commit</button>;
-  else if (bucket.id === "push") action = auth?.authenticated ? <button className="primary" disabled={busy} onClick={() => onPush(project)}><Upload size={14} /> {busy ? "Pushing…" : "Push"}</button> : null;
-  else if (bucket.id === "setup" && !bucket.loading && !bucket.blocked && project.local_path) action = auth?.authenticated ? <button className="primary" onClick={() => onSetup(project)}>Set up</button> : null;
-  else if (bucket.id === "clean" && url) action = <button onClick={() => onAction("github", project, repo)}>Open <ArrowUpRight size={13} /></button>;
-  if (bucket.blocked && project.local_path) action = <button onClick={() => onAction("terminal", project)}>Open terminal</button>;
-  return <article className="github-project-row"><ProjectLogo project={project} load={api.logo} /><div className="github-project-name"><strong>{project.name}</strong><small>{repo?.branch || (project.git_root ? "No branch" : "No Git repository")}</small></div><div className={`github-project-state state-${bucket.id}`}><span>{bucket.id === "clean" ? <CheckCircle2 size={13} /> : bucket.id === "changes" ? <GitCommit size={13} /> : bucket.id === "push" ? <Upload size={13} /> : <AlertTriangle size={13} />}{bucket.reason}</span></div><div className="github-project-action">{action}</div></article>;
-}
-
-function GithubPage({ projects, repos, auth, api, busyId, onCommit, onSetup, onPush, onAction, onSignIn, onRefresh }) {
-  const active = projects.filter((project) => !["completed", "archived"].includes(project.status));
-  const groups = [
-    { id: "changes", title: "Changes to commit", hint: "Review files before they leave this computer." },
-    { id: "push", title: "Ready to push", hint: "Local commits not yet on GitHub." },
-    { id: "setup", title: "Needs setup", hint: "Connection or repository state needs attention." },
-    { id: "clean", title: "Up to date", hint: "Nothing waiting." },
-  ].map((group) => ({ ...group, items: active.map((project) => ({ project, repo: repos[project.id], bucket: githubBucket(project, repos[project.id]) })).filter((item) => item.bucket.id === group.id) }));
-  return <div className="github-page">
-    <section className={`github-account ${auth?.authenticated ? "is-connected" : ""}`}><Github size={20} /><div><strong>{auth?.authenticated ? `Connected as @${auth.login}` : auth?.available === false ? "GitHub CLI required" : "Connect GitHub"}</strong><p>{auth?.authenticated ? "Projects can commit and push through your existing GitHub CLI login." : auth?.available === false ? "Install GitHub CLI, then reopen Notebook." : "Sign in once to create repositories and push commits."}</p></div><div>{!auth?.authenticated && auth?.available !== false && <button className="primary" onClick={onSignIn}>Sign in</button>}<button onClick={onRefresh}><RefreshCw size={14} /> Refresh</button></div></section>
-    <div className="github-groups">{groups.map((group) => <section className={`github-group group-${group.id}`} key={group.id}><header><div><h2>{group.title}</h2><p>{group.hint}</p></div><span>{group.items.length}</span></header>{group.items.length ? <div>{group.items.map(({ project, repo, bucket }) => <GithubRow key={project.id} project={project} repo={repo} bucket={bucket} auth={auth} api={api} busy={busyId === project.id} onCommit={onCommit} onSetup={onSetup} onPush={onPush} onAction={onAction} />)}</div> : <p className="github-none">None</p>}</section>)}</div>
-  </div>;
-}
-
-export function ProjectsPage({ api, onHide }) {
-  const [projects, setProjects] = useState([]);
-  const [repos, setRepos] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-  const [section, setSection] = useState(() => localStorage.getItem("projects:section") || "priorities");
-  const [category, setCategory] = useState("All");
-  const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState(null);
-  const [draggedId, setDraggedId] = useState(null);
-  const dragRef = useRef(null);
-  const [editing, setEditing] = useState(null);
-  const [addOpen, setAddOpen] = useState(false);
-  const [committing, setCommitting] = useState(null);
-  const [settingUp, setSettingUp] = useState(null);
-  const [auth, setAuth] = useState(null);
-  const [busyId, setBusyId] = useState(null);
-
-  useEffect(() => { load(); loadAuth(); }, []);
-  useEffect(() => { localStorage.setItem("projects:section", section); }, [section]);
-  useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(null), 5500); return () => clearTimeout(timer); } return undefined; }, [notice]);
-
-  async function loadAuth() {
-    try { setAuth(await api.githubAuthStatus()); }
-    catch { setAuth({ available: false, authenticated: false, login: null }); }
-  }
-  async function refreshProject(project) {
-    if (!project.git_root) { setRepos((state) => ({ ...state, [project.id]: { available: true, isGit: false, clean: true, files: [], counts: {} } })); return; }
-    setRepos((state) => ({ ...state, [project.id]: { ...(state[project.id] || {}), loading: true } }));
-    try { const value = await api.status(project.git_root); setRepos((state) => ({ ...state, [project.id]: value })); }
-    catch (error) { setRepos((state) => ({ ...state, [project.id]: { error: error.message, available: false, files: [], counts: {} } })); }
-  }
-  async function load() {
-    setLoading(true); setLoadError("");
-    try { const items = await api.list(); setProjects(items); setLoading(false); items.forEach(refreshProject); }
-    catch (error) { setLoadError(error.message); setLoading(false); }
-  }
-  function refreshAll() { projects.forEach(refreshProject); loadAuth(); }
-  async function moveProject(id, tier, beforeId) {
-    if (!id) return;
-    const previous = projects;
-    const moved = previous.find((item) => item.id === id); if (!moved) return;
-    const next = previous.filter((item) => item.id !== id);
-    const updated = { ...moved, tier };
-    const index = beforeId ? next.findIndex((item) => item.id === beforeId) : -1;
-    if (index >= 0) next.splice(index, 0, updated); else next.push(updated);
-    setProjects(next);
-    try { setProjects(await api.move({ id, tier, beforeId: beforeId || null })); setNotice({ text: `${moved.name} moved to ${TIERS.find((item) => item.id === tier)?.name}.` }); }
-    catch (error) { setProjects(previous); setNotice({ error: true, text: error.message }); }
-  }
-  async function action(kind, project, repo = repos[project.id]) {
-    try {
-      if (kind === "remove") {
-        if (!confirm(`Remove ${project.name} from Notebook? Repository files stay untouched.`)) return;
-        await api.remove(project.id); setProjects((items) => items.filter((item) => item.id !== project.id)); setNotice({ text: `${project.name} removed. Repository files untouched.` }); return;
-      }
-      if (kind === "archive") {
-        const updated = await api.update(project.id, { status: "archived" }); setProjects((items) => items.map((item) => item.id === updated.id ? updated : item)); setNotice({ text: `${project.name} archived.` }); return;
-      }
-      await api.open(kind === "github" ? { kind, url: githubUrl(project, repo) } : { kind, path: project.local_path });
+      if (kind === "copy") { await navigator.clipboard.writeText(project.local_path); setNotice({ text: "Local path copied." }); }
+      else if (["pause", "resume", "complete", "archive"].includes(kind)) updateOne(api.update(project.id, { status: kind === "pause" ? "paused" : kind === "resume" ? "active" : kind === "complete" ? "completed" : "archived" }));
+      else if (kind === "refresh") { await refresh(project); setNotice({ text: "Repository status refreshed." }); }
+      else if (kind === "fetch") { const next = await api.fetch(project.git_root); setRepoStates((states) => ({ ...states, [project.id]: next })); setNotice({ text: "Remote references fetched." }); }
+      else if (kind === "remove") { if (!confirm(`Remove ${project.name} from Notebook? The repository files stay untouched.`)) return; await api.remove(project.id); setProjects((items) => items.filter((item) => item.id !== project.id)); if (selectedId === project.id) back(); setNotice({ text: `${project.name} removed; repository files untouched.` }); }
+      else await api.open(kind === "github" ? { kind, url: project.github_url } : { kind, path: project.local_path });
     } catch (error) { setNotice({ error: true, text: error.message }); }
   }
-  async function signIn() {
-    try { setAuth(await api.githubSignIn()); setNotice({ text: "GitHub connected." }); }
-    catch (error) { setNotice({ error: true, text: error.message }); }
+  async function reorder(sourceId, targetId) { if (!sourceId || sourceId === targetId || sort !== "manual") return; const next = [...projects]; const from = next.findIndex((item) => item.id === sourceId); const to = next.findIndex((item) => item.id === targetId); next.splice(to, 0, next.splice(from, 1)[0]); setProjects(next); try { setProjects(await api.reorder(next.map((item) => item.id))); } catch (error) { setNotice({ error: true, text: error.message }); load(); } }
+  async function moveFocus(id, direction) { const active = projects.filter((item) => item.status === "active"); const index = active.findIndex((item) => item.id === id); const other = active[index + direction]; if (other) reorder(id, other.id); }
+  const languages = [...new Set(projects.map((item) => item.primary_language).filter(Boolean))].sort();
+  const tags = [...new Set(projects.flatMap((item) => item.tags || []))].sort();
+  const shown = useMemo(() => projects.filter((project) => {
+    const repo = repoStates[project.id]; const haystack = `${project.name} ${project.description} ${project.local_path} ${project.github_url} ${(project.tags || []).join(" ")} ${(project.skill_ids || []).map((id) => skills.find((item) => item.id === id)?.name).join(" ")} ${(project.slash_command_ids || []).map((id) => commands.find((item) => item.id === id)?.name).join(" ")}`.toLowerCase();
+    if (query && !haystack.includes(query.toLowerCase())) return false; if (status && project.status !== status) return false; if (priority && project.priority !== priority) return false; if (language && project.primary_language !== language) return false; if (tag && !project.tags?.includes(tag)) return false;
+    if (attentionFilter === "changes" && (repo?.clean !== false)) return false; if (attentionFilter === "conflicts" && !repo?.counts?.conflicts) return false; if (attentionFilter === "ahead" && !repo?.ahead) return false; if (attentionFilter === "missing" && project.local_path) return false; if (attentionFilter === "blocked" && project.status !== "blocked" && !project.tasks.some((task) => task.status === "blocked")) return false; if (attentionFilter === "overdue" && !project.tasks.some((task) => task.status !== "done" && task.due_date && task.due_date < new Date().toISOString().slice(0, 10))) return false; if (attentionFilter === "stale" && !attention(project, repo).includes("Project is stale")) return false; return true;
+  }).sort((a, b) => sort === "priority" ? PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority] : sort === "updated" ? b.updated_at.localeCompare(a.updated_at) : sort === "activity" ? String(b.last_worked_at || "").localeCompare(a.last_worked_at || "") : sort === "commit" ? String(repoStates[b.id]?.lastCommit?.committedAt || "").localeCompare(repoStates[a.id]?.lastCommit?.committedAt || "") : sort === "name" ? a.name.localeCompare(b.name) : sort === "progress" ? taskProgress(b).percent - taskProgress(a).percent : sort === "changes" ? (repoStates[b.id]?.files?.length || 0) - (repoStates[a.id]?.files?.length || 0) : a.manual_rank - b.manual_rank), [projects, repoStates, query, status, priority, language, tag, attentionFilter, sort, skills, commands]);
+  async function setRank(project, rank) {
+    const priority = RANK_TO_PRIORITY[rank];
+    setProjects((items) => items.map((item) => item.id === project.id ? { ...item, priority } : item));
+    try { await api.update(project.id, { priority }); }
+    catch (error) { setNotice({ error: true, text: error.message || "Could not save that rank." }); load(); }
   }
-  async function push(project) {
-    setBusyId(project.id);
-    try { const repo = await api.push(project.git_root); setRepos((state) => ({ ...state, [project.id]: repo })); setNotice({ text: `${project.name} pushed to GitHub.` }); }
-    catch (error) { setNotice({ error: true, text: error.message }); }
-    finally { setBusyId(null); }
+  async function setExplanation(project, description) {
+    setProjects((items) => items.map((item) => item.id === project.id ? { ...item, description } : item));
+    try { await api.update(project.id, { description }); }
+    catch (error) { setNotice({ error: true, text: error.message || "Could not save that description." }); load(); }
   }
-  const categories = useMemo(() => [...new Set(projects.filter((project) => !["completed", "archived"].includes(project.status)).map(projectCategory))].sort((a, b) => a.localeCompare(b)), [projects]);
-  const activeCount = projects.filter((project) => !["completed", "archived"].includes(project.status)).length;
-
-  return <section className="projects-page-simple">
-    <header className="projects-simple-header"><div><h1>Projects</h1><p>{section === "priorities" ? "Choose what deserves your attention." : "Review, commit, and publish safely."}</p></div><div><button onClick={onHide} aria-label="Hide notebook"><X size={17} /></button><button className="primary" onClick={() => setAddOpen(true)}><Plus size={15} /> Add project</button></div></header>
-    <Notice value={notice} />
-    <nav className="project-section-tabs" aria-label="Project pages"><button className={section === "priorities" ? "is-active" : ""} onClick={() => setSection("priorities")}>Priorities</button><button className={section === "github" ? "is-active" : ""} onClick={() => setSection("github")}><Github size={14} /> GitHub</button></nav>
-    {loading ? <Empty title="Loading projects" body="Opening your local workspace…" /> : loadError ? <Empty title="Projects unavailable" body={loadError} action={<button onClick={load}>Try again</button>} /> : !projects.length ? <Empty title="Add your first project" body="Connect a local folder, choose its category, then place it in a rank." action={<button className="primary" onClick={() => setAddOpen(true)}>Add project</button>} /> : section === "priorities" ? <>
-      <div className="project-board-toolbar"><div className="project-categories"><button className={category === "All" ? "is-active" : ""} onClick={() => setCategory("All")}>All <span>{activeCount}</span></button>{categories.map((item) => <button key={item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{item}</button>)}<button className={category === "Archived" ? "is-active" : ""} onClick={() => setCategory("Archived")}>Archived</button></div><label><Search size={14} /><input aria-label="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" /></label></div>
-      <PriorityBoard projects={projects} repos={repos} api={api} category={category} query={query} onEdit={setEditing} onMove={moveProject} onAction={action} dragRef={dragRef} draggedId={draggedId} setDraggedId={setDraggedId} />
-    </> : <GithubPage projects={projects} repos={repos} auth={auth} api={api} busyId={busyId} onCommit={(project) => setCommitting(project)} onSetup={(project) => setSettingUp(project)} onPush={push} onAction={action} onSignIn={signIn} onRefresh={refreshAll} />}
-    {editing && <ProjectEditor project={editing} categories={categories} api={api} onClose={() => setEditing(null)} onSaved={(updated, all) => setProjects(all || projects.map((item) => item.id === updated.id ? updated : item))} setNotice={setNotice} />}
-    {addOpen && <AddProjectDialog api={api} categories={categories} projects={projects} onClose={() => setAddOpen(false)} onAdded={(items) => { setProjects((current) => [...current, ...items]); items.forEach(refreshProject); setNotice({ text: `${items.length} project${items.length === 1 ? "" : "s"} added.` }); }} setNotice={setNotice} />}
-    {committing && <CommitDialog project={committing} repo={repos[committing.id]} api={api} auth={auth} onClose={() => setCommitting(null)} onDone={(repo) => setRepos((state) => ({ ...state, [committing.id]: repo }))} setNotice={setNotice} />}
-    {settingUp && <GithubSetupDialog project={settingUp} api={api} onClose={() => setSettingUp(null)} onDone={(result) => { setProjects((items) => items.map((item) => item.id === result.project.id ? result.project : item)); setRepos((state) => ({ ...state, [result.project.id]: result.status })); }} setNotice={setNotice} />}
+  const selected = projects.find((item) => item.id === selectedId); const active = projects.filter((item) => item.status === "active"); const needsAttention = projects.filter((item) => attention(item, repoStates[item.id]).length).length;
+  if (selected) return <><Notice notice={notice} /><ProjectDetail project={selected} repo={repoStates[selected.id]} api={api} skills={skills} commands={commands} onBack={back} onChanged={updateOne} onRepoChanged={(repo) => setRepoStates((states) => ({ ...states, [selected.id]: repo }))} onAction={quickAction} setNotice={setNotice} initialTab={detailTab} /></>;
+  return <section className="projects-page"><header className="projects-header"><div><h1>Projects</h1><p>Manage your repositories, tasks, instructions, skills, and commands.</p></div><div><button onClick={onHide} aria-label="Hide notebook">×</button><button onClick={() => refreshAll()} disabled={!projects.some((item) => item.git_root)}>↻ Refresh</button><button className="primary" onClick={() => setAddOpen(true)}>+ Add Project</button></div></header><Notice notice={notice} />
+    <div className="project-summary"><div><strong>{active.length}</strong><span>Active</span></div><div><strong>{needsAttention}</strong><span>Need attention</span></div><div><strong>{projects.filter((item) => repoStates[item.id]?.clean === false).length}</strong><span>With changes</span></div><div><strong>{projects.filter((item) => item.status === "blocked").length}</strong><span>Blocked</span></div><div><strong>{projects.reduce((sum, item) => sum + item.tasks.filter((task) => task.status === "in_progress").length, 0)}</strong><span>In progress</span></div><div><strong>{projects.filter((item) => item.status === "completed").length}</strong><span>Completed</span></div></div>
+    {active.length > 0 && <section className="focus-queue"><header><div><strong>Focus Queue</strong><small>Manual order · drag or use arrows</small></div></header><div>{active.slice(0, 4).map((project, index) => { const projectAttention = attention(project, repoStates[project.id]); return <article key={project.id} draggable onDragStart={() => { dragId.current = project.id; }} onDragOver={(event) => event.preventDefault()} onDrop={() => reorder(dragId.current, project.id)}><span>{index + 1}</span><button onClick={() => openProject(project.id)}><ProjectLogo project={project} load={api.logo} /><span><strong>{project.name}</strong><small>{project.next_action || "Set next action"}</small></span></button><RankPill project={project} compact /><i className={projectAttention.length ? "" : "empty"} title={projectAttention.join(" · ")}>{projectAttention.length ? "!" : ""}</i><div><button aria-label={`Move ${project.name} up`} disabled={!index} onClick={() => moveFocus(project.id, -1)}>↑</button><button aria-label={`Move ${project.name} down`} disabled={index === active.length - 1} onClick={() => moveFocus(project.id, 1)}>↓</button></div></article>; })}</div></section>}
+    <div className="projects-toolbar"><label className="project-search"><span>⌕</span><input aria-label="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects, paths, tags, skills…" /></label><select aria-label="Filter project status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{STATUSES.map((item) => <option key={item} value={item}>{words(item)}</option>)}</select><select aria-label="Filter project rank" value={priority} onChange={(event) => setPriority(event.target.value)}><option value="">Any rank</option>{RANKS.map((item) => <option key={item.rank} value={item.priority}>{item.label}</option>)}<option value="none">Unranked</option></select>{languages.length > 0 && <select aria-label="Filter project language" value={language} onChange={(event) => setLanguage(event.target.value)}><option value="">All languages</option>{languages.map((item) => <option key={item}>{item}</option>)}</select>}{tags.length > 0 && <select aria-label="Filter project tag" value={tag} onChange={(event) => setTag(event.target.value)}><option value="">All tags</option>{tags.map((item) => <option key={item}>{item}</option>)}</select>}<select aria-label="Filter project attention" value={attentionFilter} onChange={(event) => setAttentionFilter(event.target.value)}><option value="">Any attention</option><option value="changes">Has changes</option><option value="conflicts">Has conflicts</option><option value="overdue">Overdue tasks</option><option value="blocked">Blocked tasks</option><option value="ahead">Ahead of remote</option><option value="missing">Missing local path</option><option value="stale">Stale projects</option></select><select aria-label="Sort projects" value={sort} onChange={(event) => setSort(event.target.value)}><option value="manual">Manual order</option><option value="priority">Rank</option><option value="updated">Recently updated</option><option value="activity">Last local activity</option><option value="commit">Last commit</option><option value="name">Name</option><option value="progress">Task progress</option><option value="changes">Number of changes</option></select><div className="view-toggle"><button className={viewMode === "grid" ? "active" : ""} onClick={() => setViewMode("grid")} aria-label="Project grid view">▦</button><button className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")} aria-label="Project list view">☷</button></div></div>
+    {loading ? <Empty title="Loading projects" body="Opening your local workspace…" /> : loadError ? <Empty title="Projects unavailable" body={loadError} action={<button onClick={load}>Try again</button>} /> : !projects.length ? <Empty title="Build your project command center" body="Add a local repository to track tasks, changes, instructions, skills, and commands." action={<button className="primary" onClick={() => setAddOpen(true)}>Add your first project</button>} /> : !shown.length ? <Empty title="No matching projects" body="Clear or adjust the current filters." action={<button onClick={() => { setQuery(""); setStatus(""); setPriority(""); setLanguage(""); setTag(""); setAttentionFilter(""); }}>Clear filters</button>} /> : <div className="projects-ranked">{[...RANKS.map((entry) => ({ ...entry, items: shown.filter((project) => rankOf(project) === entry.rank) })), { rank: 0, heading: "Unranked", blurb: "Give each of these a rank, or remove it.", items: shown.filter((project) => !rankOf(project)) }].filter((group) => group.items.length).map((group) => <section className={`rank-group rank-group-${group.rank}`} key={group.rank}>
+      <header><div><h2>{group.heading}</h2><p>{group.blurb}</p></div><span>{group.items.length}</span></header>
+      <div className={`projects-collection ${viewMode}`}>{group.items.map((project) => <ProjectCard key={project.id} project={project} repo={repoStates[project.id]} viewMode={viewMode} onLogo={api.logo} onOpen={openProject} onRefresh={refresh} onQuickAction={quickAction} onRank={setRank} onExplain={setExplanation} onDragStart={(_event, id) => { dragId.current = id; }} onDrop={(_event, id) => reorder(dragId.current, id)} />)}</div>
+    </section>)}</div>}
+    {addOpen && <AddProjectDialog api={api} projects={projects} onClose={() => setAddOpen(false)} onAdded={(items) => { setProjects((current) => [...current, ...items]); items.forEach(refresh); setNotice({ text: `${items.length} project${items.length === 1 ? "" : "s"} added.` }); }} setNotice={setNotice} />}
   </section>;
 }

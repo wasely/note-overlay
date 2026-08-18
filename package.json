@@ -1,6 +1,6 @@
 {
   "name": "note-overlay",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "type": "module",
   "private": true,
   "description": "A local-first Markdown notebook and daily planner that opens anywhere with one shortcut.",
@@ -63,7 +63,7 @@
     "appId": "com.notebook.local",
     "productName": "Notebook",
     "directories": {
-      "output": "release-v27"
+      "output": "release-v28"
     },
     "electronDist": "release-v03/win-unpacked.tmp",
     "files": [
