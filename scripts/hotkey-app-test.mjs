@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const electronPath = require("electron");
+const packagedPath = process.env.NOTEBOOK_TEST_EXECUTABLE || "";
+const electronPath = packagedPath || require("electron");
 const userData = await fs.mkdtemp(path.join(os.tmpdir(), "notebook-hotkey-"));
 const accelerator = "Control+Alt+Shift+F10";
 let application;
@@ -20,10 +21,11 @@ function pressShortcut() {
 }
 
 async function windowState() {
-  return application.evaluate(({ BrowserWindow }) => {
+  const state = await application.evaluate(({ BrowserWindow }) => {
     const main = BrowserWindow.getAllWindows().find((window) => window.getTitle() === "Notebook");
-    return { visible: main?.isVisible() || false, focused: main?.isFocused() || false };
+    return JSON.stringify({ visible: main?.isVisible() || false, focused: main?.isFocused() || false });
   });
+  return JSON.parse(state);
 }
 
 async function waitForState(expected) {
@@ -38,8 +40,8 @@ async function waitForState(expected) {
 try {
   application = await electron.launch({
     executablePath: electronPath,
-    args: [".", `--user-data-dir=${userData}`],
-    env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1" },
+    args: packagedPath ? [`--user-data-dir=${userData}`] : [".", `--user-data-dir=${userData}`],
+    env: { ...process.env, NOTEBOOK_TEST_ISOLATED: "1", NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1" },
   });
   const mainPage = await application.firstWindow();
   await mainPage.getByText("Notebook", { exact: true }).waitFor();
@@ -52,10 +54,18 @@ try {
   const sinkCreated = application.waitForEvent("window");
   await application.evaluate(({ BrowserWindow }) => {
     const sink = new BrowserWindow({ width: 260, height: 160, x: 20, y: 20, title: "Hotkey focus sink", alwaysOnTop: true });
+    sink.setAlwaysOnTop(true, "screen-saver", 1);
     sink.loadURL("data:text/html,<title>Hotkey focus sink</title><body>Shortcut test</body>");
   });
   const sinkPage = await sinkCreated;
   await sinkPage.waitForLoadState();
+  await application.evaluate(({ BrowserWindow }) => {
+    const notebook = BrowserWindow.getAllWindows().find((window) => window.getTitle() !== "Hotkey focus sink");
+    notebook?.setAlwaysOnTop(false);
+    const sink = BrowserWindow.getAllWindows().find((window) => window.getTitle() === "Hotkey focus sink");
+    sink?.show();
+    sink?.focus();
+  });
   await sinkPage.bringToFront();
   await waitForState({ visible: true, focused: false });
 
@@ -65,6 +75,13 @@ try {
   pressShortcut();
   await waitForState({ visible: false, focused: false });
 
+  await application.evaluate(({ BrowserWindow }) => {
+    const notebook = BrowserWindow.getAllWindows().find((window) => window.getTitle() === "Notebook");
+    notebook?.setAlwaysOnTop(false);
+    const sink = BrowserWindow.getAllWindows().find((window) => window.getTitle() === "Hotkey focus sink");
+    sink?.show();
+    sink?.focus();
+  });
   await sinkPage.bringToFront();
   pressShortcut();
   await waitForState({ visible: true, focused: true });
