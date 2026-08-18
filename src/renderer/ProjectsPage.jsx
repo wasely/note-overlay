@@ -12,15 +12,6 @@ function relativeTime(value) {
   if (seconds < 60) return "Just now"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`; return new Date(value).toLocaleDateString();
 }
 function taskProgress(project) { const tasks = project.tasks?.filter((task) => task.status !== "archived") || []; const done = tasks.filter((task) => task.status === "done").length; return { done, total: tasks.length, percent: tasks.length ? Math.round(done / tasks.length * 100) : 0 }; }
-function attention(project, status) {
-  const items = []; if (!project.local_path) items.push("Missing local path"); else if (status?.available === false) items.push("Repository unavailable");
-  if (project.status === "blocked") items.push("Project blocked"); if (status?.counts?.conflicts) items.push(`${status.counts.conflicts} conflict${status.counts.conflicts === 1 ? "" : "s"}`);
-  if (status?.clean === false) { const count = status.files?.length || 0; items.push(`${count} uncommitted file${count === 1 ? "" : "s"}`); } if (status?.ahead) items.push(`${status.ahead} commit${status.ahead === 1 ? "" : "s"} ahead`);
-  const overdue = (project.tasks || []).filter((task) => task.status !== "done" && task.due_date && task.due_date < new Date().toISOString().slice(0, 10)).length; if (overdue) items.push(`${overdue} overdue task${overdue === 1 ? "" : "s"}`);
-  if (project.git_root && !project.github_url && !status?.remote) items.push("Missing GitHub remote");
-  if (project.status === "active" && project.last_worked_at && Date.now() - new Date(project.last_worked_at).getTime() > 30 * 86400000) items.push("Project is stale");
-  return items;
-}
 function MarkdownPreview({ content, label }) {
   let code = false;
   return <div className="markdown-preview" aria-label={label}>{String(content || "").split(/\r?\n/).map((line, index) => {
@@ -32,85 +23,23 @@ function MarkdownPreview({ content, label }) {
   })}</div>;
 }
 function Notice({ notice }) { return notice ? <div className={`project-notice ${notice.error ? "error" : ""}`} role="status">{notice.text}</div> : null; }
-// Importance is expressed as Rank 1-3 in the UI and stored in the existing priority
-// column, so nothing about the database or older projects has to change.
-const RANKS = [
-  { rank: 1, priority: "critical", label: "Now", heading: "Now", blurb: "Projects receiving active attention." },
-  { rank: 2, priority: "high", label: "Queued", heading: "Queued", blurb: "Ready when current work has room." },
-  { rank: 3, priority: "medium", label: "Later", heading: "Later", blurb: "Worth keeping, intentionally deferred." },
+const PROJECT_LANES = [
+  { tier: 1, ordinal: "01", label: "1st place", hint: "Your top project." },
+  { tier: 2, ordinal: "02", label: "2nd place", hint: "The project behind it." },
+  { tier: 3, ordinal: "03", label: "3rd place", hint: "Third in line." },
+  { tier: 4, ordinal: "—", label: "Queue", hint: "Everything else, ready when needed." },
 ];
-const PRIORITY_TO_RANK = { critical: 1, high: 2, medium: 3 };
-const RANK_TO_PRIORITY = { 1: "critical", 2: "high", 3: "medium", 0: "none" };
-function rankOf(project) { return PRIORITY_TO_RANK[project.priority] || 0; }
+const PRIORITY_TO_TIER = { critical: 1, high: 2, medium: 3 };
+function projectTier(project) { return Math.max(1, Math.min(4, Number(project.tier) || PRIORITY_TO_TIER[project.priority] || 4)); }
 
-const GENERIC_PROJECT_TAGS = new Set(["mine", "live", "code", "else", "finish", "later", "unranked", "vendor", "reference"]);
 function projectSummary(project) {
   const description = String(project.description || "").trim();
   if (description && !/^<[^>]+>/.test(description)) return description;
   return project.workshop?.summary || "Add a plain-language explanation.";
 }
-function projectLabels(project) {
-  const workshop = project.workshop || {};
-  const category = workshop.category || (project.category && project.category !== "Uncategorized" ? project.category : "");
-  const ownership = workshop.ownership === "vendor" ? "Reference" : workshop.workspace;
-  const existing = (project.tags || []).filter((tag) => !GENERIC_PROJECT_TAGS.has(String(tag).toLowerCase()));
-  const labels = [category, ...existing, project.primary_language, ownership]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean)
-    .map(words);
-  return [...new Set(labels)].slice(0, 3);
-}
-function repositorySummary(project, repo) {
-  if (!project.local_path) return { tone: "warn", text: "Folder unavailable" };
-  if (!project.git_root) return { tone: "muted", text: "Local folder" };
-  if (!repo || repo.loading) return { tone: "muted", text: "Checking repository" };
-  if (repo.error || repo.available === false) return { tone: "warn", text: "Repository unavailable" };
-  if (repo.counts?.conflicts) return { tone: "danger", text: `${repo.counts.conflicts} conflict${repo.counts.conflicts === 1 ? "" : "s"}` };
-  if (repo.clean === false) return { tone: "warn", text: `${repo.files?.length || 0} change${repo.files?.length === 1 ? "" : "s"}` };
-  if (repo.ahead) return { tone: "warn", text: `${repo.ahead} ready to push` };
-  if (project.github_url || repo.githubUrl || repo.remote) return { tone: "good", text: "GitHub current" };
-  return { tone: "muted", text: "Local repository" };
-}
 function RankPill({ project }) {
-  const rank = rankOf(project);
-  const label = rank ? `Rank ${rank}` : "Unranked";
-  return <span className={`project-pill rank-pill rank-pill-${rank}`} title={rank ? `Rank ${rank}` : "Unranked"}>{label}</span>;
-}
-
-function RankPicker({ project, onRank }) {
-  const current = rankOf(project);
-  return <div className="rank-picker" role="group" aria-label={`Importance for ${project.name}`}>
-    {RANKS.map(({ rank, label }) => <button
-      type="button"
-      key={rank}
-      className={`rank-chip rank-${rank} ${current === rank ? "is-active" : ""}`}
-      aria-pressed={current === rank}
-      title={label}
-      onClick={(event) => { event.stopPropagation(); onRank(project, current === rank ? 0 : rank); }}
-    >{rank}</button>)}
-  </div>;
-}
-
-// Inline explanation. Saves on blur so a project can be described without opening it.
-function ProjectExplanation({ project, onExplain }) {
-  const summary = projectSummary(project);
-  const [value, setValue] = useState(summary);
-  const [editing, setEditing] = useState(false);
-  useEffect(() => { setValue(summary); }, [project.id, summary]);
-  if (!editing) return <button type="button" className="project-explain" onClick={(event) => { event.stopPropagation(); setEditing(true); }} title="Edit project explanation">
-    {summary}
-  </button>;
-  return <textarea
-    className="project-explain-input"
-    autoFocus
-    value={value}
-    aria-label={`What ${project.name} is`}
-    placeholder="Explain what this project does in one sentence."
-    onClick={(event) => event.stopPropagation()}
-    onChange={(event) => setValue(event.target.value)}
-    onBlur={() => { setEditing(false); if (value.trim() && value.trim() !== String(project.description || "").trim()) onExplain(project, value.trim()); }}
-    onKeyDown={(event) => { if (event.key === "Escape") { setValue(summary); setEditing(false); } }}
-  />;
+  const lane = PROJECT_LANES[projectTier(project) - 1];
+  return <span className={`project-pill rank-pill rank-pill-${lane.tier}`}>{lane.label}</span>;
 }
 
 function StatusPill({ value, kind = "status" }) { return <span className={`project-pill ${kind}-${value}`}>{words(value)}</span>; }
@@ -130,29 +59,17 @@ function ProjectLogo({ project, load }) {
 
 function Empty({ title, body, action }) { return <div className="projects-empty"><span>⌂</span><strong>{title}</strong><p>{body}</p>{action}</div>; }
 
-function ProjectCard({ project, repo, onOpen, onRefresh, onQuickAction, onRank, onExplain, onDragStart, onDrop, onLogo }) {
-  const progress = taskProgress(project);
-  const alerts = attention(project, repo);
-  const repository = repositorySummary(project, repo);
-  const labels = projectLabels(project);
-  return <article className="project-card" draggable onDragStart={(event) => onDragStart(event, project.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDrop(event, project.id)}>
-    <header>
-      <button className="project-card-title" onClick={() => onOpen(project.id)}><ProjectLogo project={project} load={onLogo} /><span><strong>{project.name}</strong></span></button>
-      <RankPicker project={project} onRank={onRank} />
-      <details><summary aria-label={`Actions for ${project.name}`}>•••</summary><div className="project-menu"><button onClick={() => onOpen(project.id)}>Open project</button>{project.git_root && <><button onClick={() => onOpen(project.id, "changes")}>View changes</button><button onClick={() => onOpen(project.id, "commit")}>Commit changes</button></>}<button onClick={() => onRefresh(project)}>Refresh status</button>{project.local_path && <><button onClick={() => onQuickAction("folder", project)}>Open local folder</button><button onClick={() => onQuickAction("terminal", project)}>Open in terminal</button><button onClick={() => onQuickAction("editor", project)}>Open in editor</button><button onClick={() => onQuickAction("copy", project)}>Copy local path</button></>}{project.github_url && <button onClick={() => onQuickAction("github", project)}>Open GitHub</button>}<button onClick={() => onQuickAction(project.status === "paused" ? "resume" : "pause", project)}>{project.status === "paused" ? "Resume" : "Pause"}</button><button onClick={() => onQuickAction("complete", project)}>Mark complete</button><button onClick={() => onQuickAction("archive", project)}>Archive</button><button className="project-menu-danger" onClick={() => onQuickAction("remove", project)}>Remove from Notebook</button></div></details>
-    </header>
-    <ProjectExplanation project={project} onExplain={onExplain} />
-    <div className="project-card-meta">
-      {labels.map((label) => <span key={label}>{label}</span>)}
-      {project.status !== "active" ? <StatusPill value={project.status} /> : null}
-    </div>
-    {progress.total > 0 ? <div className="project-progress"><span><i style={{ width: `${progress.percent}%` }} /></span><small>{progress.done}/{progress.total} tasks</small></div> : null}
-    {alerts.length > 0 ? <div className="project-alerts">{alerts.slice(0, 2).map((item) => <span key={item}>! {item}</span>)}</div> : null}
-    <footer>
-      <span className={`project-repo-state is-${repository.tone}`}>{repository.text}</span>
-      <span>{project.tasks?.filter((task) => task.status !== "done" && task.status !== "archived").length || 0} open tasks</span>
-      <span>{relativeTime(project.last_worked_at || project.updated_at)}</span>
-    </footer>
+function ProjectCard({ project, onOpen, onDragStart, onDragEnd, onDropBefore, onLogo }) {
+  return <article
+    className="project-simple-card"
+    onDragOver={(event) => event.preventDefault()}
+    onDrop={(event) => { event.preventDefault(); event.stopPropagation(); onDropBefore(project.id); }}
+  >
+    <button type="button" draggable onDragStart={(event) => onDragStart(event, project.id)} onDragEnd={onDragEnd} onClick={() => onOpen(project.id)} aria-label={`Open ${project.name}`}>
+      <ProjectLogo project={project} load={onLogo} />
+      <span className="project-simple-copy"><strong>{project.name}</strong><span>{projectSummary(project)}</span></span>
+      <time dateTime={project.last_worked_at || project.updated_at}>Updated {relativeTime(project.last_worked_at || project.updated_at)}</time>
+    </button>
   </article>;
 }
 
@@ -240,13 +157,12 @@ function ProjectDetail({ project, repo, api, skills, commands, onBack, onChanged
 }
 
 export function ProjectsPage({ api, skills, commands, onHide }) {
-  const [projects, setProjects] = useState([]); const [repoStates, setRepoStates] = useState({}); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState(""); const [selectedId, setSelectedId] = useState(() => location.hash.match(/^#\/projects\/([^/]+)/)?.[1] || null); const [detailTab, setDetailTab] = useState("overview"); const [addOpen, setAddOpen] = useState(false); const [notice, setNotice] = useState(null); const [query, setQuery] = useState(""); const [status, setStatus] = useState(""); const [priority, setPriority] = useState(""); const [attentionFilter, setAttentionFilter] = useState(""); const dragId = useRef(null);
-  async function load() { setLoading(true); setLoadError(""); try { const result = await api.list(); setProjects(result); setLoading(false); refreshAll(result); } catch (error) { setLoadError(error.message); setLoading(false); } }
+  const [projects, setProjects] = useState([]); const [repoStates, setRepoStates] = useState({}); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState(""); const [selectedId, setSelectedId] = useState(() => location.hash.match(/^#\/projects\/([^/]+)/)?.[1] || null); const [detailTab, setDetailTab] = useState("overview"); const [addOpen, setAddOpen] = useState(false); const [notice, setNotice] = useState(null); const [query, setQuery] = useState(""); const [dragOverTier, setDragOverTier] = useState(null); const dragId = useRef(null);
+  async function load() { setLoading(true); setLoadError(""); try { const result = await api.list(); setProjects(result); setLoading(false); const selected = result.find((item) => item.id === selectedId); if (selected) refresh(selected); } catch (error) { setLoadError(error.message); setLoading(false); } }
   useEffect(() => { load(); }, []); useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(null), 5000); return () => clearTimeout(timer); } }, [notice]);
   async function refresh(project) { if (!project.git_root) return; setRepoStates((state) => ({ ...state, [project.id]: { loading: true } })); try { const next = await api.status(project.git_root); setRepoStates((state) => ({ ...state, [project.id]: next })); } catch (error) { setRepoStates((state) => ({ ...state, [project.id]: { error: error.message, available: false, files: [], counts: {} } })); } }
-  function refreshAll(list = projects) { list.filter((item) => item.git_root).forEach((item) => refresh(item)); }
   function updateOne(result) { return Promise.resolve(result).then((updated) => { setProjects((items) => items.map((item) => item.id === updated.id ? updated : item)); setNotice({ text: "Project saved." }); return updated; }).catch((error) => setNotice({ error: true, text: error.message })); }
-  function openProject(id, tab = "overview") { setSelectedId(id); setDetailTab(tab); location.hash = `/projects/${id}`; }
+  function openProject(id, tab = "overview") { const project = projects.find((item) => item.id === id); if (project) refresh(project); setSelectedId(id); setDetailTab(tab); location.hash = `/projects/${id}`; }
   function back() { setSelectedId(null); location.hash = "/projects"; }
   async function quickAction(kind, project) {
     try {
@@ -258,40 +174,41 @@ export function ProjectsPage({ api, skills, commands, onHide }) {
       else await api.open(kind === "github" ? { kind, url: project.github_url } : { kind, path: project.local_path });
     } catch (error) { setNotice({ error: true, text: error.message }); }
   }
-  async function reorder(sourceId, targetId) { if (!sourceId || sourceId === targetId) return; const next = [...projects]; const from = next.findIndex((item) => item.id === sourceId); const to = next.findIndex((item) => item.id === targetId); next.splice(to, 0, next.splice(from, 1)[0]); setProjects(next); try { setProjects(await api.reorder(next.map((item) => item.id))); } catch (error) { setNotice({ error: true, text: error.message }); load(); } }
+  async function moveProject(tier, beforeId = null) {
+    const id = dragId.current;
+    if (!id || id === beforeId) return;
+    const moving = projects.find((item) => item.id === id);
+    if (!moving) return;
+    const remaining = projects.filter((item) => item.id !== id);
+    const next = { ...moving, tier };
+    const beforeIndex = beforeId ? remaining.findIndex((item) => item.id === beforeId) : -1;
+    if (beforeIndex >= 0) remaining.splice(beforeIndex, 0, next); else remaining.push(next);
+    setProjects(remaining);
+    setDragOverTier(null);
+    try { setProjects(await api.move({ id, tier, beforeId })); }
+    catch (error) { setNotice({ error: true, text: error.message || "Could not move that project." }); load(); }
+  }
+  function startDrag(event, id) { dragId.current = id; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/project-id", id); }
+  function endDrag() { dragId.current = null; setDragOverTier(null); }
   const shown = useMemo(() => projects.filter((project) => {
-    const repo = repoStates[project.id]; const haystack = `${project.name} ${projectSummary(project)} ${projectLabels(project).join(" ")} ${project.local_path} ${project.github_url} ${(project.skill_ids || []).map((id) => skills.find((item) => item.id === id)?.name).join(" ")} ${(project.slash_command_ids || []).map((id) => commands.find((item) => item.id === id)?.name).join(" ")}`.toLowerCase();
-    if (query && !haystack.includes(query.toLowerCase())) return false; if (!status && ["completed", "archived"].includes(project.status)) return false; if (status === "archived" ? !["completed", "archived"].includes(project.status) : status && project.status !== status) return false; if (priority && project.priority !== priority) return false;
-    if (attentionFilter === "attention" && !attention(project, repo).length) return false; if (attentionFilter === "changes" && (repo?.clean !== false)) return false; if (attentionFilter === "conflicts" && !repo?.counts?.conflicts) return false; if (attentionFilter === "ahead" && !repo?.ahead) return false; if (attentionFilter === "missing" && project.local_path) return false; if (attentionFilter === "blocked" && project.status !== "blocked" && !project.tasks.some((task) => task.status === "blocked")) return false; if (attentionFilter === "overdue" && !project.tasks.some((task) => task.status !== "done" && task.due_date && task.due_date < new Date().toISOString().slice(0, 10))) return false; if (attentionFilter === "stale" && !attention(project, repo).includes("Project is stale")) return false; return true;
-  }).sort((a, b) => a.manual_rank - b.manual_rank), [projects, repoStates, query, status, priority, attentionFilter, skills, commands]);
-  async function setRank(project, rank) {
-    const priority = RANK_TO_PRIORITY[rank];
-    setProjects((items) => items.map((item) => item.id === project.id ? { ...item, priority } : item));
-    try { await api.update(project.id, { priority }); }
-    catch (error) { setNotice({ error: true, text: error.message || "Could not save that rank." }); load(); }
-  }
-  async function setExplanation(project, description) {
-    setProjects((items) => items.map((item) => item.id === project.id ? { ...item, description } : item));
-    try { await api.update(project.id, { description }); }
-    catch (error) { setNotice({ error: true, text: error.message || "Could not save that description." }); load(); }
-  }
+    const haystack = `${project.name} ${projectSummary(project)}`.toLowerCase();
+    return !["completed", "archived"].includes(project.status) && (!query || haystack.includes(query.toLowerCase()));
+  }).sort((a, b) => (a.tier_order ?? a.manual_rank) - (b.tier_order ?? b.manual_rank)), [projects, query]);
   const selected = projects.find((item) => item.id === selectedId);
   if (selected) return <><Notice notice={notice} /><ProjectDetail project={selected} repo={repoStates[selected.id]} api={api} skills={skills} commands={commands} onBack={back} onChanged={updateOne} onRepoChanged={(repo) => setRepoStates((states) => ({ ...states, [selected.id]: repo }))} onAction={quickAction} setNotice={setNotice} initialTab={detailTab} /></>;
-  return <section className="projects-page"><header className="projects-header"><div><h1>Projects</h1><p>Know what each project does, where it stands, and open it to manage the details.</p></div><div><button onClick={onHide} aria-label="Hide notebook">×</button><button onClick={() => refreshAll()} disabled={!projects.some((item) => item.git_root)}>↻ Refresh</button><button className="primary" onClick={() => setAddOpen(true)}>+ Add Project</button></div></header><Notice notice={notice} />
-    <div className="projects-toolbar project-priority-toolbar">
-      <div className="priority-filters" role="group" aria-label="Project priority">
-        <button className={!status && !priority && !attentionFilter ? "active" : ""} onClick={() => { setStatus(""); setPriority(""); setAttentionFilter(""); }}>All</button>
-        {RANKS.map((item) => <button key={item.rank} className={!status && priority === item.priority ? "active" : ""} onClick={() => { setStatus(""); setPriority(item.priority); setAttentionFilter(""); }}>{item.label}</button>)}
-        <button className={!status && priority === "none" ? "active" : ""} onClick={() => { setStatus(""); setPriority("none"); setAttentionFilter(""); }}>Unsorted</button>
-        <button className={attentionFilter === "attention" ? "active" : ""} onClick={() => { setStatus(""); setPriority(""); setAttentionFilter("attention"); }}>Needs attention</button>
-        <button className={status === "archived" ? "active" : ""} onClick={() => { setStatus("archived"); setPriority(""); setAttentionFilter(""); }}>Archived</button>
-      </div>
-      <label className="project-search"><span>⌕</span><input aria-label="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names, explanations, tags…" /></label>
-    </div>
-    {loading ? <Empty title="Loading projects" body="Opening your local workspace…" /> : loadError ? <Empty title="Projects unavailable" body={loadError} action={<button onClick={load}>Try again</button>} /> : !projects.length ? <Empty title="Build your project command center" body="Add a local repository to track tasks, changes, instructions, skills, and commands." action={<button className="primary" onClick={() => setAddOpen(true)}>Add your first project</button>} /> : !shown.length ? <Empty title="No matching projects" body="Clear or adjust the current filters." action={<button onClick={() => { setQuery(""); setStatus(""); setPriority(""); setAttentionFilter(""); }}>Clear filters</button>} /> : <div className="projects-ranked">{[...RANKS.map((entry) => ({ ...entry, items: shown.filter((project) => rankOf(project) === entry.rank) })), { rank: 0, heading: "Unsorted", blurb: "Projects waiting for a clear priority.", items: shown.filter((project) => !rankOf(project)) }].filter((group) => group.items.length).map((group) => <section className={`rank-group rank-group-${group.rank}`} key={group.rank}>
-      <header><div><h2>{group.heading}</h2><p>{group.blurb}</p></div><span>{group.items.length}</span></header>
-      <div className="projects-collection grid">{group.items.map((project) => <ProjectCard key={project.id} project={project} repo={repoStates[project.id]} onLogo={api.logo} onOpen={openProject} onRefresh={refresh} onQuickAction={quickAction} onRank={setRank} onExplain={setExplanation} onDragStart={(_event, id) => { dragId.current = id; }} onDrop={(_event, id) => reorder(dragId.current, id)} />)}</div>
-    </section>)}</div>}
+  return <section className="projects-page projects-simple"><header className="projects-header"><div><h1>Projects</h1><p>Drag projects between rows to set their place.</p></div><div><button onClick={onHide} aria-label="Hide notebook">×</button><button className="primary" onClick={() => setAddOpen(true)}>+ Add Project</button></div></header><Notice notice={notice} />
+    <label className="project-search project-simple-search"><span>⌕</span><input aria-label="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects…" /></label>
+    {loading ? <Empty title="Loading projects" body="Opening your local workspace…" /> : loadError ? <Empty title="Projects unavailable" body={loadError} action={<button onClick={load}>Try again</button>} /> : !projects.length ? <Empty title="Build your project list" body="Add a project, then drag it into place." action={<button className="primary" onClick={() => setAddOpen(true)}>Add your first project</button>} /> : !shown.length ? <Empty title="No matching projects" body="Try another project name." action={<button onClick={() => setQuery("")}>Clear search</button>} /> : <div className="project-rank-board">{PROJECT_LANES.map((lane) => { const items = shown.filter((project) => projectTier(project) === lane.tier); return <section
+      className={`project-rank-row rank-row-${lane.tier} ${dragOverTier === lane.tier ? "is-drag-over" : ""}`}
+      key={lane.tier}
+      aria-label={lane.label}
+      onDragEnter={(event) => { event.preventDefault(); setDragOverTier(lane.tier); }}
+      onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+      onDrop={(event) => { event.preventDefault(); moveProject(lane.tier); }}
+    >
+      <header><span>{lane.ordinal}</span><div><h2>{lane.label}</h2><p>{lane.hint}</p></div><small>{items.length}</small></header>
+      <div className="project-simple-list">{items.map((project) => <ProjectCard key={project.id} project={project} onLogo={api.logo} onOpen={openProject} onDragStart={startDrag} onDragEnd={endDrag} onDropBefore={() => moveProject(lane.tier, project.id)} />)}{!items.length ? <p className="project-rank-empty">Drop a project here</p> : null}</div>
+    </section>; })}</div>}
     {addOpen && <AddProjectDialog api={api} projects={projects} onClose={() => setAddOpen(false)} onAdded={(items) => { setProjects((current) => [...current, ...items]); items.forEach(refresh); setNotice({ text: `${items.length} project${items.length === 1 ? "" : "s"} added.` }); }} setNotice={setNotice} />}
   </section>;
 }

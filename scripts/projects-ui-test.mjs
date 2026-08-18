@@ -12,13 +12,16 @@ try {
     await page.getByRole("button", { name: "Projects", exact: true }).click();
     try { await page.getByRole("heading", { name: "Projects", exact: true }).waitFor({ timeout: 5000 }); }
     catch (error) { await page.screenshot({ path: `screenshots/projects-${name}-debug.png` }); console.error((await page.locator("body").innerText()).slice(0, 4000)); throw error; }
-    await page.getByRole("heading", { name: "Now", exact: true }).waitFor();
+    for (const lane of ["1st place", "2nd place", "3rd place", "Queue"]) await page.getByRole("heading", { name: lane, exact: true }).waitFor();
     await page.getByText("Local-first notes, planning, and project control.", { exact: true }).waitFor();
-    await page.getByText("Electron", { exact: true }).waitFor();
-    if (await page.getByText(/next action|focus queue/i).count()) throw new Error(`${name} Projects still shows removed next-action UI.`);
+    const projectBoardText = await page.locator(".project-rank-board").innerText();
+    if (/GitHub current|open tasks|Electron|JavaScript|next action|focus queue/i.test(projectBoardText)) throw new Error(`${name} Projects still shows removed card metadata.`);
     const overflow = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
     if (overflow.document > overflow.viewport || overflow.body > overflow.viewport) throw new Error(`${name} Projects overflow: ${JSON.stringify(overflow)}`);
     await page.screenshot({ path: `screenshots/projects-${name}.png` });
+    const clipForgeCard = page.locator(".project-simple-card").filter({ hasText: "ClipForge AI" });
+    await clipForgeCard.getByRole("button", { name: "Open ClipForge AI", exact: true }).dragTo(page.locator('.project-rank-row[aria-label="1st place"]'));
+    await page.locator('.project-rank-row[aria-label="1st place"]').getByText("ClipForge AI", { exact: true }).waitFor();
     await page.getByText("Notebook", { exact: true }).last().click();
     await page.getByRole("heading", { name: "Notebook", exact: true }).waitFor();
     await page.getByRole("button", { name: /Tasks/ }).click();
@@ -47,9 +50,9 @@ try {
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:5181/${state ? `?projects=${state}` : ""}`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Projects", exact: true }).click();
-    const expected = state === "loading" ? "Loading projects" : state === "error" ? "Projects unavailable" : "Build your project command center";
+    const expected = state === "loading" ? "Loading projects" : state === "error" ? "Projects unavailable" : "Build your project list";
     await page.getByText(expected, { exact: true }).waitFor();
     await context.close();
   }
-  console.log("Projects organized ledger, explanations, tags, drill-in workspace, responsive, empty, loading, and error UI checks passed.");
+  console.log("Projects four-row ranking, minimal cards, drag persistence, drill-in workspace, responsive, empty, loading, and error UI checks passed.");
 } finally { await browser.close(); }
