@@ -1,10 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const call = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
+const AI_IDS = ["chatgpt", "gemini", "deepseek"];
+const aiBridge = Object.fromEntries(AI_IDS.map((id) => [id, {
+  show: () => call(`ai:${id}:show`),
+  hide: () => call(`ai:${id}:hide`),
+  reload: () => call(`ai:${id}:reload`),
+  openExternal: () => call(`ai:${id}:open-external`),
+}]));
 
 contextBridge.exposeInMainWorld("hushnote", {
   notes: { list: () => call("notes:list"), create: (data) => call("notes:create", data), update: (id, data) => call("notes:update", id, data), dragFile: (data) => call("notes:drag-file", data), dragCleanName: (data) => ipcRenderer.send("notes:drag-clean-name", data), setTags: (id, tags) => call("notes:tags", id, tags), trash: (id) => call("notes:trash", id), restore: (id) => call("notes:restore", id), remove: (id) => call("notes:remove", id) },
   skills: { list: () => call("skills:list"), create: (data) => call("skills:create", data), update: (id, data) => call("skills:update", id, data), remove: (id) => call("skills:remove", id), relatedBots: (id) => call("skills:related-bots", id) },
-  mcpServers: { list: () => call("mcp-servers:list"), create: (data) => call("mcp-servers:create", data), update: (id, data) => call("mcp-servers:update", id, data), remove: (id) => call("mcp-servers:remove", id), relatedBots: (id) => call("mcp-servers:related-bots", id) },
   bots: {
     list: (options) => call("bots:list", options), get: (id) => call("bots:get", id), create: (data) => call("bots:create", data), update: (id, data) => call("bots:update", id, data), archive: (id) => call("bots:archive", id), restore: (id) => call("bots:restore", id),
     check: (id) => call("bots:check", id), checkAll: () => call("bots:check-all"), testMonitoring: (data) => call("bots:test-monitoring", data), verifyConnection: (botId, connectionId) => call("bots:verify-connection", botId, connectionId),
@@ -16,10 +22,10 @@ contextBridge.exposeInMainWorld("hushnote", {
   },
   slashCommands: { list: () => call("slash-commands:list"), create: (data) => call("slash-commands:create", data), update: (id, data) => call("slash-commands:update", id, data), remove: (id) => call("slash-commands:remove", id) },
   projects: {
-    list: () => call("projects:list"), syncWorkshop: () => call("projects:workshop-sync"), create: (data) => call("projects:create", data), update: (id, data) => call("projects:update", id, data), reorder: (ids) => call("projects:reorder", ids), remove: (id) => call("projects:remove", id), logo: (id) => call("projects:logo", id),
+    list: () => call("projects:list"), syncWorkshop: () => call("projects:workshop-sync"), create: (data) => call("projects:create", data), update: (id, data) => call("projects:update", id, data), reorder: (ids) => call("projects:reorder", ids), move: (data) => call("projects:move", data), remove: (id) => call("projects:remove", id), logo: (id) => call("projects:logo", id),
     chooseFolder: () => call("projects:choose-folder"), chooseParent: () => call("projects:choose-parent"), inspect: (path) => call("projects:inspect", path), status: (root) => call("projects:status", root), diff: (data) => call("projects:diff", data),
     stage: (data) => call("projects:stage", data), unstage: (data) => call("projects:unstage", data), commit: (data) => call("projects:commit", data), push: (root) => call("projects:push", root), publish: (data) => call("projects:publish", data), fetch: (root) => call("projects:fetch", root),
-    githubAuthStatus: () => call("projects:github-auth-status"), githubSignIn: () => call("projects:github-sign-in"),
+    githubAuthStatus: () => call("projects:github-auth-status"), githubSignIn: () => call("projects:github-sign-in"), githubSetup: (data) => call("projects:github-setup", data),
     agentsRead: (root) => call("projects:agents-read", root), agentsWrite: (data) => call("projects:agents-write", data), readme: (root) => call("projects:readme", root), open: (data) => call("projects:open", data),
     tasks: { create: (projectId, data) => call("project-tasks:create", projectId, data), update: (id, data) => call("project-tasks:update", id, data), remove: (id) => call("project-tasks:remove", id) },
     canvas: { create: (projectId, data) => call("project-canvas:create", projectId, data), update: (id, data) => call("project-canvas:update", id, data), remove: (id) => call("project-canvas:remove", id) },
@@ -38,6 +44,7 @@ contextBridge.exposeInMainWorld("hushnote", {
   mail: { show: () => call("mail:show"), hide: () => call("mail:hide"), reload: () => call("mail:reload"), openExternal: () => call("mail:open-external") },
   notion: { show: () => call("notion:show"), hide: () => call("notion:hide"), reload: () => call("notion:reload"), openExternal: () => call("notion:open-external") },
   twitter: { show: () => call("twitter:show"), hide: () => call("twitter:hide"), reload: () => call("twitter:reload"), openExternal: () => call("twitter:open-external") },
+  ai: aiBridge,
   window: { hide: () => call("window:hide"), newNote: () => call("window:new-note") },
   onNewInboxNote: (handler) => ipcRenderer.on("overlay:new-inbox", handler),
   onFocusEditor: (handler) => ipcRenderer.on("overlay:focus-editor", handler),
@@ -50,4 +57,11 @@ contextBridge.exposeInMainWorld("hushnote", {
   onNotionStatus: (handler) => { const listener = (_event, status) => handler(status); ipcRenderer.on("notion:status", listener); return () => ipcRenderer.removeListener("notion:status", listener); },
   onOpenTwitter: (handler) => { const listener = () => handler(); ipcRenderer.on("overlay:open-twitter", listener); return () => ipcRenderer.removeListener("overlay:open-twitter", listener); },
   onTwitterStatus: (handler) => { const listener = (_event, status) => handler(status); ipcRenderer.on("twitter:status", listener); return () => ipcRenderer.removeListener("twitter:status", listener); },
+  onAiStatus: (id, handler) => {
+    if (!AI_IDS.includes(id)) throw new Error("Unknown AI service.");
+    const channel = `ai:${id}:status`;
+    const listener = (_event, status) => handler(status);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
 });

@@ -1,8 +1,7 @@
-/* Workspace pages (Projects, Bots, MCP) restored on the current design scale.
+/* Workspace pages (Projects and Bots) on the current design scale.
    Sub-12px type from the original pages is normalised to --text-xs; scripts/ui-test.mjs enforces it. */
-/* Bot operations and MCP registry */
+/* Bot operations */
 .nav-mark.bot, .result-mark.bot { border-color: var(--color-agent); background: var(--color-agent-soft); color: var(--color-agent); }
-.nav-mark.mcp, .result-mark.mcp { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-strong); }
 .nav-mark svg, .result-mark svg { width: 13px; height: 13px; }
 .bot-sidebar-list { min-height: 0; flex: 1; overflow: auto; padding: 0 9px 15px; }
 .bot-sidebar-summary { display: flex; flex-direction: column; gap: 2px; margin: 0 3px 7px; padding: 8px 9px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-panel); }
@@ -18,19 +17,18 @@
 .platform-dot { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; background: var(--color-subtle); color: var(--color-muted); }
 .platform-dot.discord, .platform-mark.discord, .bot-avatar.discord { background: var(--color-agent-soft); color: var(--color-agent); }
 .platform-dot.telegram, .platform-mark.telegram, .bot-avatar.telegram { background: var(--color-accent-soft); color: var(--color-accent-strong); }
-.platform-dot.mcp { background: var(--color-accent-soft); color: var(--color-accent-strong); }
-.bots-page, .mcp-page { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--color-canvas); }
-.bots-page-header, .mcp-page > header, .bot-details-header { min-height: 62.0px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 15px 10px 22px; border-bottom: 1px solid var(--color-border); background: var(--color-panel); }
-.bots-page-header > div:first-child, .mcp-page > header > div:first-child { min-width: 0; }
-.bots-page-header h1, .mcp-page > header h1, .bot-details-header h1 { margin: 1px 0 0; font-size: 18px; letter-spacing: -.025em; }
-.bots-page-header p, .mcp-page > header p, .bot-details-header p { margin: 2px 0 0; overflow: hidden; color: var(--color-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.bots-page { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--color-canvas); }
+.bots-page-header, .bot-details-header { min-height: 62.0px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 15px 10px 22px; border-bottom: 1px solid var(--color-border); background: var(--color-panel); }
+.bots-page-header > div:first-child { min-width: 0; }
+.bots-page-header h1, .bot-details-header h1 { margin: 1px 0 0; font-size: 18px; letter-spacing: -.025em; }
+.bots-page-header p, .bot-details-header p { margin: 2px 0 0; overflow: hidden; color: var(--color-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
 .section-kicker { color: var(--color-accent-strong); font-size: var(--text-xs); font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
-.bots-page-header > div:last-child, .mcp-page > header > div:last-child, .bot-details-actions { display: flex; align-items: center; gap: 5px; }
-.bots-page-header button, .mcp-page > header button, .bot-details-actions button, .bot-back { min-height: 29.0px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); font-size: var(--text-xs); font-weight: 650; white-space: nowrap; }
-.bots-page-header button:hover:not(:disabled), .mcp-page > header button:hover:not(:disabled), .bot-details-actions button:hover:not(:disabled), .bot-back:hover { border-color: var(--color-border-strong); background: var(--color-selected); }
+.bots-page-header > div:last-child, .bot-details-actions { display: flex; align-items: center; gap: 5px; }
+.bots-page-header button, .bot-details-actions button, .bot-back { min-height: 29.0px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); font-size: var(--text-xs); font-weight: 650; white-space: nowrap; }
+.bots-page-header button:hover:not(:disabled), .bot-details-actions button:hover:not(:disabled), .bot-back:hover { border-color: var(--color-border-strong); background: var(--color-selected); }
 .bots-page-header button.primary { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-surface); }
-.bots-page-header button.hide, .mcp-page > header button.hide { width: 28px; min-width: 28px; padding: 0; border: 0; background: none; color: var(--color-muted); font-size: 20px; }
-.bots-page button:focus-visible, .mcp-page button:focus-visible, .bots-page input:focus, .bots-page select:focus, .bots-page textarea:focus, .mcp-page input:focus, .mcp-page select:focus, .mcp-page textarea:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.bots-page-header button.hide { width: 28px; min-width: 28px; padding: 0; border: 0; background: none; color: var(--color-muted); font-size: 20px; }
+.bots-page button:focus-visible, .bots-page input:focus, .bots-page select:focus, .bots-page textarea:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .bots-page-scroll { min-height: 0; flex: 1; overflow: auto; padding: 14px 16px 38px; }
 .bot-refresh-message, .bot-message { margin: 0; padding: 7px 16px; border-bottom: 1px solid var(--color-border); background: var(--color-accent-soft); color: var(--color-accent-strong); font-size: var(--text-xs); }
 .bots-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 12px; border: 1px solid var(--color-border); border-radius: 7px; overflow: hidden; background: var(--color-panel); }
@@ -187,9 +185,9 @@
 .bot-form-field.wide { grid-column: 1 / -1; }
 .bot-form-field > span, .bot-platform-checks > span { color: var(--color-muted); font-size: var(--text-xs); font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
 .bot-form-field > small { color: var(--color-muted); font-size: var(--text-xs); line-height: 1.35; }
-.bot-form input:not([type="checkbox"]), .bot-form select, .bot-form textarea, .mcp-editor input, .mcp-editor select, .mcp-editor textarea { min-width: 0; width: 100%; padding: 6px 7px; border: 1px solid var(--color-border); border-radius: 5px; outline: 0; background: var(--color-surface); color: var(--color-ink); font-size: var(--text-xs); }
-.bot-form input:not([type="checkbox"]), .bot-form select, .mcp-editor input, .mcp-editor select { height: 31px; }
-.bot-form textarea, .mcp-editor textarea { resize: vertical; }
+.bot-form input:not([type="checkbox"]), .bot-form select, .bot-form textarea { min-width: 0; width: 100%; padding: 6px 7px; border: 1px solid var(--color-border); border-radius: 5px; outline: 0; background: var(--color-surface); color: var(--color-ink); font-size: var(--text-xs); }
+.bot-form input:not([type="checkbox"]), .bot-form select { height: 31px; }
+.bot-form textarea { resize: vertical; }
 .bot-form input[type="checkbox"], .relationship-pickers input[type="checkbox"] { width: 14px; height: 14px; margin: 0; accent-color: var(--color-accent); }
 .bot-platform-checks { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding-top: 3px; }
 .bot-platform-checks label, .tracking-toggle, .job-toggles label, .relationship-pickers label { display: flex; align-items: center; gap: 5px; color: var(--color-ink-soft); font-size: var(--text-xs); }
@@ -213,16 +211,11 @@
 .monitor-test-row span.failed { color: var(--color-danger); }
 .relationship-pickers > div { max-height: 190px; overflow: auto; }
 .relationship-pickers > div > span { color: var(--color-muted); font-size: var(--text-xs); }
-.bot-form > footer, .mcp-editor > footer { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 6px; padding: 9px 14px; border-top: 1px solid var(--color-border); background: var(--color-panel); }
-.bot-form > footer button, .mcp-editor > footer button { min-height: 31.0px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); font-size: var(--text-xs); font-weight: 700; }
-.bot-form > footer button[type="submit"], .mcp-editor > footer button[type="submit"] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-surface); }
-
-.mcp-editor { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: auto; padding: 16px 18px; }
-.mcp-editor > .bot-form-grid { width: min(760px, 100%); }
-.mcp-editor .used-by-bots { width: min(760px, 100%); display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 12px; padding: 9px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-panel); }
+.bot-form > footer { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 6px; padding: 9px 14px; border-top: 1px solid var(--color-border); background: var(--color-panel); }
+.bot-form > footer button { min-height: 31.0px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); font-size: var(--text-xs); font-weight: 700; }
+.bot-form > footer button[type="submit"] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-surface); }
 .used-by-bots strong { margin-right: 4px; font-size: var(--text-xs); }
 .used-by-bots span { color: var(--color-muted); font-size: var(--text-xs); }
-.mcp-editor > footer { margin: auto -18px -16px; }
 .skill-related-bots { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 0 46px 16px; padding: 8px 0; border-top: 1px solid var(--color-border); }
 .skill-related-bots strong { margin-right: 3px; font-size: var(--text-xs); text-transform: uppercase; }
 .skill-related-bots span { color: var(--color-muted); font-size: var(--text-xs); }
@@ -281,5 +274,4 @@
   .bot-details-actions { padding-left: 0; overflow-x: auto; }
   .bot-truth-row { align-items: start; }
   .bot-form > header p { display: none; }
-  .mcp-editor { padding: 12px; }
 }

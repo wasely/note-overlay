@@ -1,5 +1,6 @@
 import { _electron as electron } from "playwright";
 import { createRequire } from "node:module";
+import { createServer } from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,10 +12,23 @@ const { boundsForDisplay } = require("../src/main/window-bounds.cjs");
 const packageJson = JSON.parse(await fs.readFile(new URL("../package.json", import.meta.url), "utf8"));
 const userData = await fs.mkdtemp(path.join(os.tmpdir(), "notebook-test-"));
 const packagedExecutable = process.env.NOTEBOOK_EXECUTABLE;
+const aiServer = createServer((request, response) => {
+  response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  response.end(`<!doctype html><title>${request.url}</title><main>${request.url}</main>`);
+});
+await new Promise((resolve) => aiServer.listen(0, "127.0.0.1", resolve));
+const aiBase = `http://127.0.0.1:${aiServer.address().port}`;
 const app = await electron.launch({
   executablePath: packagedExecutable || electronPath,
   args: packagedExecutable ? [`--user-data-dir=${userData}`] : [".", `--user-data-dir=${userData}`],
-  env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1" },
+  env: {
+    ...process.env,
+    NOTEBOOK_TEST_ISOLATED: "1",
+    NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1",
+    NOTEBOOK_AI_CHATGPT_URL: `${aiBase}/chatgpt`,
+    NOTEBOOK_AI_GEMINI_URL: `${aiBase}/gemini`,
+    NOTEBOOK_AI_DEEPSEEK_URL: `${aiBase}/deepseek`,
+  },
 });
 const navButton = (page, view) => page.locator(".nav button").filter({ hasText: view }).first();
 
@@ -58,12 +72,30 @@ try {
 
   const hotkeyRegistered = await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+N"));
   if (!hotkeyRegistered) console.log("Global hotkey is already owned by another running Notebook instance.");
-  // The workspaces removed in 0.9.0 were deliberately brought back; assert the bridge
-  // still exposes every surface the renderer actually renders.
+  // Assert the bridge still exposes every local workspace the renderer actually renders.
   const missingChannels = await page.evaluate(() => ["notes", "projects", "skills", "slashCommands", "daily"].filter((key) => !window.hushnote[key]));
   if (missingChannels.length) throw new Error(`Preload bridge is missing: ${missingChannels.join(", ")}`);
   const logoBridge = await page.evaluate(() => typeof window.hushnote.projects.logo === "function");
   if (!logoBridge) throw new Error("Project logo bridge is missing from the preload API.");
+  const serviceBridge = await page.evaluate(() => ({
+    hasMcp: "mcpServers" in window.hushnote,
+    ai: ["chatgpt", "gemini", "deepseek"].filter((id) => typeof window.hushnote.ai?.[id]?.show !== "function"),
+  }));
+  if (serviceBridge.hasMcp || serviceBridge.ai.length) throw new Error(`AI/MCP preload shape is wrong: ${JSON.stringify(serviceBridge)}`);
+
+  // Quick AI panel and native embedded-view switching.
+  await page.getByRole("button", { name: "Open ChatGPT" }).click();
+  await page.getByRole("group", { name: "Switch AI" }).waitFor();
+  for (const id of ["chatgpt", "gemini", "deepseek"]) {
+    if (id !== "chatgpt") await page.getByRole("group", { name: "Switch AI" }).getByRole("button", { name: new RegExp(id, "i") }).click();
+    await page.waitForTimeout(200);
+    const loaded = await app.evaluate(({ webContents }, url) => webContents.getAllWebContents().some((contents) => contents.getURL() === url), `${aiBase}/${id}`);
+    if (!loaded) throw new Error(`${id} did not load in its embedded view.`);
+  }
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await page.locator(".notebook").waitFor();
+  const attachedAiViews = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.length);
+  if (attachedAiViews) throw new Error(`${attachedAiViews} AI view(s) stayed attached after returning to Notebook.`);
 
   // Notebooks and notes.
   const folders = await page.evaluate(() => window.hushnote.folders.list());
@@ -85,10 +117,14 @@ try {
   // Markdown preview writes checkbox state back into the stored note.
   await page.getByRole("button", { name: "Preview" }).click();
   await page.getByRole("checkbox", { name: "Verify checklist" }).check();
-  await page.waitForTimeout(600);
-  const savedTaskBody = await page.evaluate(async () => (await window.hushnote.notes.list()).find((note) => note.title === "Overlay smoke test")?.body);
+  let savedTaskBody = "";
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    savedTaskBody = await page.evaluate(async () => (await window.hushnote.notes.list()).find((note) => note.title === "Overlay smoke test")?.body || "");
+    if (savedTaskBody.includes("- [x] Verify checklist")) break;
+    await page.waitForTimeout(100);
+  }
   if (!savedTaskBody?.includes("- [x] Verify checklist")) throw new Error("Interactive Markdown checklist did not save.");
-  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: "Edit" }).evaluate((button) => button.click());
 
   // Pinning persists through storage.
   await page.getByRole("button", { name: "Pin note" }).click();
@@ -98,15 +134,14 @@ try {
 
   // Today plan.
   await navButton(page, "Today").click();
-  await page.getByRole("textbox", { name: "Today task", exact: true }).fill("Ship the daily flow");
-  await page.getByLabel("New task owner").selectOption("agent");
-  await page.getByRole("button", { name: "Add today task" }).click();
-  await page.getByLabel("Complete Ship the daily flow").click();
-  await page.getByRole("textbox", { name: "Tomorrow task", exact: true }).fill("Review the next priority");
-  await page.getByRole("button", { name: "Add tomorrow task" }).click();
+  await page.getByLabel(/^Task for /).first().fill("Ship the daily flow");
+  await page.locator(".line-add button").first().click();
+  await page.getByLabel("Check off Ship the daily flow").click();
+  await page.getByLabel(/^Task for /).nth(1).fill("Review the next priority");
+  await page.locator(".line-add button").nth(1).click();
   await page.waitForTimeout(400);
   const daily = await page.evaluate(() => window.hushnote.daily.get());
-  if (!daily.done.some((task) => task.text === "Ship the daily flow" && task.owner === "agent" && task.priority === 1) || !daily.tomorrow.some((task) => task.text === "Review the next priority")) throw new Error("Today priority/owner/done/tomorrow workflow did not save.");
+  if (!daily.done.some((task) => task.text === "Ship the daily flow") || !daily.tomorrow.some((task) => task.text === "Review the next priority")) throw new Error("Today done/tomorrow workflow did not save.");
 
   // Copy the open note through the clipboard bridge.
   await navButton(page, "Notes").click();
@@ -119,10 +154,10 @@ try {
   await page.getByRole("button", { name: "New skill" }).first().click();
   await page.getByLabel("Skill name").fill("Terminal helper");
   await page.getByLabel("Skill category").fill("Automation");
-  await page.getByLabel("Skill notes").fill("Run this command safely.");
+  await page.getByLabel("Skill instructions").fill("Run this command safely.");
   await page.waitForTimeout(900);
   await page.getByText("Saved", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Copy", exact: true }).click();
+  await page.getByRole("button", { name: "Copy skill", exact: true }).click();
   await page.getByText("Copied", { exact: true }).waitFor();
 
   // Search reaches skills, notes, and tasks.
@@ -171,5 +206,6 @@ try {
 } finally {
   await app.evaluate(({ app }) => app.quit()).catch(() => {});
   await app.close().catch(() => {});
+  await new Promise((resolve) => aiServer.close(resolve));
   await fs.rm(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
 }

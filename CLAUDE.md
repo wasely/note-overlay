@@ -4,34 +4,38 @@
 
 Notebook is a Windows-only, local-first Markdown notebook. `Ctrl+Alt+Shift+N` toggles a compact, centered, always-on-top window on the monitor under the cursor.
 
-It has exactly four pages and nothing else:
+Its primary notebook pages are:
 
 - **Today** — one page per calendar day, shaped like paper: the day's checklist in the order it was written, an add line at the bottom, the next day's page below it, and previous/next arrows plus a sidebar month calendar for moving between days. An earlier page keeps its own record: what was checked off there, and what moved on unfinished. Unfinished work rolls forward once per day — `dailyPage(viewDate)` rolls only when the viewed date is the real local today, so opening an old page never rewrites it, and a window left open past midnight turns its own page.
 - **Notes** — Markdown notes in notebooks, autosaving, pinnable, with a write/preview toggle. Preview renders headings, lists, quotes, code, inline styles, and task lists; ticking a rendered checkbox rewrites that exact source line.
 - **Skills** — a library with three places: an **All categories** home of category cards, a **category page** listing that category's skills with a one-line summary and a star toggle, and the **skill page** itself (rendered Markdown, edit toggle, heading outline, `Alt+←`/`Alt+→` paging). The sidebar shows collapsed category rows — the chevron expands a shelf, the label opens the category page. Scope is Active/Starred/All; archive shelves sit below one Archive divider. Stars persist in `skills.pinned`.
 - **Commands** — saved slash-command invocations and reference pages.
 
+Two explicit workspaces follow the notebook pages: **Projects** for local project/Git priorities, and **Bots** for Discord/Telegram operations. The sidebar also has optional Gmail/Notion/Twitter web apps plus a separate fixed **AI** strip with ChatGPT, Gemini, and DeepSeek. AI buttons are side by side and open one full-window embedded website at a time.
+
 Search (`Ctrl+K`) spans notes, tasks, skills, and commands. Settings holds theme (system/light/dark), start-at-login, the keyboard reference, local backups, JSON/Markdown export, and optional GitHub repository backup.
 
-No accounts, telemetry, or background network requests. The only outbound network path is the GitHub backup, which the user configures and triggers.
+Notebook itself has no account or telemetry. Embedded websites make their normal provider requests only after the user opens them. Notebook content is never injected into those sites. The other outbound path is the GitHub backup the user configures.
 
 Supported target: normal Windows apps and borderless/windowed games. Do not promise support for exclusive-fullscreen games.
 
-**Keep the UI this small.** The app previously carried embedded Gmail/Notion/Twitter views, a bot operations registry, an MCP server registry, a Projects/Git client, a hard-coded "Skill Stack" dashboard, and a local LLMLingua compressor. All were removed in v0.9.0 because they buried the notebook. Do not reintroduce a feature area without an explicit request. User-facing notebooks are backed by the existing folders table.
+**Keep the UI deliberate.** MCP was removed from every user-facing/API surface in v0.10.0. Its old SQLite table and relation rows remain only for non-destructive backup/restore compatibility; never expose them again without an explicit request. User-facing notebooks are backed by the existing folders table.
 
 ## Architecture
 
 - `src/main/main.cjs`: Electron lifecycle, single-instance lock, global shortcut, tray, window placement, validated IPC, drag-out.
+- `src/main/ai-view.cjs`: sandboxed ChatGPT/Gemini/DeepSeek `WebContentsView` lifecycle, URL allowlists, persistent partitions, and bounds.
 - `src/main/preload.cjs`: the only renderer bridge. Add every native capability here as a narrowly scoped function.
 - `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill/command/daily operations, JSON export/import, rotating backups and restores. `dailyPage(viewDate, today)` returns one day's lines plus the next day's; `dailyMonth(month)` returns the per-day totals the calendar draws.
-- `src/main/github-sync.cjs` + `src/main/command-runner.cjs`: optional GitHub repository backup and the sandboxed `gh`/`git` runner it needs.
+- `src/main/github-sync.cjs` + `src/main/command-runner.cjs`: optional Notebook-data backup and the sandboxed `gh`/`git` runner it needs.
+- `src/main/projects.cjs` + `src/renderer/ProjectsPage.jsx`: categorized Now/Next/Later/Parked ordering, local repository status, scoped commits, pushes, and explicit GitHub setup.
 - `src/main/hotkey-manager.cjs`, `window-bounds.cjs`, `startup.cjs`: shortcut recovery, multi-monitor placement, start-at-login repair.
 - `src/renderer/main.jsx`: the whole React UI. `window.hushnote` is real in Electron and mocked for the browser preview.
 - `src/renderer/skills.jsx` + `skills.css`: the Skills page. Its grouping, shelf ordering, and label rules live in `skill-stack.js` so `scripts/skill-stack-test.mjs` can cover them.
 - `src/renderer/markdown-blocks.js` (pure parser, unit-tested) + `markdown.jsx` (React renderer). Markdown is never turned into HTML strings — no `dangerouslySetInnerHTML`.
 - `src/renderer/styles.css` + `tokens.css`: one spacing/type scale. Minimum rendered text size is 11px and interactive controls are at least 22px tall; `scripts/ui-test.mjs` enforces both.
 
-The `projects`, `project_*`, and `compressions` tables still exist in the schema for older databases; nothing reads or writes them. Bot tables are no longer created.
+Legacy MCP rows remain dormant so an upgrade never destroys user data. They are excluded from hydrated bots, renderer APIs, IPC, and UI.
 
 User data lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus `backups\notebook-backup-*.json`. Never delete, reset, or overwrite this data without explicit user approval. Restore always creates a safety backup first.
 

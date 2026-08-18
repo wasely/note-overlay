@@ -67,9 +67,8 @@ try {
   app = await launch();
   let page = await ready(app);
   const related = await page.evaluate(async () => {
-    const mcp = await window.hushnote.mcpServers.create({ name: "Calendar Test MCP", description: "Fixture dependency", transport: "stdio", command: "calendar-test" });
     const skill = await window.hushnote.skills.create({ name: "Bot Operations Test Skill", category: "Automation", body: "Fixture skill." });
-    return { mcp, skill };
+    return { skill };
   });
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText("Notebook", { exact: true }).waitFor();
@@ -96,14 +95,13 @@ try {
   await page.getByLabel("Job name").fill("Five minute digest");
   await page.getByLabel("Cron expression for Five minute digest").fill("*/5 * * * *");
   await page.getByLabel("Timezone for Five minute digest").fill("America/Edmonton");
-  await dialog.getByRole("checkbox", { name: "Calendar Test MCP", exact: true }).check();
   await dialog.getByRole("checkbox", { name: "Bot Operations Test Skill", exact: true }).check();
   await dialog.getByRole("button", { name: "Add bot", exact: true }).click();
   await page.getByRole("heading", { name: "Scheduled Multi Platform Ops", exact: true }).waitFor();
 
   const bot = await page.evaluate(async () => (await window.hushnote.bots.list({ includeArchived: true }))[0]);
   if (!bot || bot.runtimeLanguage !== "Node.js 24") throw new Error(`Bot definition was not persisted safely: ${JSON.stringify(bot)}`);
-  if (!bot.mcpServerIds.includes(related.mcp.id) || !bot.skillIds.includes(related.skill.id)) throw new Error("Bot relationships were not persisted.");
+  if (!bot.skillIds.includes(related.skill.id) || "mcpServerIds" in bot) throw new Error("Bot skill relationships or removed MCP state are wrong.");
   await page.getByLabel("Search everything").fill("Bot Operations Test Skill");
   await page.locator(".global-results section").filter({ has: page.getByText("Bots", { exact: true }) }).getByRole("button", { name: /Scheduled Multi Platform Ops/ }).waitFor();
   await page.getByLabel("Search everything").fill("Common failure modes");
@@ -126,10 +124,6 @@ try {
   if (!(await page.getByLabel("Note content").inputValue()).includes("# What this bot does")) throw new Error("Bot Markdown runbook did not open in the existing editor.");
   await openSavedBot(page);
   await page.getByRole("button", { name: "Connections", exact: true }).click();
-  await page.getByRole("button", { name: "Calendar Test MCP", exact: true }).click();
-  await page.getByRole("heading", { name: "MCP Servers", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Scheduled Multi Platform Ops", exact: true }).waitFor();
-  await openSavedBot(page);
   await page.getByRole("button", { name: "Connections", exact: true }).click();
   await page.getByRole("button", { name: "Bot Operations Test Skill", exact: true }).click();
   await page.getByText("Used by bots", { exact: true }).waitFor();
@@ -186,7 +180,6 @@ try {
     connections: [{ platform: "telegram", username: "overdue_fixture_bot", credentialState: "not_configured" }],
     jobs: [{ id: "overdue-job", name: "Missed minute job", scheduleType: "cron", cronExpression: "* * * * *", timezone: "America/Edmonton", enabled: true, schedulerSource: "External automation", gracePeriodSeconds: 0, expectedDurationSeconds: 60, createdAt }],
     commands: [],
-    mcpServerIds: [],
     skillIds: [],
   }), new Date(Date.now() - 7_200_000).toISOString());
   await page.reload({ waitUntil: "domcontentloaded" });

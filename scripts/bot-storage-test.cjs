@@ -13,7 +13,7 @@ let backup;
 try {
   let store = createStorage(firstPath); activeStore = store;
   const skill = store.createSkill({ name: "Daily planning", category: "Automation", body: "Plan safely." });
-  const mcp = store.createMcpServer({ name: "Calendar", description: "Calendar tools", transport: "stdio", command: "calendar-mcp" });
+  const mcp = { id: "calendar", name: "Calendar", description: "Calendar tools", transport: "stdio", command: "calendar-mcp" };
   const bot = store.createBot({
     name: "Calendar Assistant",
     description: "Posts reminders without reading message content.",
@@ -28,13 +28,12 @@ try {
     ],
     jobs: [{ name: "Morning summary", scheduleType: "cron", cronExpression: "0 8 * * *", timezone: "America/Edmonton", enabled: true, schedulerSource: "Internal bot scheduler", gracePeriodSeconds: 600 }],
     commands: [{ platform: "discord", command: "/today", description: "Shows today's schedule", enabled: true, deprecated: false }],
-    mcpServerIds: [mcp.id, "missing-mcp"],
     skillIds: [skill.id, "missing-skill"],
   });
   assert.equal(bot.id, "calendar-assistant");
   assert.equal(bot.connections.length, 2);
   assert.equal(bot.jobs.length, 1);
-  assert.deepEqual(bot.mcpServerIds, [mcp.id, "missing-mcp"]);
+  assert.equal("mcpServerIds" in bot, false);
   assert.ok(store.getNote(bot.documentationNoteId).body.includes("# What this bot does"));
 
   store.updateNote(bot.documentationNoteId, { title: "Calendar runbook", body: "# Custom runbook\n\nKeep this body.", folderId: store.inboxId });
@@ -50,15 +49,21 @@ try {
   assert.equal(store.listBotRuns(bot.id).length, 1);
   assert.equal(store.getBotActivity(bot.id).filter((event) => event.type === "status_check_succeeded").length, 1);
   assert.equal(store.getBot(bot.id).runtime.source, "Local status file");
+  store.importData({
+    notes: [],
+    mcpServers: [mcp],
+    bots: [{ id: "legacy-mcp-bot", name: "Legacy MCP bot", description: "Compatibility fixture", mcpServerIds: [mcp.id, "missing-mcp"], skillIds: [] }],
+  });
+  assert.equal("mcpServerIds" in store.getBot("legacy-mcp-bot"), false);
   backup = store.exportData();
-  assert.equal(backup.bots.length, 1);
+  assert.equal(backup.bots.length, 2);
+  assert.deepEqual(backup.bots.find((item) => item.id === "legacy-mcp-bot").mcpServerIds, [mcp.id, "missing-mcp"]);
   assert.equal(store.listRelatedBots("skill", skill.id)[0].id, bot.id);
-  assert.equal(store.listRelatedBots("mcp", mcp.id)[0].id, bot.id);
 
   store.archiveBot(bot.id);
   assert.ok(store.getBot(bot.id).archivedAt);
-  assert.equal(store.listBots().length, 0);
-  assert.equal(store.listBots({ includeArchived: true }).length, 1);
+  assert.equal(store.listBots().length, 1);
+  assert.equal(store.listBots({ includeArchived: true }).length, 2);
   store.restoreBot(bot.id);
   store.close(); activeStore = null;
 
@@ -77,7 +82,8 @@ try {
   assert.equal(restored.getBot(bot.id).runtime.source, "Local status file");
   assert.equal(restored.listBotRuns(bot.id).length, 1);
   assert.equal(restored.getNote(restored.getBot(bot.id).documentationNoteId).body, "# Custom runbook\n\nKeep this body.");
-  assert.deepEqual(restored.getBot(bot.id).mcpServerIds, [mcp.id, "missing-mcp"]);
+  assert.equal("mcpServerIds" in restored.getBot("legacy-mcp-bot"), false);
+  assert.deepEqual(restored.exportData().bots.find((item) => item.id === "legacy-mcp-bot").mcpServerIds, [mcp.id, "missing-mcp"]);
   restored.close(); activeStore = null;
   console.log("Bot registry, docs, relations, archive, history, backup import, and store isolation tests passed.");
 } finally {

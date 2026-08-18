@@ -1,6 +1,6 @@
 # Bot operations
 
-The **Bots** page (`#/bots`) is a local registry and runbook for Discord and Telegram bots. It separates platform credential verification from runtime health, tracks real check/job evidence, calculates schedules, and links bots to the existing MCP Server and Skill records.
+The **Bots** page (`#/bots`) is a local registry and runbook for Discord and Telegram bots. It separates platform credential verification from runtime health, tracks real check/job evidence, calculates schedules, and links bots to Skill records.
 
 ## Storage and privacy
 
@@ -10,7 +10,7 @@ This repository stores records in the existing local Notebook database at `%APPD
 - Each bot owns a normal Markdown note body in the existing Notes system. **Open note** uses the existing Markdown editor; editing bot configuration never replaces this body.
 - Runtime snapshots, job runs, and bounded operational events use separate `bot_runtime`, `bot_job_runs`, and `bot_events` tables. Checks do not rewrite the Markdown body.
 - Events retain at most 500 records per bot and 90 days.
-- JSON export, import, and rotating backups include bot definitions, documentation notes, MCP records, runtime snapshots, runs, and events.
+- JSON export, import, and rotating backups include bot definitions, documentation notes, skill links, runtime snapshots, runs, and events.
 
 The app does not collect Discord/Telegram messages, conversations, attachments, or member data. Raw credentials are never saved. The renderer receives only secret-reference names and redacted results.
 
@@ -94,11 +94,11 @@ Jobs can be cron, interval, one-time, external, or manual. Cron expressions are 
 
 **Track job** changes tracking in Notebook only. It does not enable, disable, run, or reschedule the real task. Record its true source (Windows Task Scheduler, GitHub Actions, hosting cron, internal bot scheduler, or external automation) and optional dashboard link.
 
-## Dependencies and documentation
+## Skills and documentation
 
-Select MCP servers and Skills from their existing registries. Relations store stable IDs. Missing records remain visible as **Missing reference** until relinked; records are never copied into a bot. MCP Server and Skill details show **Used by bots** backlinks.
+Select Skills from the existing registry. Relations store stable IDs. Missing records remain visible as **Missing reference** until relinked; records are never copied into a bot. Skill details show **Used by bots** backlinks.
 
-Saving a new bot creates a Markdown runbook template covering purpose, workflow, commands, jobs, platform setup, MCP/Skills, dependencies, environment-variable names, development, deployment, start/restart/recovery, failures, troubleshooting, logs, ownership, and manual verification. Use **Documentation → Open note** to edit it.
+Saving a new bot creates a Markdown runbook template covering purpose, workflow, commands, jobs, platform setup, skills, dependencies, environment-variable names, development, deployment, start/restart/recovery, failures, troubleshooting, logs, ownership, and manual verification. Use **Documentation → Open note** to edit it.
 
 ## Node.js status endpoint example
 

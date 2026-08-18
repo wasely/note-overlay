@@ -36,6 +36,20 @@ async function assertLegible(page, label) {
   if (problems.tiny.length) throw new Error(`${label}: controls under 22px tall — ${problems.tiny.slice(0, 6).join(" | ")}`);
 }
 
+async function assertLibraryRail(page, label) {
+  const geometry = await page.evaluate(() => {
+    const box = (selector) => {
+      const rect = document.querySelector(selector)?.getBoundingClientRect();
+      return rect && { left: rect.left, right: rect.right, width: rect.width };
+    };
+    return { navigation: box(".sidebar"), library: box(".library-browser"), editor: box(".library-workspace > .pane") };
+  });
+  if (!geometry.library || geometry.library.width < 180) throw new Error(`${label}: library rail is missing or collapsed.`);
+  if (Math.abs(geometry.navigation.right - geometry.library.left) > 2 || Math.abs(geometry.library.right - geometry.editor.left) > 2) {
+    throw new Error(`${label}: chooser is not a separate rail between navigation and editor — ${JSON.stringify(geometry)}`);
+  }
+}
+
 const navButton = (page, view) => page.locator(".nav button").filter({ hasText: view }).first();
 
 const browser = await launch();
@@ -43,13 +57,16 @@ try {
   for (const [label, width, height] of [["narrow", 340, 760], ["compact", 460, 800], ["medium", 780, 820], ["wide", 1180, 880]]) {
     const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage();
-    await page.goto(`${base}/?daily=demo`, { waitUntil: "networkidle" });
-    for (const view of ["Today", "Notes", "Skills", "Commands"]) {
+    await page.goto(`${base}/?daily=demo&projects=demo`, { waitUntil: "networkidle" });
+    for (const view of ["Today", "Notes", "Skills", "Commands", "Projects"]) {
       await navButton(page, view).click();
       await page.waitForTimeout(120);
       await assertNoOverflow(page, `${view} @ ${width}`);
       await assertLegible(page, `${view} @ ${width}`);
     }
+    const aiButtons = page.locator(".ai-panel-buttons button");
+    if (await aiButtons.count() !== 3) throw new Error(`AI panel @ ${width}: expected three services.`);
+    await assertLegible(page, `AI panel @ ${width}`);
     await page.getByRole("button", { name: "Settings and backups" }).click();
     await page.getByRole("heading", { name: "Settings" }).waitFor();
     await assertNoOverflow(page, `Settings @ ${width}`);
@@ -60,7 +77,17 @@ try {
 
   const context = await browser.newContext({ viewport: { width: 1100, height: 860 } });
   const page = await context.newPage();
-  await page.goto(base, { waitUntil: "networkidle" });
+  await page.goto(`${base}/?daily=demo&projects=demo`, { waitUntil: "networkidle" });
+
+  // The compact bottom panel switches among three live-service placeholders.
+  await page.getByRole("button", { name: "Open ChatGPT" }).click();
+  await page.getByRole("group", { name: "Switch AI" }).waitFor();
+  await page.getByText("ChatGPT preview", { exact: true }).waitFor();
+  await page.getByRole("group", { name: "Switch AI" }).getByRole("button", { name: /Gemini/ }).click();
+  await page.getByText("Gemini preview", { exact: true }).waitFor();
+  await assertNoOverflow(page, "AI service screen");
+  await assertLegible(page, "AI service screen");
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
 
   // Today: write a line, check it off, and page back and forth through the days.
   await navButton(page, "Today").click();
@@ -81,6 +108,11 @@ try {
 
   // Notes: writing, Markdown preview, interactive checkboxes, pinning.
   await navButton(page, "Notes").click();
+  await assertLibraryRail(page, "Notes");
+  await page.getByRole("button", { name: "Hide note list" }).click();
+  if (await page.locator(".library-browser").count()) throw new Error("Notes: hide-list control did not close the library rail.");
+  await page.getByRole("button", { name: "Show note list" }).click();
+  await page.locator(".library-browser").waitFor();
   await page.getByLabel("Note title").fill("Release checklist");
   await page.getByLabel("Note content").fill("# Ship it\n\nA **short** plan.\n\n- [ ] Verify the build\n- [x] Update the notes");
   await page.getByText("Saved", { exact: true }).waitFor();
@@ -108,6 +140,32 @@ try {
   await page.locator(".results").getByText("Release checklist", { exact: true }).waitFor();
   await page.getByLabel("Search everything").fill("");
 
+  await navButton(page, "Commands").click();
+  await assertLibraryRail(page, "Commands");
+  await page.locator(".library-browser").getByText("Git push", { exact: true }).waitFor();
+
+  // Projects: category filtering, cross-tier drag, and the review-before-push flow.
+  await navButton(page, "Projects").click();
+  await page.getByRole("heading", { name: "Now" }).waitFor();
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByText("Claude proxy", { exact: true }).waitFor();
+  await page.getByRole("button", { name: /All/ }).click();
+  await page.locator(".priority-card", { hasText: "Claude proxy" }).locator(".priority-drag").dragTo(page.locator(".priority-lane.tier-1"));
+  await page.locator(".priority-lane.tier-1 .priority-card", { hasText: "Claude proxy" }).waitFor();
+  await page.getByRole("button", { name: "GitHub", exact: true }).click();
+  await page.getByRole("button", { name: "Review & commit" }).click();
+  await page.getByRole("dialog", { name: "Commit ClipForge AI" }).waitFor();
+  await page.getByText("diff --git", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "Commit & push" }).click();
+  await page.getByText(/Committed f00ba412 and pushed/).waitFor();
+  await page.getByRole("button", { name: "Set up", exact: true }).click();
+  await page.getByRole("dialog", { name: "Set up GitHub for Claude proxy" }).waitFor();
+  await page.getByRole("button", { name: "Create repository" }).click();
+  await page.getByText(/Created wasely\/claude-proxy on GitHub/).waitFor();
+  await assertNoOverflow(page, "Projects GitHub flow");
+  await assertLegible(page, "Projects GitHub flow");
+  await navButton(page, "Notes").click();
+
   // Keyboard: Ctrl+2..4 switch pages, Ctrl+E toggles preview.
   await page.keyboard.press("Control+3");
   await navButton(page, "Skills").and(page.locator(".is-active")).waitFor();
@@ -130,7 +188,7 @@ try {
   await page.getByRole("button", { name: "Close settings" }).click();
 
   await context.close();
-  console.log("UI test passed: layout at 4 widths, 11px minimum type, daily page capture/check/paging, Markdown preview write-back, pinning, search, keyboard, and theme.");
+  console.log("UI test passed: layout at 4 widths, 11px minimum type, Projects drag/GitHub flow, daily page capture/check/paging, Markdown preview write-back, pinning, search, keyboard, and theme.");
 } finally {
   await browser.close();
   await server.close();

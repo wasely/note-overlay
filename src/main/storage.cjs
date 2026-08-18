@@ -113,7 +113,7 @@ function createStorage(userDataPath) {
     CREATE TABLE IF NOT EXISTS daily_tasks (id TEXT PRIMARY KEY, task_date TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'done', 'carried')), priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 3), owner TEXT NOT NULL DEFAULT 'me' CHECK(owner IN ('me', 'agent')), completed_at TEXT, completed_on TEXT, carried_from_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(carried_from_id) REFERENCES daily_tasks(id) ON DELETE SET NULL);
     CREATE INDEX IF NOT EXISTS daily_tasks_date_status ON daily_tasks(task_date, status);
     CREATE INDEX IF NOT EXISTS daily_tasks_completed_on ON daily_tasks(completed_on);
-    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'blocked', 'completed', 'archived')), priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_rank INTEGER NOT NULL DEFAULT 0, local_path TEXT UNIQUE, git_root TEXT, github_url TEXT, primary_language TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', next_action TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', push_after_commit INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_worked_at TEXT, last_device TEXT NOT NULL DEFAULT '');
+    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'blocked', 'completed', 'archived')), priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_rank INTEGER NOT NULL DEFAULT 0, category TEXT NOT NULL DEFAULT 'Uncategorized', tier INTEGER NOT NULL DEFAULT 4 CHECK(tier BETWEEN 1 AND 4), tier_order INTEGER NOT NULL DEFAULT 0, local_path TEXT UNIQUE, git_root TEXT, github_url TEXT, primary_language TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', next_action TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', push_after_commit INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_worked_at TEXT, last_device TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS project_tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'blocked', 'done', 'archived')), priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_order INTEGER NOT NULL DEFAULT 0, due_date TEXT, tags_json TEXT NOT NULL DEFAULT '[]', related TEXT NOT NULL DEFAULT '', completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
     CREATE INDEX IF NOT EXISTS project_tasks_project_status ON project_tasks(project_id, status, manual_order);
     CREATE TABLE IF NOT EXISTS project_skills (project_id TEXT NOT NULL, skill_id TEXT NOT NULL, PRIMARY KEY(project_id, skill_id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE);
@@ -132,6 +132,15 @@ function createStorage(userDataPath) {
   const projectColumns = new Set(db.pragma("table_info(projects)").map((column) => column.name));
   if (!projectColumns.has("last_device")) db.exec("ALTER TABLE projects ADD COLUMN last_device TEXT NOT NULL DEFAULT ''");
   if (!projectColumns.has("logo_path")) db.exec("ALTER TABLE projects ADD COLUMN logo_path TEXT NOT NULL DEFAULT ''");
+  if (!projectColumns.has("category")) db.exec("ALTER TABLE projects ADD COLUMN category TEXT NOT NULL DEFAULT 'Uncategorized'");
+  if (!projectColumns.has("tier")) {
+    db.exec("ALTER TABLE projects ADD COLUMN tier INTEGER NOT NULL DEFAULT 4 CHECK(tier BETWEEN 1 AND 4)");
+    db.exec("UPDATE projects SET tier = CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END");
+  }
+  if (!projectColumns.has("tier_order")) {
+    db.exec("ALTER TABLE projects ADD COLUMN tier_order INTEGER NOT NULL DEFAULT 0");
+    db.exec("UPDATE projects SET tier_order = manual_rank");
+  }
   let inbox = db.prepare("SELECT id FROM folders WHERE is_inbox = 1").get();
   if (!inbox) {
     inbox = { id: "inbox" };
@@ -245,7 +254,7 @@ function createStorage(userDataPath) {
       canvas_items: db.prepare("SELECT * FROM project_canvas_items WHERE project_id = ? ORDER BY created_at").all(row.id),
     });
   }
-  function listProjects() { return db.prepare("SELECT * FROM projects ORDER BY manual_rank, updated_at DESC").all().map(projectRow); }
+  function listProjects() { return db.prepare("SELECT * FROM projects ORDER BY tier, tier_order, updated_at DESC").all().map(projectRow); }
   function getProject(id) { return projectRow(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)); }
   function addProjectActivity(projectId, kind, summary, detail = "") {
     db.prepare("INSERT INTO project_activity (id, project_id, kind, summary, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(randomUUID(), projectId, kind, summary, detail, now());
@@ -256,19 +265,39 @@ function createStorage(userDataPath) {
     const duplicate = db.prepare("SELECT name FROM projects WHERE (? IS NOT NULL AND lower(local_path) = lower(?)) OR (? IS NOT NULL AND lower(git_root) = lower(?)) OR (? IS NOT NULL AND lower(github_url) = lower(?))").get(input.localPath || null, input.localPath || null, input.gitRoot || null, input.gitRoot || null, input.githubUrl || null, input.githubUrl || null);
     if (duplicate) throw new Error(`This repository is already tracked as ${duplicate.name}.`);
     const rank = Number.isInteger(input.manualRank) ? input.manualRank : (db.prepare("SELECT COALESCE(MAX(manual_rank), -1) + 1 AS rank FROM projects").get().rank);
-    db.prepare("INSERT INTO projects (id, name, description, status, priority, manual_rank, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, String(input.name || "Untitled project").trim(), input.description || "", input.status || "active", input.priority || "none", rank, input.localPath || null, input.gitRoot || input.localPath || null, input.githubUrl || null, input.primaryLanguage || "", JSON.stringify(cleanJsonList(input.tags)), input.nextAction || "", input.notes || "", Number(Boolean(input.pushAfterCommit)), timestamp, timestamp, input.lastWorkedAt || timestamp, DEVICE_NAME);
+    const tier = Number.isInteger(input.tier) ? input.tier : ({ critical: 1, high: 2, medium: 3 }[input.priority] || 4);
+    const tierOrder = Number.isInteger(input.tierOrder) ? input.tierOrder : db.prepare("SELECT COALESCE(MAX(tier_order), -1) + 1 AS value FROM projects WHERE tier = ?").get(tier).value;
+    const category = String(input.category || "Uncategorized").trim() || "Uncategorized";
+    db.prepare("INSERT INTO projects (id, name, description, status, priority, manual_rank, category, tier, tier_order, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, String(input.name || "Untitled project").trim(), input.description || "", input.status || "active", input.priority || "none", rank, category, tier, tierOrder, input.localPath || null, input.gitRoot || input.localPath || null, input.githubUrl || null, input.primaryLanguage || "", JSON.stringify(cleanJsonList(input.tags)), input.nextAction || "", input.notes || "", Number(Boolean(input.pushAfterCommit)), timestamp, timestamp, input.lastWorkedAt || timestamp, DEVICE_NAME);
     addProjectActivity(id, "created", "Project added");
     return getProject(id);
   }
   function updateProject(id, input = {}) {
     const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(id); if (!project) throw new Error("Project not found.");
-    db.prepare("UPDATE projects SET name = ?, description = ?, status = ?, priority = ?, manual_rank = ?, local_path = ?, git_root = ?, github_url = ?, primary_language = ?, tags_json = ?, next_action = ?, notes = ?, push_after_commit = ?, updated_at = ?, last_worked_at = ?, last_device = ? WHERE id = ?").run(input.name ?? project.name, input.description ?? project.description, input.status ?? project.status, input.priority ?? project.priority, input.manualRank ?? project.manual_rank, input.localPath === undefined ? project.local_path : input.localPath || null, input.gitRoot === undefined ? project.git_root : input.gitRoot || null, input.githubUrl === undefined ? project.github_url : input.githubUrl || null, input.primaryLanguage ?? project.primary_language, JSON.stringify(input.tags === undefined ? JSON.parse(project.tags_json || "[]") : cleanJsonList(input.tags)), input.nextAction ?? project.next_action, input.notes ?? project.notes, input.pushAfterCommit === undefined ? project.push_after_commit : Number(Boolean(input.pushAfterCommit)), now(), input.lastWorkedAt ?? project.last_worked_at, DEVICE_NAME, id);
+    const tier = input.tier ?? project.tier;
+    const tierOrder = input.tierOrder ?? (tier === project.tier ? project.tier_order : db.prepare("SELECT COALESCE(MAX(tier_order), -1) + 1 AS value FROM projects WHERE tier = ?").get(tier).value);
+    const category = input.category === undefined ? project.category : String(input.category || "Uncategorized").trim() || "Uncategorized";
+    db.prepare("UPDATE projects SET name = ?, description = ?, status = ?, priority = ?, manual_rank = ?, category = ?, tier = ?, tier_order = ?, local_path = ?, git_root = ?, github_url = ?, primary_language = ?, tags_json = ?, next_action = ?, notes = ?, push_after_commit = ?, updated_at = ?, last_worked_at = ?, last_device = ? WHERE id = ?").run(input.name ?? project.name, input.description ?? project.description, input.status ?? project.status, input.priority ?? project.priority, input.manualRank ?? project.manual_rank, category, tier, tierOrder, input.localPath === undefined ? project.local_path : input.localPath || null, input.gitRoot === undefined ? project.git_root : input.gitRoot || null, input.githubUrl === undefined ? project.github_url : input.githubUrl || null, input.primaryLanguage ?? project.primary_language, JSON.stringify(input.tags === undefined ? JSON.parse(project.tags_json || "[]") : cleanJsonList(input.tags)), input.nextAction ?? project.next_action, input.notes ?? project.notes, input.pushAfterCommit === undefined ? project.push_after_commit : Number(Boolean(input.pushAfterCommit)), now(), input.lastWorkedAt ?? project.last_worked_at, DEVICE_NAME, id);
     addProjectActivity(id, "updated", "Project details updated");
     return getProject(id);
   }
   function reorderProjects(ids) {
     const update = db.prepare("UPDATE projects SET manual_rank = ?, updated_at = ? WHERE id = ?");
     db.transaction(() => ids.forEach((id, rank) => update.run(rank, now(), id)))();
+    return listProjects();
+  }
+  function moveProject(id, tier, beforeId = null) {
+    const project = db.prepare("SELECT id, tier FROM projects WHERE id = ?").get(id); if (!project) throw new Error("Project not found.");
+    const targetTier = Math.max(1, Math.min(4, Number(tier) || 4));
+    db.transaction(() => {
+      db.prepare("UPDATE projects SET tier = ?, updated_at = ?, last_device = ? WHERE id = ?").run(targetTier, now(), DEVICE_NAME, id);
+      const targetIds = db.prepare("SELECT id FROM projects WHERE tier = ? AND id <> ? ORDER BY tier_order, manual_rank, updated_at DESC").all(targetTier, id).map((item) => item.id);
+      const beforeIndex = beforeId ? targetIds.indexOf(beforeId) : -1;
+      targetIds.splice(beforeIndex >= 0 ? beforeIndex : targetIds.length, 0, id);
+      const updateOrder = db.prepare("UPDATE projects SET tier_order = ? WHERE id = ?");
+      targetIds.forEach((projectId, order) => updateOrder.run(order, projectId));
+      if (project.tier !== targetTier) db.prepare("SELECT id FROM projects WHERE tier = ? ORDER BY tier_order, manual_rank, updated_at DESC").all(project.tier).forEach((item, order) => updateOrder.run(order, item.id));
+    })();
     return listProjects();
   }
   function setProjectLogo(id, logoPath) {
@@ -570,7 +599,7 @@ function createStorage(userDataPath) {
       botRepo.importBotData(data, { replace: true });
     });
     restore();
-    return { notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), bots: botRepo.listBots({ includeArchived: true }), mcpServers: botRepo.listMcpServers() };
+    return { notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), bots: botRepo.listBots({ includeArchived: true }) };
   }
 
   function replaceData(data) {
@@ -586,7 +615,9 @@ function createStorage(userDataPath) {
 
   function importProject(project, ignore = true) {
     const verb = ignore ? "INSERT OR IGNORE" : "INSERT"; const projectId = project.id || randomUUID();
-    db.prepare(`${verb} INTO projects (id, name, description, status, priority, manual_rank, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).run(projectId, project.name || "Untitled project", project.description || "", project.status || "active", project.priority || "none", project.manual_rank ?? project.manualRank ?? 0, project.local_path || project.localPath || null, project.git_root || project.gitRoot || null, project.github_url || project.githubUrl || null, project.primary_language || project.primaryLanguage || "", JSON.stringify(cleanJsonList(project.tags)), project.next_action || project.nextAction || "", project.notes || "", Number(Boolean(project.push_after_commit ?? project.pushAfterCommit)), project.created_at || now(), project.updated_at || now(), project.last_worked_at || project.lastWorkedAt || null, project.last_device || DEVICE_NAME);
+    const priority = project.priority || "none";
+    const tier = project.tier ?? ({ critical: 1, high: 2, medium: 3 }[priority] || 4);
+    db.prepare(`${verb} INTO projects (id, name, description, status, priority, manual_rank, category, tier, tier_order, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).run(projectId, project.name || "Untitled project", project.description || "", project.status || "active", priority, project.manual_rank ?? project.manualRank ?? 0, project.category || "Uncategorized", tier, project.tier_order ?? project.tierOrder ?? project.manual_rank ?? project.manualRank ?? 0, project.local_path || project.localPath || null, project.git_root || project.gitRoot || null, project.github_url || project.githubUrl || null, project.primary_language || project.primaryLanguage || "", JSON.stringify(cleanJsonList(project.tags)), project.next_action || project.nextAction || "", project.notes || "", Number(Boolean(project.push_after_commit ?? project.pushAfterCommit)), project.created_at || now(), project.updated_at || now(), project.last_worked_at || project.lastWorkedAt || null, project.last_device || DEVICE_NAME);
     const taskInsert = db.prepare(`${verb} INTO project_tasks (id, project_id, title, description, status, priority, manual_order, due_date, tags_json, related, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const task of project.tasks || []) taskInsert.run(task.id || randomUUID(), projectId, task.title || "Untitled task", task.description || "", task.status || "todo", task.priority || "medium", task.manual_order ?? task.manualOrder ?? 0, task.due_date || task.dueDate || null, JSON.stringify(cleanJsonList(task.tags)), task.related || "", task.completed_at || null, task.created_at || now(), task.updated_at || now());
     const skillInsert = db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) VALUES (?, ?)"); for (const id of project.skill_ids || project.skillIds || []) skillInsert.run(projectId, id);
@@ -616,7 +647,7 @@ function createStorage(userDataPath) {
   seedSkills();
   seedSlashCommands();
   migrateLegacyJson();
-  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, removeProject, setProjectLogo, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, moveProject, removeProject, setProjectLogo, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
 }
 
 module.exports = { createStorage };

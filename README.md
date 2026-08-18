@@ -11,12 +11,16 @@ A small, local-first Windows notebook. Press `Ctrl+Alt+Shift+N` anywhere, write,
 - **Today** — one paper page per day: a plain checklist you tick off, the next day's page underneath, and arrows plus a month calendar to page back through what you finished on any date. Anything still unchecked at midnight moves onto the next day's page and keeps moving until it is done.
 - **Skills** — a browsable library: a home page of category cards, a page per category, and each skill as a readable page with its own outline and previous/next paging. Star the ones you actually use so they lead their category.
 - **Commands** — a small library for saved slash-command invocations and reference pages.
+- **Projects** — categorize work, drag it between Now/Next/Later/Parked, then review changed files and commit or push them from one GitHub page.
+- **Bots** — local Discord/Telegram bot operations.
+- **Quick AI** — a fixed three-button panel for opening ChatGPT, Gemini, or DeepSeek in a secure embedded view with a persistent sign-in session.
+- **Apps** — optional embedded Gmail, Notion, and Twitter views.
 - Search everything (`Ctrl+K`) across notes, tasks, skills, and commands.
 - Copy full Markdown, or drag a clean `Title.md` file into a terminal or editor while the real file stays in local app data.
 - Light, dark, or system theme.
 - Rotating local backups, JSON/Markdown export, and an optional private GitHub repository backup.
 
-No account, telemetry, cloud service, or auto-update feed. Notes never leave your computer unless you turn on the GitHub backup yourself.
+Notebook itself has no account, telemetry, or auto-update feed. Notes are never sent to an embedded website automatically. Websites communicate with their own providers only after you open and use them; GitHub receives notebook data only when you enable backup.
 
 ## Keyboard
 

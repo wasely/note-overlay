@@ -1,6 +1,7 @@
 node_modules/
 dist/
 shot-*.png
+/artifacts/
 
 # Build output and installers
 release/

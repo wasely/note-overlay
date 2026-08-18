@@ -114,7 +114,6 @@ const botInput = z.object({
   connections: z.array(connectionInput).max(2),
   jobs: z.array(jobInput).max(100),
   commands: z.array(commandInput).max(200),
-  mcpServerIds: z.array(z.string().max(120)).max(200).optional(),
   skillIds: z.array(z.string().max(120)).max(200).optional(),
 }).superRefine((bot, context) => {
   const connections = new Set();
@@ -133,14 +132,4 @@ const botInput = z.object({
   if (bot.executionMode === "scheduled" && !bot.jobs.some((job) => job.enabled !== false && !job.archivedAt)) context.addIssue({ code: "custom", path: ["jobs"], message: "Scheduled bots require at least one enabled job." });
 });
 
-const mcpServerInput = z.object({
-  id: optionalId,
-  name: z.string().trim().min(1).max(240),
-  description: z.string().max(4_000).optional(),
-  transport: z.enum(["stdio", "http", "sse"]).optional(),
-  command: z.string().max(2_000).optional(),
-  url: optionalHttpUrl.optional(),
-  body: z.string().max(100_000).optional(),
-});
-
-module.exports = { botInput, connectionInput, jobInput, mcpServerInput, monitoringInput };
+module.exports = { botInput, connectionInput, jobInput, monitoringInput };

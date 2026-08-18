@@ -34,8 +34,6 @@ function documentationTemplate(name) {
     "",
     "## Discord or Telegram setup",
     "",
-    "## MCP servers used",
-    "",
     "## Skills used",
     "",
     "## External dependencies",
@@ -71,6 +69,7 @@ function documentationTemplate(name) {
 
 function createBotRepository({ db, createNote, getNote }) {
   db.exec(`
+    -- Kept only so upgrades and backups never destroy MCP records created before v0.10.0.
     CREATE TABLE IF NOT EXISTS mcp_servers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -148,6 +147,7 @@ function createBotRepository({ db, createNote, getNote }) {
 
   function normalizeDefinition(input, existing = null, id) {
     const merged = { ...(existing || {}), ...(input || {}) };
+    const { mcpServerIds: _legacyMcpServerIds, ...visible } = merged;
     const name = String(merged.name || "").trim();
     if (!name) throw new Error("Bot name is required.");
     const connections = (Array.isArray(merged.connections) ? merged.connections : []).map((connection) => ({
@@ -188,7 +188,7 @@ function createBotRepository({ db, createNote, getNote }) {
       ...(merged.monitoring || {}),
     };
     return {
-      ...merged,
+      ...visible,
       id,
       name,
       slug: merged.slug || slugify(name),
@@ -202,7 +202,6 @@ function createBotRepository({ db, createNote, getNote }) {
       jobs,
       commands,
       monitoring,
-      mcpServerIds: uniqueStrings(merged.mcpServerIds),
       skillIds: uniqueStrings(merged.skillIds),
       createdAt: merged.createdAt || now(),
       updatedAt: now(),
@@ -230,12 +229,12 @@ function createBotRepository({ db, createNote, getNote }) {
   function hydrateBot(row) {
     if (!row) return null;
     const definition = parseJson(row.definition_json, {});
-    const mcpServerIds = relationIds(row.id, "mcp");
+    const { mcpServerIds: _legacyMcpServerIds, ...visibleDefinition } = definition;
     const skillIds = relationIds(row.id, "skill");
     const runtime = runtimeFor(row.id);
     const runs = listBotRuns(row.id);
     const bot = {
-      ...definition,
+      ...visibleDefinition,
       runtimeLanguage: typeof definition.runtime === "string" ? definition.runtime : String(definition.runtimeLanguage || ""),
       id: row.id,
       slug: row.slug,
@@ -245,7 +244,6 @@ function createBotRepository({ db, createNote, getNote }) {
       archivedAt: row.archived_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      mcpServerIds,
       skillIds,
       runtime,
     };
@@ -274,7 +272,6 @@ function createBotRepository({ db, createNote, getNote }) {
     if (!noteId || !getNote(noteId)) noteId = createNote({ title: `${definition.name} bot operations`, body: documentationTemplate(definition.name) }).id;
     const transaction = db.transaction(() => {
       db.prepare("INSERT INTO bots (id, slug, name, description, definition_json, documentation_note_id, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, definition.slug, definition.name, definition.description, JSON.stringify(definition), noteId, definition.archivedAt || null, timestamp, timestamp);
-      writeRelations(id, "mcp", definition.mcpServerIds);
       writeRelations(id, "skill", definition.skillIds);
     });
     transaction();
@@ -288,7 +285,6 @@ function createBotRepository({ db, createNote, getNote }) {
     const definition = normalizeDefinition(input, existing, id);
     const transaction = db.transaction(() => {
       db.prepare("UPDATE bots SET slug = ?, name = ?, description = ?, definition_json = ?, updated_at = ? WHERE id = ?").run(definition.slug, definition.name, definition.description, JSON.stringify(definition), now(), id);
-      writeRelations(id, "mcp", definition.mcpServerIds);
       writeRelations(id, "skill", definition.skillIds);
     });
     transaction();
@@ -368,29 +364,15 @@ function createBotRepository({ db, createNote, getNote }) {
   }
 
   function listMcpServers() { return db.prepare("SELECT * FROM mcp_servers ORDER BY name COLLATE NOCASE").all().map((row) => ({ ...row, createdAt: row.created_at, updatedAt: row.updated_at })); }
-  function getMcpServer(id) { return listMcpServers().find((server) => server.id === id) || null; }
-  function createMcpServer(input) {
-    const name = String(input?.name || "").trim(); if (!name) throw new Error("MCP server name is required.");
-    const id = input.id && /^[a-z0-9][a-z0-9-]{0,79}$/.test(input.id) ? uniqueId("mcp_servers", input.id, "mcp-server") : uniqueId("mcp_servers", name, "mcp-server");
-    const timestamp = now();
-    db.prepare("INSERT INTO mcp_servers (id, name, description, transport, command, url, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, name, input.description || "", input.transport || "stdio", input.command || "", input.url || "", input.body || "", timestamp, timestamp);
-    return getMcpServer(id);
-  }
-  function updateMcpServer(id, input) {
-    const existing = getMcpServer(id); if (!existing) throw new Error("MCP server not found.");
-    db.prepare("UPDATE mcp_servers SET name = ?, description = ?, transport = ?, command = ?, url = ?, body = ?, updated_at = ? WHERE id = ?").run(input.name ?? existing.name, input.description ?? existing.description, input.transport ?? existing.transport, input.command ?? existing.command, input.url ?? existing.url, input.body ?? existing.body, now(), id);
-    return getMcpServer(id);
-  }
-  function deleteMcpServer(id) { db.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id); }
-
   function listRelatedBots(type, relationId) {
-    if (!new Set(["mcp", "skill"]).has(type)) throw new Error("Invalid relation type.");
+    if (type !== "skill") throw new Error("Invalid relation type.");
     return db.prepare("SELECT b.* FROM bots b JOIN bot_relations r ON r.bot_id = b.id WHERE r.relation_type = ? AND r.relation_id = ? ORDER BY b.name COLLATE NOCASE").all(type, relationId).map(hydrateBot);
   }
 
   function exportBotData() {
     return {
-      bots: listBots({ includeArchived: true }),
+      // Legacy MCP records and links remain in backups for safe downgrade/restore.
+      bots: listBots({ includeArchived: true }).map((bot) => ({ ...bot, mcpServerIds: relationIds(bot.id, "mcp") })),
       mcpServers: listMcpServers(),
       botRuns: db.prepare("SELECT * FROM bot_job_runs ORDER BY created_at").all(),
       botEvents: db.prepare("SELECT * FROM bot_events ORDER BY timestamp").all(),
@@ -442,9 +424,9 @@ function createBotRepository({ db, createNote, getNote }) {
   }
 
   return {
-    archiveBot, createBot, createMcpServer, deleteMcpServer, exportBotData, importBotData, getBot, getBotActivity,
-    getMcpServer, getUpcomingJobs, listBotRuns, listBots, listMcpServers, listRelatedBots,
-    recordBotEvent, recordBotRun, restoreBot, saveBotRuntime, updateBot, updateConnectionVerification, updateMcpServer,
+    archiveBot, createBot, exportBotData, importBotData, getBot, getBotActivity, getUpcomingJobs,
+    listBotRuns, listBots, listRelatedBots, recordBotEvent, recordBotRun, restoreBot,
+    saveBotRuntime, updateBot, updateConnectionVerification,
   };
 }
 

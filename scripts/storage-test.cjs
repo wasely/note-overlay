@@ -12,6 +12,12 @@ try {
   const skill = store.createSkill({ name: "Terminal helper", category: "Automation", body: "Run this command safely." });
   const slashCommand = store.createSlashCommand({ name: "Deploy", command: "/prompts:deploy", body: "Publish the current build." });
   const project = store.createProject({ name: "Notebook", description: "Project workspace", status: "active", priority: "high", localPath: "C:\\code\\notebook-storage-test", gitRoot: "C:\\code\\notebook-storage-test", tags: ["electron"], nextAction: "Verify Projects" });
+  assert.equal(project.tier, 2, "legacy priority maps to the matching tier");
+  assert.equal(project.category, "Uncategorized");
+  store.updateProject(project.id, { category: "Apps" });
+  const secondProject = store.createProject({ name: "Second project", category: "Tools", tier: 1, localPath: "C:\\code\\notebook-storage-test-two" });
+  const movedProjects = store.moveProject(project.id, 1, secondProject.id);
+  assert.deepEqual(movedProjects.filter((item) => item.tier === 1).map((item) => item.id), [project.id, secondProject.id], "cross-tier moves persist before the target");
   let savedProject = store.createProjectTask(project.id, { title: "Build task board", status: "in_progress", priority: "critical" });
   savedProject = store.setProjectAssignments(project.id, { skillIds: [skill.id], slashCommandIds: [slashCommand.id] });
   assert.equal(savedProject.tasks[0].title, "Build task board");
@@ -79,6 +85,8 @@ try {
   assert.equal(restored.slashCommands.find((item) => item.id === slashCommand.id).name, "Deploy");
   assert.equal(restored.slashCommands.find((item) => item.id === slashCommand.id).command, "/prompts:deploy");
   assert.equal(restored.projects.find((item) => item.id === project.id).name, "Notebook");
+  assert.equal(restored.projects.find((item) => item.id === project.id).category, "Apps");
+  assert.equal(restored.projects.find((item) => item.id === project.id).tier, 1);
   assert.equal(restored.projects.find((item) => item.id === project.id).tasks[0].status, "in_progress");
   daily = store.dailyDashboard("2026-08-14");
   assert.equal(daily.done[0].text, "Planned and delegated");
@@ -94,7 +102,7 @@ try {
   store.removeFolder(notebook.id);
   assert.equal(store.getNote(taskNote.id).folder_id, store.inboxId);
   assert.throws(() => store.restoreBackup("..\\not-a-backup.json"), /Invalid backup name/);
-  console.log("Storage notes, notebooks, skills, and slash commands backup/restore regression tests passed.");
+  console.log("Storage notes, projects, tiers, categories, and backup/restore regression tests passed.");
 } finally {
   store.close();
   fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -103,12 +111,18 @@ try {
 const legacyUserData = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-storage-legacy-"));
 const legacyDb = new Database(path.join(legacyUserData, "hushnote.sqlite"));
 legacyDb.exec("CREATE TABLE daily_tasks (id TEXT PRIMARY KEY, task_date TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', completed_at TEXT, completed_on TEXT, carried_from_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+legacyDb.exec("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', priority TEXT NOT NULL DEFAULT 'none', manual_rank INTEGER NOT NULL DEFAULT 0, local_path TEXT UNIQUE, git_root TEXT, github_url TEXT, primary_language TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', next_action TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', push_after_commit INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_worked_at TEXT, last_device TEXT NOT NULL DEFAULT '')");
+legacyDb.prepare("INSERT INTO projects (id, name, priority, manual_rank, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("legacy-project", "Legacy project", "critical", 7, new Date().toISOString(), new Date().toISOString());
 legacyDb.close();
 const migratedStore = createStorage(legacyUserData);
 try {
   const migrated = migratedStore.createDailyTask({ text: "Migration keeps working", bucket: "today", priority: 1, owner: "agent" });
   assert.equal(migrated.today[0].priority, 1);
   assert.equal(migrated.today[0].owner, "agent");
+  const migratedProject = migratedStore.getProject("legacy-project");
+  assert.equal(migratedProject.category, "Uncategorized");
+  assert.equal(migratedProject.tier, 1);
+  assert.equal(migratedProject.tier_order, 7);
 } finally {
   migratedStore.close();
   fs.rmSync(legacyUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

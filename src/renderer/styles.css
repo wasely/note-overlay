@@ -188,8 +188,11 @@ button { cursor: pointer; }
 /* Brand marks keep their own identity; Notion and X follow the theme's ink. */
 .brand-gmail { color: var(--color-mail-accent); }
 .brand-notion, .brand-twitter { color: var(--color-ink); }
+.brand-chatgpt { color: oklch(55% 0.12 165); }
+.brand-gemini { color: oklch(57% 0.16 282); }
+.brand-deepseek { color: oklch(55% 0.16 255); }
 .nav button.is-active .brand-notion, .nav button.is-active .brand-twitter { color: var(--color-ink); }
-.nav-loaded { color: var(--color-accent); font-size: 10px; line-height: 1; }
+.nav-loaded { color: var(--color-accent); font-size: 11px; line-height: 1; }
 .service-switch { display: flex; align-items: center; gap: var(--space-3xs); padding: var(--space-3xs); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-panel); }
 .service-switch button {
   min-height: 1.875rem;
@@ -211,6 +214,43 @@ button { cursor: pointer; }
 .service-switch button.brand-gmail > .brand-icon { color: var(--color-mail-accent); }
 .service-switch button.brand-notion > .brand-icon, .service-switch button.brand-twitter > .brand-icon { color: var(--color-ink); }
 .sidebar-body { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-xs); overflow: hidden; }
+.library-workspace { position: relative; min-width: 0; min-height: 0; flex: 1; display: flex; overflow: hidden; }
+.library-browser {
+  width: 14.5rem;
+  flex: 0 0 14.5rem;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs) 0;
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-border);
+}
+.library-browser-top { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); padding: 0 var(--space-2xs) 0 var(--space-sm); }
+.library-browser-top strong { font-family: var(--font-display); font-size: var(--text-sm); letter-spacing: -.01em; }
+.ai-panel { flex: 0 0 auto; padding: var(--space-2xs) var(--space-xs) 0; border-top: 1px solid var(--color-border); }
+.ai-panel > .nav-heading { display: block; margin: 0 var(--space-3xs) var(--space-2xs); }
+.ai-panel-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3xs); }
+.ai-panel-buttons button {
+  min-width: 0;
+  min-height: 3.125rem;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3xs);
+  padding: var(--space-2xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-ink-soft);
+}
+.ai-panel-buttons button:hover { border-color: var(--color-border-strong); background: var(--color-selected); color: var(--color-ink); }
+.ai-panel-buttons button.is-active { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-ink); }
+.ai-panel-buttons button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ai-panel-buttons button i { position: absolute; top: 3px; right: 5px; color: var(--color-accent); font-size: 11px; font-style: normal; line-height: 1; }
 .picker { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-3xs); padding: 0 var(--space-xs); }
 .picker select { flex: 1; }
 .picker-form { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-3xs); padding: 0 var(--space-xs); }
@@ -661,6 +701,9 @@ button { cursor: pointer; }
   .settings { position: absolute; right: 0; top: 0; bottom: 0; z-index: var(--z-sticky); box-shadow: -8px 0 24px var(--shadow-low); }
   .notebook { position: relative; }
 }
+@media (max-width: 56rem) {
+  .library-browser { position: absolute; inset: 0 auto 0 0; z-index: var(--z-dropdown); width: 13.5rem; flex-basis: 13.5rem; box-shadow: 0 4px 20px var(--shadow-high); }
+}
 @media (max-width: 52rem) {
   .sidebar { width: 13.5rem; flex-basis: 13.5rem; }
   .search kbd { display: none; }
@@ -679,6 +722,7 @@ button { cursor: pointer; }
 @media (max-width: 34rem) {
   .notebook { flex-direction: column; }
   .sidebar { width: 100%; flex: 0 0 auto; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .library-browser { width: 100%; flex-basis: 100%; }
   .nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .nav button { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 2px; padding: var(--space-2xs) var(--space-3xs); text-align: center; }
   .nav button small { display: none; }

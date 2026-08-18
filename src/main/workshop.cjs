@@ -41,7 +41,7 @@ const TIER_UNDECIDED = [
 // Unranked — left out of the 17 Aug list; each needs an explicit call.
 const TIER_UNRANKED = [
   ["watch-better", "Watch Better", "live", "browser", "Search a YouTube transcript and ask grounded questions without leaving the video.", "Rank it or cut it. It is the closest thing here to a shipped product."],
-  ["note-overlay", "Notebook", "code", "notebook", "Local-first Windows overlay notebook for notes, tasks, skills, commands, projects.", "Rank it or cut it. v0.9.1 is installed and working."],
+  ["note-overlay", "Notebook", "code", "notebook", "Local-first Windows overlay notebook for notes, tasks, skills, commands, projects, and quick AI access.", "v0.10.0 adds ChatGPT, Gemini, and DeepSeek while removing MCP from the app."],
   ["null", "Null Motion", "code", "motion", "Design transparent motion graphics and drop them onto the Premiere timeline.", "Rank it or cut it. The backend reliability work is done."],
   ["script-gen", "Script Gen", "live", "creator", "Creator workspace: research, scripts, source shots, B-roll, titles, thumbnails.", "Rank it or cut it. Highest daily use, lowest autonomy."],
   ["extension-manager", "Extension Manager", "live", "browser", "Chrome side panel for finding, toggling, and reloading extensions.", "Rank it or cut it."],

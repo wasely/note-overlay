@@ -4,15 +4,15 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, ArrowRight, Bold, Bot, CalendarCheck2, Check, ChevronLeft, ChevronRight, Cloud, Code, Copy, Ellipsis, ExternalLink, Eye, FileText, FolderGit2, GripVertical, Heading1, Heading2, Heading3, Italic, Keyboard, Layers3, Link2, List, ListOrdered, ListTodo, Monitor, Moon, Pencil, Pin, Plus, Quote, RefreshCw, RotateCcw, Search, ServerCog, Settings, Shrink, SquareTerminal, Strikethrough, Sun, Trash2, X } from "lucide-react";
-import { siGmail, siNotion, siX } from "simple-icons";
+import { ArrowLeft, ArrowRight, Bold, Bot, CalendarCheck2, Check, ChevronLeft, ChevronRight, Cloud, Code, Copy, Ellipsis, ExternalLink, Eye, FileText, FolderGit2, GripVertical, Heading1, Heading2, Heading3, Italic, Keyboard, Layers3, Link2, List, ListOrdered, ListTodo, Monitor, Moon, Pencil, Pin, Plus, Quote, RefreshCw, RotateCcw, Search, Settings, Shrink, Sparkles, SquareTerminal, Strikethrough, Sun, Trash2, X } from "lucide-react";
+import { siDeepseek, siGmail, siGooglegemini, siNotion, siX } from "simple-icons";
 import notebookIconUrl from "../../build/notebook.ico";
 import { addBrowserFileDragData } from "./drag-file.mjs";
 import { cleanSkillCategory, displaySkillName } from "./skill-stack.js";
 import { Markdown } from "./markdown.jsx";
 import { markdownToHtml, markdownToText } from "./markdown-html.js";
 import { applyMarkdownFormat } from "./format.js";
-import { BotsWorkspace, BotSidebar, McpServersWorkspace, McpSidebar } from "./bots.jsx";
+import { BotsWorkspace, BotSidebar } from "./bots.jsx";
 import { ProjectsPage } from "./ProjectsPage.jsx";
 import { SkillsWorkspace } from "./skills.jsx";
 import "./styles.css";
@@ -72,13 +72,12 @@ Reach for it when the task matches the name and you want the same result twice.
   updated_at: new Date().toISOString(),
 })));
 const mockBots = [];
-const mockMcpServers = [];
 const mockProjectNow = new Date().toISOString();
 const mockProjects = new URLSearchParams(location.search).get("projects") === "demo" ? [
-  { id: "project-notebook", name: "note-overlay", description: "The Notebook overlay itself: notes, Today, projects, bots.", status: "active", priority: "critical", manual_rank: 0, local_path: "C:\code\note-overlay", git_root: "C:\code\note-overlay", github_url: "https://github.com/wasely/note-overlay", primary_language: "JavaScript", tags: ["electron"], next_action: "Ship the ranked projects view", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
-  { id: "project-clipforge", name: "ClipForge AI", description: "Turn a YouTube URL into captioned vertical shorts.", status: "active", priority: "high", manual_rank: 1, local_path: "C:\live\clipforge-ai", git_root: "C:\live\clipforge-ai", github_url: null, primary_language: "Python", tags: ["live", "mine"], next_action: "Run one clean end-to-end export", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
-  { id: "project-proxy", name: "claude-code-proxy-src", description: "", status: "active", priority: "none", manual_rank: 2, local_path: "C:\else\claude-code-proxy", git_root: "C:\else\claude-code-proxy", github_url: null, primary_language: "Rust", tags: [], next_action: "", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
-  { id: "project-meme", name: "reddit-meme-finder-review", description: "", status: "active", priority: "medium", manual_rank: 3, local_path: "C:\else\reddit-meme-finder", git_root: "C:\else\reddit-meme-finder", github_url: null, primary_language: "TypeScript", tags: [], next_action: "", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+  { id: "project-notebook", name: "Notebook", description: "Local-first notes, planning, and project control.", status: "active", priority: "critical", manual_rank: 0, category: "Apps", tier: 1, tier_order: 0, local_path: "C:\\code\\note-overlay", git_root: "C:\\code\\note-overlay", github_url: "https://github.com/wasely/note-overlay", primary_language: "JavaScript", tags: ["electron"], next_action: "Finish the simplified Projects page", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+  { id: "project-clipforge", name: "ClipForge AI", description: "Turn long videos into captioned vertical shorts.", status: "active", priority: "high", manual_rank: 1, category: "Content", tier: 1, tier_order: 1, local_path: "C:\\code\\clipforge-ai", git_root: "C:\\code\\clipforge-ai", github_url: "https://github.com/wasely/clipforge-ai", primary_language: "Python", tags: ["video"], next_action: "Run one clean end-to-end export", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+  { id: "project-proxy", name: "Claude proxy", description: "Small local proxy for model experiments.", status: "active", priority: "none", manual_rank: 2, category: "Tools", tier: 2, tier_order: 0, local_path: "C:\\code\\claude-code-proxy", git_root: "C:\\code\\claude-code-proxy", github_url: null, primary_language: "Rust", tags: [], next_action: "Add request logging", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+  { id: "project-meme", name: "Meme finder", description: "Find promising Reddit posts for review.", status: "paused", priority: "medium", manual_rank: 3, category: "Bots", tier: 3, tier_order: 0, local_path: "C:\\code\\reddit-meme-finder", git_root: "C:\\code\\reddit-meme-finder", github_url: "https://github.com/wasely/reddit-meme-finder", primary_language: "TypeScript", tags: [], next_action: "Improve duplicate detection", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
 ] : [];
 const mockSlashCommands = [
   { id: "starter-gitpush", name: "Git push", command: "/prompts:gitpush", body: "Run `/prompts:gitpush` inside the Git repository you want to publish.\n\n## What it does\nStages every change, commits with `Update project files`, then pushes the current tracking branch. It does not run checks.\n\n## Related skill\n`$gitpush`", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
@@ -157,6 +156,20 @@ function mockDailyMonth(month = mockDailyDate.slice(0, 7)) {
     days.set(task.task_date, entry);
   }
   return { month, days: [...days.values()].sort((left, right) => left.date.localeCompare(right.date)) };
+}
+
+function mockAiService(id) {
+  return {
+    show: async () => {
+      const state = new URLSearchParams(location.search).get("ai");
+      if (state === `${id}-error`) return { status: "error", message: "This AI is unavailable in the preview." };
+      if (state === `${id}-loading`) return { status: "loading", message: "" };
+      return { status: "ready", message: "" };
+    },
+    hide: async () => ({ status: "ready" }),
+    reload: async () => ({ status: "loading" }),
+    openExternal: async () => true,
+  };
 }
 
 // Browser-only stand-in for the preload bridge, used by `npm run preview` and screenshots.
@@ -283,7 +296,7 @@ const mockApi = {
   settings: {
     get: async () => ({ ...mockSettings }),
     set: async (patch) => { mockSettings = { ...mockSettings, ...patch }; return { ...mockSettings }; },
-    version: async () => "0.8.0",
+    version: async () => "0.10.0",
     export: async () => ({ filePath: "C:\\Temp\\notebook-backup.json" }),
     dataLocation: async () => "C:\\Notebook data",
   },
@@ -305,29 +318,33 @@ const mockApi = {
     openResource: async () => true,
     onStatus: () => () => {},
   },
-  mcpServers: {
-    list: async () => structuredClone(mockMcpServers),
-    create: async (input) => { const server = { id: input.id || String(input.name || "server").toLowerCase().replace(/[^a-z0-9]+/g, "-"), description: "", transport: "stdio", command: "", url: "", body: "", ...input, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; mockMcpServers.push(server); return structuredClone(server); },
-    update: async (id, input) => { const server = mockMcpServers.find((item) => item.id === id); Object.assign(server, input, { updatedAt: new Date().toISOString() }); return structuredClone(server); },
-    remove: async (id) => { const index = mockMcpServers.findIndex((item) => item.id === id); if (index >= 0) mockMcpServers.splice(index, 1); },
-    relatedBots: async () => [],
-  },
   projects: {
     logo: async () => null,
     list: async () => { const state = new URLSearchParams(location.search).get("projects"); if (state === "error") throw new Error("Project storage is unavailable in this preview."); if (state === "loading") return new Promise(() => {}); return structuredClone(mockProjects); },
-    create: async (input) => { const timestamp = new Date().toISOString(); const item = { id: crypto.randomUUID(), name: input.name, description: input.description || "", status: input.status || "active", priority: input.priority || "none", manual_rank: mockProjects.length, local_path: input.localPath || null, git_root: input.gitRoot || null, github_url: input.githubUrl || null, primary_language: input.primaryLanguage || "", tags: input.tags || [], next_action: input.nextAction || "", notes: input.notes || "", push_after_commit: false, created_at: timestamp, updated_at: timestamp, last_worked_at: timestamp, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] }; mockProjects.push(item); return structuredClone(item); },
-    update: async (id, input) => { const item = mockProjects.find((project) => project.id === id); Object.assign(item, input, { updated_at: new Date().toISOString() }); return structuredClone(item); },
+    create: async (input) => { const timestamp = new Date().toISOString(); const item = { id: crypto.randomUUID(), name: input.name, description: input.description || "", status: input.status || "active", priority: input.priority || "none", manual_rank: mockProjects.length, category: input.category || "Uncategorized", tier: input.tier || 4, tier_order: mockProjects.filter((project) => project.tier === (input.tier || 4)).length, local_path: input.localPath || null, git_root: input.gitRoot || null, github_url: input.githubUrl || null, primary_language: input.primaryLanguage || "", tags: input.tags || [], next_action: input.nextAction || "", notes: input.notes || "", push_after_commit: false, created_at: timestamp, updated_at: timestamp, last_worked_at: timestamp, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] }; mockProjects.push(item); return structuredClone(item); },
+    update: async (id, input) => { const item = mockProjects.find((project) => project.id === id); const patch = { ...input }; if (Object.hasOwn(patch, "nextAction")) { patch.next_action = patch.nextAction; delete patch.nextAction; } if (Object.hasOwn(patch, "gitRoot")) { patch.git_root = patch.gitRoot; delete patch.gitRoot; } if (Object.hasOwn(patch, "githubUrl")) { patch.github_url = patch.githubUrl; delete patch.githubUrl; } Object.assign(item, patch, { updated_at: new Date().toISOString() }); return structuredClone(item); },
     reorder: async () => structuredClone(mockProjects),
+    move: async ({ id, tier, beforeId }) => { const item = mockProjects.find((project) => project.id === id); const from = mockProjects.indexOf(item); mockProjects.splice(from, 1); item.tier = tier; const before = beforeId ? mockProjects.findIndex((project) => project.id === beforeId) : -1; mockProjects.splice(before >= 0 ? before : mockProjects.length, 0, item); mockProjects.filter((project) => project.tier === tier).forEach((project, index) => { project.tier_order = index; }); return structuredClone(mockProjects); },
     remove: async (id) => { const index = mockProjects.findIndex((project) => project.id === id); if (index >= 0) mockProjects.splice(index, 1); },
     chooseFolder: async () => ({ canceled: true }),
     chooseParent: async () => ({ canceled: true, projects: [] }),
     inspect: async () => null,
-    status: async () => ({ available: true, isGit: true, clean: true, branch: "main", upstream: "origin/main", ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0 }, files: [], lastCommit: { shortHash: "a1234567", message: "Update project", committedAt: new Date().toISOString() } }),
-    diff: async (input) => ({ path: input.path, binary: false, truncated: false, text: "" }),
+    status: async (root) => root.includes("clipforge")
+      ? { available: true, isGit: true, clean: false, branch: "main", upstream: "origin/main", remote: "https://github.com/wasely/clipforge-ai.git", githubUrl: "https://github.com/wasely/clipforge-ai", ahead: 0, behind: 0, counts: { modified: 2, added: 1, deleted: 0, untracked: 1, staged: 0, conflicts: 0 }, files: [{ path: "src/export.py", kind: "modified", staged: false, unstaged: true }, { path: "README.md", kind: "modified", staged: false, unstaged: true }, { path: "tests/export_test.py", kind: "untracked", staged: false, unstaged: true }], lastCommit: { shortHash: "b2345678", message: "Improve captions", committedAt: new Date().toISOString() } }
+      : root.includes("reddit")
+        ? { available: true, isGit: true, clean: true, branch: "main", upstream: "origin/main", remote: "https://github.com/wasely/reddit-meme-finder.git", githubUrl: "https://github.com/wasely/reddit-meme-finder", ahead: 2, behind: 0, counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0 }, files: [], lastCommit: { shortHash: "c3456789", message: "Filter duplicates", committedAt: new Date().toISOString() } }
+        : root.includes("proxy")
+          ? { available: true, isGit: true, clean: true, branch: "main", upstream: null, remote: null, githubUrl: null, ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0 }, files: [], lastCommit: { shortHash: "d4567890", message: "Create proxy", committedAt: new Date().toISOString() } }
+          : { available: true, isGit: true, clean: true, branch: "main", upstream: "origin/main", remote: "https://github.com/wasely/note-overlay.git", githubUrl: "https://github.com/wasely/note-overlay", ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0 }, files: [], lastCommit: { shortHash: "a1234567", message: "Update project", committedAt: new Date().toISOString() } },
+    diff: async (input) => ({ path: input.path, binary: false, truncated: false, text: `diff --git a/${input.path} b/${input.path}\n--- a/${input.path}\n+++ b/${input.path}\n@@ -1 +1 @@\n-old value\n+new value` }),
     stage: async () => ({ files: [] }),
     unstage: async () => ({ files: [] }),
-    commit: async (input) => ({ shortHash: "f00ba412", message: input.message, pushed: false }),
+    commit: async (input) => ({ shortHash: "f00ba412", message: input.message, pushed: Boolean(input.push), status: { available: true, isGit: true, clean: true, branch: "main", upstream: "origin/main", remote: "https://github.com/wasely/demo.git", githubUrl: "https://github.com/wasely/demo", ahead: 0, behind: 0, counts: {}, files: [] } }),
+    push: async () => ({ available: true, isGit: true, clean: true, branch: "main", upstream: "origin/main", remote: "https://github.com/wasely/demo.git", githubUrl: "https://github.com/wasely/demo", ahead: 0, behind: 0, counts: {}, files: [] }),
     fetch: async () => ({ ahead: 0, behind: 0 }),
+    githubAuthStatus: async () => ({ available: true, authenticated: true, login: "wasely" }),
+    githubSignIn: async () => ({ available: true, authenticated: true, login: "wasely" }),
+    githubSetup: async (input) => { const project = mockProjects.find((item) => item.id === input.projectId); project.git_root = project.git_root || project.local_path; project.github_url = `https://github.com/${input.repository.includes("/") ? input.repository : `wasely/${input.repository}`}`; return { root: project.git_root, url: project.github_url, repository: project.github_url.replace("https://github.com/", ""), created: input.mode === "create", initialized: !project.git_root, project: structuredClone(project), status: { available: true, isGit: true, clean: true, branch: "main", upstream: null, remote: `${project.github_url}.git`, githubUrl: project.github_url, ahead: 0, behind: 0, counts: {}, files: [] } }; },
     agentsRead: async () => ({ exists: false, path: "AGENTS.md", content: "", version: null, modifiedAt: null, newline: "\r\n" }),
     agentsWrite: async (input) => ({ exists: true, path: "AGENTS.md", content: input.content, version: crypto.randomUUID(), modifiedAt: new Date().toISOString(), newline: "\r\n" }),
     readme: async () => ({ path: "README.md", content: "" }),
@@ -357,6 +374,7 @@ const mockApi = {
     show: async () => { const state = new URLSearchParams(location.search).get("twitter"); if (state === "error") return { status: "error", message: "This service is unavailable in the preview." }; if (state === "loading") return { status: "loading", message: "" }; return { status: "ready", message: "" }; },
     hide: async () => ({ status: "ready" }), reload: async () => ({ status: "loading" }), openExternal: async () => true,
   },
+  ai: { chatgpt: mockAiService("chatgpt"), gemini: mockAiService("gemini"), deepseek: mockAiService("deepseek") },
   clipboard: { writeText: async (text) => navigator.clipboard.writeText(text), writeRich: async ({ text }) => navigator.clipboard.writeText(text) },
   googleDocs: { create: async () => true },
   window: { hide: async () => {} },
@@ -371,6 +389,7 @@ const mockApi = {
   onNotionStatus: () => () => {},
   onOpenTwitter: () => () => {},
   onTwitterStatus: () => () => {},
+  onAiStatus: () => () => {},
 };
 const api = window.hushnote || mockApi;
 
@@ -381,7 +400,6 @@ const VIEWS = [
   { id: "commands", label: "Commands", route: "commands", Icon: SquareTerminal },
   { id: "projects", label: "Projects", route: "projects", Icon: FolderGit2, group: "Workspace" },
   { id: "bots", label: "Bots", route: "bots", Icon: Bot, group: "Workspace" },
-  { id: "mcp-servers", label: "MCP", route: "mcp-servers", Icon: ServerCog, group: "Workspace" },
 ];
 // Full-window embedded services. These are windows, not pages, so they sit under their own heading.
 // Brand marks ship with the app (simple-icons), so they render offline and never depend on a
@@ -391,7 +409,13 @@ const SERVICES = [
   { id: "notion", label: "Notion", brand: siNotion, tone: "notion", hotkey: "Ctrl+Alt+Shift+O" },
   { id: "twitter", label: "Twitter", brand: siX, tone: "twitter", hotkey: "Ctrl+Alt+Shift+X" },
 ];
-const SERVICE_IDS = new Set(SERVICES.map((service) => service.id));
+const AI_SERVICES = [
+  { id: "chatgpt", label: "ChatGPT", Icon: Sparkles, tone: "chatgpt" },
+  { id: "gemini", label: "Gemini", brand: siGooglegemini, tone: "gemini" },
+  { id: "deepseek", label: "DeepSeek", brand: siDeepseek, tone: "deepseek" },
+];
+const AI_SERVICE_IDS = new Set(AI_SERVICES.map((service) => service.id));
+const SERVICE_IDS = new Set([...SERVICES, ...AI_SERVICES].map((service) => service.id));
 const LIBRARY_VIEWS = new Set(["notes", "skills", "commands"]);
 const NEW_LABEL = { notes: "New note", skills: "New skill", commands: "New command" };
 
@@ -558,9 +582,25 @@ function SlashCommandList({ items, currentId, onSelect, onRemove, onCreate }) {
   </div>;
 }
 
-function EditorBar({ status, context, children, onHide }) {
+function LibraryBrowser({ title, label, createLabel, onCreate, children }) {
+  return <nav className="library-browser" aria-label={label}>
+    <div className="library-browser-top">
+      <strong>{title}</strong>
+      <IconButton label={createLabel} onClick={onCreate}><Plus size={16} strokeWidth={2} /></IconButton>
+    </div>
+    {children}
+  </nav>;
+}
+
+function LibraryToggle({ open, label, onToggle }) {
+  return <IconButton label={`${open ? "Hide" : "Show"} ${label}`} aria-pressed={open} onClick={onToggle}>
+    <List size={17} strokeWidth={1.8} />
+  </IconButton>;
+}
+
+function EditorBar({ status, context, leading, children, onHide }) {
   return <header className="editor-bar">
-    <div className="editor-status"><span className={`save-state ${status === "Save failed" ? "is-failed" : ""}`}>{status}</span>{context && <span className="editor-context">{context}</span>}</div>
+    <div className="editor-status">{leading}<span className={`save-state ${status === "Save failed" ? "is-failed" : ""}`}>{status}</span>{context && <span className="editor-context">{context}</span>}</div>
     <div className="editor-actions">{children}<IconButton className="close" label="Hide Notebook" onClick={onHide}><X size={18} strokeWidth={1.8} /></IconButton></div>
   </header>;
 }
@@ -722,7 +762,7 @@ function TodayPage({ page, status, onSelectDate, onAdd, onToggle, onLocalEdit, o
   </section>;
 }
 
-function NotePage({ note, notebooks, status, mode, onMode, onEdit, onSave, onCopy, onCopyPath, onCompress, onFormat, onGoogleDoc, onDrag, onDragEnd, onTogglePin, onMove, onRemove, onAddTodo, onToggleTodo, onCreate, onHide, editorRef, notebookName }) {
+function NotePage({ note, notebooks, status, mode, browserOpen, onBrowserToggle, onMode, onEdit, onSave, onCopy, onCopyPath, onCompress, onFormat, onGoogleDoc, onDrag, onDragEnd, onTogglePin, onMove, onRemove, onAddTodo, onToggleTodo, onCreate, onHide, editorRef, notebookName }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   useEffect(() => {
@@ -732,14 +772,14 @@ function NotePage({ note, notebooks, status, mode, onMode, onEdit, onSave, onCop
     return () => document.removeEventListener("pointerdown", close);
   }, [menuOpen]);
   if (!note) return <section className="pane">
-    <EditorBar status={status} onHide={onHide} />
+    <EditorBar status={status} leading={<LibraryToggle open={browserOpen} label="note list" onToggle={onBrowserToggle} />} onHide={onHide} />
     <div className="pane-scroll"><EmptyState title={`${notebookName || "This notebook"} is empty`} body="Create a Markdown note. It saves itself as you type." action={<button type="button" className="button primary" onClick={onCreate}><Plus size={15} strokeWidth={2} />New note</button>} /></div>
   </section>;
   const hasContent = Boolean(note.body?.trim() || note.title?.trim());
   const tasks = todoItems(note.body);
   const words = countWords(note.body);
   return <section className="pane">
-    <EditorBar status={status} context={notebookName} onHide={onHide}>
+    <EditorBar status={status} context={notebookName} leading={<LibraryToggle open={browserOpen} label="note list" onToggle={onBrowserToggle} />} onHide={onHide}>
       <IconButton label={note.pinned ? "Unpin note" : "Pin note"} className={note.pinned ? "is-active" : ""} aria-pressed={Boolean(note.pinned)} onClick={onTogglePin}><Pin size={16} strokeWidth={1.8} /></IconButton>
       <button type="button" className="button subtle" onClick={() => onMode(mode === "write" ? "read" : "write")} aria-pressed={mode === "read"} title="Toggle Markdown preview (Ctrl+E)">
         {mode === "write" ? <><Eye size={15} strokeWidth={1.8} />Preview</> : <><Pencil size={15} strokeWidth={1.8} />Edit</>}
@@ -779,13 +819,13 @@ function NotePage({ note, notebooks, status, mode, onMode, onEdit, onSave, onCop
   </section>;
 }
 
-function CommandPage({ item, status, onEdit, onSave, onCopy, onRemove, onCreate, onHide }) {
+function CommandPage({ item, status, browserOpen, onBrowserToggle, onEdit, onSave, onCopy, onRemove, onCreate, onHide }) {
   if (!item) return <section className="pane">
-    <EditorBar status={status} onHide={onHide} />
+    <EditorBar status={status} leading={<LibraryToggle open={browserOpen} label="command list" onToggle={onBrowserToggle} />} onHide={onHide} />
     <div className="pane-scroll"><EmptyState title="No command selected" body="Save an invocation with a short note on what it does." action={<button type="button" className="button primary" onClick={onCreate}><Plus size={15} strokeWidth={2} />New command</button>} /></div>
   </section>;
   return <section className="pane">
-    <EditorBar status={status} context={item.command?.trim() || "Reference"} onHide={onHide}>
+    <EditorBar status={status} context={item.command?.trim() || "Reference"} leading={<LibraryToggle open={browserOpen} label="command list" onToggle={onBrowserToggle} />} onHide={onHide}>
       <button type="button" className="button subtle" onClick={onCopy}><Copy size={15} strokeWidth={1.8} />Copy</button>
       <IconButton className="is-danger" label={`Delete ${slashCommandName(item)}`} onClick={() => onRemove(item)}><Trash2 size={16} strokeWidth={1.8} /></IconButton>
     </EditorBar>
@@ -885,21 +925,27 @@ function BrandIcon({ icon, size = 16, className = "" }) {
   return <svg className={`brand-icon ${className}`} role="img" aria-hidden="true" viewBox="0 0 24 24" width={size} height={size}><path d={icon.path} /></svg>;
 }
 
-function ServiceScreen({ appName, activeId, loadedServices, status, preview, Preview, errorHint, onBack, onSwitch, onReload, onExternal, onHide }) {
+function ServiceMark({ service, size = 16 }) {
+  if (service.brand) return <BrandIcon icon={service.brand} className={`brand-${service.tone}`} size={size} />;
+  const Icon = service.Icon;
+  return <Icon className={`service-glyph brand-${service.tone}`} size={size} strokeWidth={1.9} aria-hidden="true" />;
+}
+
+function ServiceScreen({ appName, activeId, switchServices, switchLabel, loadedServices, status, preview, Preview, errorHint, onBack, onSwitch, onReload, onExternal, onHide }) {
   const loading = status.status === "loading" || status.status === "idle";
   const failed = status.status === "error";
   return <main className="service-screen">
     <header className="service-bar">
       <button type="button" className="button subtle" onClick={onBack}><ArrowLeft size={15} strokeWidth={1.8} />Notebook</button>
-      <div className="service-switch" role="group" aria-label="Switch app">
-        {SERVICES.map(({ id, label, brand, tone }) => <button
+      <div className="service-switch" role="group" aria-label={switchLabel}>
+        {switchServices.map((service) => <button
           type="button"
-          key={id}
-          className={`${id === activeId ? "is-active" : ""} brand-${tone}`}
-          aria-pressed={id === activeId}
-          title={loadedServices.has(id) && id !== activeId ? `${label} · already loaded` : label}
-          onClick={() => id !== activeId && onSwitch(id)}
-        ><BrandIcon icon={brand} size={15} /><span>{label}</span></button>)}
+          key={service.id}
+          className={`${service.id === activeId ? "is-active" : ""} brand-${service.tone}`}
+          aria-pressed={service.id === activeId}
+          title={loadedServices.has(service.id) && service.id !== activeId ? `${service.label} · already loaded` : service.label}
+          onClick={() => service.id !== activeId && onSwitch(service.id)}
+        ><ServiceMark service={service} size={15} /><span>{service.label}</span></button>)}
       </div>
       <span className={`save-state ${failed ? "is-failed" : ""}`}>{loading ? `Loading ${appName}…` : failed ? `${appName} unavailable` : ""}</span>
       <div className="editor-actions">
@@ -995,12 +1041,11 @@ function App() {
   const [slashCommands, setSlashCommands] = useState([]);
   const [currentSlashCommand, setCurrentSlashCommand] = useState(null);
   const [bots, setBots] = useState([]);
-  const [mcpServers, setMcpServers] = useState([]);
   const [currentBotId, setCurrentBotId] = useState(null);
-  const [currentMcpId, setCurrentMcpId] = useState(null);
   const [mailStatus, setMailStatus] = useState({ status: "idle", message: "" });
   const [notionStatus, setNotionStatus] = useState({ status: "idle", message: "" });
   const [twitterStatus, setTwitterStatus] = useState({ status: "idle", message: "" });
+  const [aiStatuses, setAiStatuses] = useState(() => Object.fromEntries(AI_SERVICES.map(({ id }) => [id, { status: "idle", message: "" }])));
   const [compressOpen, setCompressOpen] = useState(false);
   // Services stay loaded and signed in for the session once opened; the view is only detached.
   const [loadedServices, setLoadedServices] = useState(() => new Set());
@@ -1021,6 +1066,7 @@ function App() {
   const [closing, setClosing] = useState(false);
   const [showTick, setShowTick] = useState(0);
   const [editorMode, setEditorMode] = useState("write");
+  const [libraryBrowserOpen, setLibraryBrowserOpen] = useState(() => !window.matchMedia("(max-width: 56rem)").matches);
   const [notebookEditor, setNotebookEditor] = useState(null);
   const [appVersion, setAppVersion] = useState("");
   const saveTimer = useRef();
@@ -1037,9 +1083,8 @@ function App() {
   const previousViewRef = useRef("daily");
 
   const load = async () => {
-    const [list, savedSkills, savedSlashCommands, savedNotebooks, savedBots, savedMcpServers, version, saved] = await Promise.all([api.notes.list(), api.skills.list(), api.slashCommands.list(), api.folders.list(), api.bots.list({ includeArchived: true }), api.mcpServers.list(), api.settings.version(), api.settings.get()]);
+    const [list, savedSkills, savedSlashCommands, savedNotebooks, savedBots, version, saved] = await Promise.all([api.notes.list(), api.skills.list(), api.slashCommands.list(), api.folders.list(), api.bots.list({ includeArchived: true }), api.settings.version(), api.settings.get()]);
     setBots(savedBots);
-    setMcpServers(savedMcpServers);
     const inboxId = savedNotebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
     setNotes(list);
     setSkills(savedSkills);
@@ -1090,10 +1135,10 @@ function App() {
     api.onFlushEditor(flushOpenEditors);
     api.onOverlayHiding(() => {
       setClosing(true);
-      if (SERVICE_IDS.has(viewRef.current)) { api[viewRef.current].hide().catch(() => {}); setView(previousViewRef.current); }
+      if (SERVICE_IDS.has(viewRef.current)) { serviceApi(viewRef.current).hide().catch(() => {}); setView(previousViewRef.current); }
     });
     api.onOverlayShown(() => { setClosing(false); setShowTick((tick) => tick + 1); loadDaily(); });
-    const onHashChange = () => { const route = hashRoute(); setView(route.view); if (route.view === "bots") setCurrentBotId(route.id); if (route.view === "mcp-servers") setCurrentMcpId(route.id); };
+    const onHashChange = () => { const route = hashRoute(); setView(route.view); if (route.view === "bots") setCurrentBotId(route.id); };
     addEventListener("hashchange", onHashChange);
     const stopBotStatus = api.bots.onStatus?.((update) => { if (update?.bot?.id) setBots((items) => items.map((item) => item.id === update.bot.id ? update.bot : item)); });
     const stopServiceEvents = [
@@ -1103,6 +1148,7 @@ function App() {
       api.onNotionStatus?.((next) => setNotionStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Notion returned an invalid status." })),
       api.onOpenTwitter?.(() => openService("twitter")),
       api.onTwitterStatus?.((next) => setTwitterStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Twitter returned an invalid status." })),
+      ...AI_SERVICES.map(({ id, label }) => api.onAiStatus?.(id, (next) => setAiStatuses((current) => ({ ...current, [id]: next && typeof next.status === "string" ? next : { status: "error", message: `${label} returned an invalid status.` } })))),
     ];
     return () => { stopBotStatus?.(); stopServiceEvents.forEach((stop) => stop?.()); removeEventListener("hashchange", onHashChange); clearTimeout(saveTimer.current); clearTimeout(skillSaveTimer.current); clearTimeout(slashCommandSaveTimer.current); clearTimeout(noticeTimer.current); };
   }, []);
@@ -1117,6 +1163,13 @@ function App() {
     media?.addEventListener?.("change", apply);
     return () => media?.removeEventListener?.("change", apply);
   }, [appSettings.theme]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 56rem)");
+    const sync = (event) => setLibraryBrowserOpen(!event.matches);
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
 
   useEffect(() => {
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return undefined;
@@ -1162,36 +1215,35 @@ function App() {
     return () => document.removeEventListener("keydown", handleKeys);
   }, [searchQuery, settingsOpen, activeNotebookId, notebooks]);
 
-  const serviceStatus = { mail: mailStatus, notion: notionStatus, twitter: twitterStatus };
-  const setServiceStatus = { mail: setMailStatus, notion: setNotionStatus, twitter: setTwitterStatus };
+  const serviceStatus = { mail: mailStatus, notion: notionStatus, twitter: twitterStatus, ...aiStatuses };
+  const setAppServiceStatus = { mail: setMailStatus, notion: setNotionStatus, twitter: setTwitterStatus };
+  function updateServiceStatus(id, next) {
+    if (AI_SERVICE_IDS.has(id)) setAiStatuses((current) => ({ ...current, [id]: next }));
+    else setAppServiceStatus[id](next);
+  }
+  function serviceApi(id) { return AI_SERVICE_IDS.has(id) ? api.ai[id] : api[id]; }
   async function openService(id) {
     flushOpenEditors();
     if (!SERVICE_IDS.has(viewRef.current)) previousViewRef.current = viewRef.current;
     setCompressOpen(false); setSettingsOpen(false); setSearchQuery("");
-    setServiceStatus[id]({ status: loadedServices.has(id) ? "ready" : "loading", message: "" });
+    updateServiceStatus(id, { status: loadedServices.has(id) ? "ready" : "loading", message: "" });
     setView(id);
     try {
-      const next = await api[id].show();
-      if (next?.status) setServiceStatus[id](next);
+      const next = await serviceApi(id).show();
+      if (next?.status) updateServiceStatus(id, next);
       setLoadedServices((current) => current.has(id) ? current : new Set(current).add(id));
     }
-    catch { setServiceStatus[id]({ status: "error", message: "This service could not open." }); }
+    catch { updateServiceStatus(id, { status: "error", message: "This service could not open." }); }
   }
-  async function closeService(id) { await api[id].hide().catch(() => {}); setView(previousViewRef.current); }
+  async function closeService(id) { await serviceApi(id).hide().catch(() => {}); setView(previousViewRef.current); }
   async function reloadService(id) {
-    setServiceStatus[id]({ status: "loading", message: "" });
-    try { await api[id].reload(); }
-    catch { setServiceStatus[id]({ status: "error", message: "This service could not reload." }); }
+    updateServiceStatus(id, { status: "loading", message: "" });
+    try { await serviceApi(id).reload(); }
+    catch { updateServiceStatus(id, { status: "error", message: "This service could not reload." }); }
   }
   async function reloadBots() { const saved = await api.bots.list({ includeArchived: true }); setBots(saved); return saved; }
   async function reloadNotes() { const saved = await api.notes.list(); setNotes(saved); return saved; }
-  async function reloadMcpServers() { const saved = await api.mcpServers.list(); setMcpServers(saved); return saved; }
   function openBot(id) { setCurrentBotId(id || null); setView("bots"); setSearchQuery(""); setCompressOpen(false); location.hash = id ? `/bots/${id}` : "/bots"; }
-  function openMcp(serverOrId) {
-    const id = typeof serverOrId === "string" ? serverOrId : serverOrId?.id;
-    setCurrentMcpId(id || null); setView("mcp-servers"); setSearchQuery(""); setCompressOpen(false);
-    location.hash = id ? `/mcp-servers/${id}` : "/mcp-servers";
-  }
 
   function flushOpenEditors() {
     if (currentRef.current) saveNow(currentRef.current);
@@ -1587,6 +1639,24 @@ function App() {
     edit({ body: lines.join("\n") });
   }
 
+  function toggleLibraryBrowser() {
+    if (searchQuery.trim()) {
+      setSearchQuery("");
+      setLibraryBrowserOpen(true);
+      return;
+    }
+    setLibraryBrowserOpen((open) => !open);
+  }
+  function selectNoteFromBrowser(note) {
+    setCurrent(note);
+    setEditorMode("write");
+    if (window.matchMedia("(max-width: 56rem)").matches) setLibraryBrowserOpen(false);
+  }
+  function selectCommandFromBrowser(item) {
+    setCurrentSlashCommand(item);
+    if (window.matchMedia("(max-width: 56rem)").matches) setLibraryBrowserOpen(false);
+  }
+
   function selectView(nextView) {
     setView(nextView);
     const route = VIEWS.find((entry) => entry.id === nextView)?.route;
@@ -1613,23 +1683,24 @@ function App() {
     commands: slashCommands.length,
     projects: null,
     bots: bots.filter((bot) => !bot.archivedAt).length,
-    "mcp-servers": mcpServers.length,
   };
 
-  const service = SERVICES.find((entry) => entry.id === view);
+  const service = [...SERVICES, ...AI_SERVICES].find((entry) => entry.id === view);
   if (service) return <div className={`window-surface ${closing ? "is-closing" : ""}`} ref={surfaceRef}>
     <ServiceScreen
       appName={service.label}
       activeId={service.id}
+      switchServices={AI_SERVICE_IDS.has(service.id) ? AI_SERVICES : SERVICES}
+      switchLabel={AI_SERVICE_IDS.has(service.id) ? "Switch AI" : "Switch app"}
       loadedServices={loadedServices}
       onSwitch={openService}
       status={serviceStatus[service.id]}
       preview={!window.hushnote}
-      Preview={service.id === "mail" ? MailPreview : service.id === "notion" ? NotionPreview : TwitterPreview}
+      Preview={service.id === "mail" ? MailPreview : service.id === "notion" ? NotionPreview : service.id === "twitter" ? TwitterPreview : () => <ServicePreview name={service.label} />}
       errorHint="Check your connection. The service may also block sign-in inside embedded windows."
       onBack={() => closeService(service.id)}
       onReload={() => reloadService(service.id)}
-      onExternal={() => api[service.id].openExternal()}
+      onExternal={() => serviceApi(service.id).openExternal()}
       onHide={() => api.window.hide()}
     />
   </div>;
@@ -1648,7 +1719,7 @@ function App() {
       <nav className="nav" aria-label="Pages">
         {VIEWS.map(({ id, label, Icon, group }, index) => <React.Fragment key={id}>
           {group && VIEWS[index - 1]?.group !== group && <span className="nav-heading">{group}</span>}
-          <button type="button" className={view === id && !searchQuery ? "is-active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => id === "bots" ? openBot(null) : id === "mcp-servers" ? openMcp(null) : selectView(id)}>
+          <button type="button" className={view === id && !searchQuery ? "is-active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => id === "bots" ? openBot(null) : selectView(id)}>
             <Icon size={16} strokeWidth={1.8} aria-hidden="true" /><strong>{label}</strong><small>{counts[id] ?? ""}</small>
           </button>
         </React.Fragment>)}
@@ -1662,60 +1733,76 @@ function App() {
 
       <div className="sidebar-body">
         {searchQuery.trim() ? <SearchResults query={searchQuery} notes={notes} skills={skills} slashCommands={slashCommands} daily={daily} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenCommand={openSearchCommand} onOpenTask={() => selectView("daily")} />
-          : view === "notes" ? <>
-            <div className="picker">
-              <select value={activeNotebookId} onChange={(event) => openNotebook(event.target.value)} aria-label="Current notebook">
-                <option value="all">All notes</option>
-                {notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name} ({notes.filter((note) => !note.deleted_at && note.folder_id === notebook.id).length})</option>)}
-              </select>
-              <IconButton label="New notebook" onClick={() => setNotebookEditor({ mode: "create", value: "" })}><Plus size={15} strokeWidth={2} /></IconButton>
-              {activeNotebook && !activeNotebook.is_inbox && <IconButton label={`Delete notebook ${activeNotebook.name}`} onClick={deleteNotebook}><Trash2 size={14} strokeWidth={1.8} /></IconButton>}
-            </div>
-            {notebookEditor && <form className="picker-form" onSubmit={submitNotebook}>
-              <input autoFocus value={notebookEditor.value} onChange={(event) => setNotebookEditor({ ...notebookEditor, value: event.target.value })} placeholder="Notebook name" aria-label="Notebook name" />
-              <button type="submit" className="button subtle">Create</button>
-              <IconButton label="Cancel new notebook" onClick={() => setNotebookEditor(null)}><X size={15} strokeWidth={1.8} /></IconButton>
-            </form>}
-            <NotesList notes={visibleNotes} currentId={current?.id} onSelect={(note) => { setCurrent(note); setEditorMode("write"); }} onRemove={remove} onCreate={() => createNote()} />
-          </>
-            : view === "skills" ? null
-              : view === "commands" ? <SlashCommandList items={slashCommands} currentId={currentSlashCommand?.id} onSelect={setCurrentSlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} />
-                : view === "bots" ? <BotSidebar bots={bots} currentId={currentBotId} onSelect={openBot} />
-                  : view === "mcp-servers" ? <McpSidebar servers={mcpServers} currentId={currentMcpId} onSelect={openMcp} />
-                    : view === "projects" ? null
-                      : <DailySidebar page={daily} month={dailyMonth.month} days={dailyMonth.days} status={dailyStatus} onSelectDate={selectDailyDate} onMonth={selectDailyMonth} />}
+          : view === "bots" ? <BotSidebar bots={bots} currentId={currentBotId} onSelect={openBot} />
+            : ["notes", "skills", "commands", "projects"].includes(view) ? null
+              : <DailySidebar page={daily} month={dailyMonth.month} days={dailyMonth.days} status={dailyStatus} onSelectDate={selectDailyDate} onMonth={selectDailyMonth} />}
       </div>
+
+      <section className="ai-panel" aria-label="Quick AI">
+        <span className="nav-heading">AI</span>
+        <div className="ai-panel-buttons">
+          {AI_SERVICES.map((service) => <button type="button" key={service.id} className={view === service.id ? "is-active" : ""} aria-label={`Open ${service.label}`} title={`Open ${service.label}`} onClick={() => openService(service.id)}>
+            <ServiceMark service={service} size={16} />
+            <span>{service.label}</span>
+            {loadedServices.has(service.id) && <i aria-hidden="true">●</i>}
+          </button>)}
+        </div>
+      </section>
     </aside>
 
-    {view === "notes" ? <NotePage
-      note={current}
-      notebooks={notebooks}
-      notebookName={notebooks.find((notebook) => notebook.id === current?.folder_id)?.name || activeNotebook?.name}
-      status={saveState}
-      mode={editorMode}
-      onMode={setEditorMode}
-      onEdit={edit}
-      onSave={saveNow}
-      onCopy={copyCurrent}
-      onCopyPath={copyDragTarget}
-      onCompress={() => setCompressOpen(true)}
-      onFormat={formatSelection}
-      onGoogleDoc={openInGoogleDocs}
-      onDrag={dragCurrent}
-      onDragEnd={() => showSaveNotice("Drag finished", 900)}
-      onTogglePin={togglePin}
-      onMove={moveCurrentTo}
-      onRemove={remove}
-      onAddTodo={addTodo}
-      onToggleTodo={toggleTodo}
-      onCreate={() => createNote()}
-      onHide={() => api.window.hide()}
-      editorRef={editorRef}
-    /> : view === "projects" ? <ProjectsPage api={api.projects} skills={skills} commands={slashCommands} onHide={() => api.window.hide()} />
-      : view === "bots" ? <BotsWorkspace api={api} bots={bots} mcpServers={mcpServers} skills={skills} notes={notes} currentId={currentBotId} onCurrent={openBot} onBotsChange={reloadBots} onNotesChange={reloadNotes} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenMcp={openMcp} onHide={() => api.window.hide()} />
-      : view === "mcp-servers" ? <McpServersWorkspace api={api} servers={mcpServers} bots={bots} currentId={currentMcpId} onCurrent={openMcp} onServersChange={reloadMcpServers} onOpenBot={openBot} onHide={() => api.window.hide()} />
+    {view === "notes" ? <div className={`library-workspace ${libraryBrowserOpen ? "is-browsing" : ""}`}>
+      {libraryBrowserOpen && !searchQuery.trim() && <LibraryBrowser title="Notes" label="Note library" createLabel="New note" onCreate={() => createNote()}>
+        <div className="picker">
+          <select value={activeNotebookId} onChange={(event) => openNotebook(event.target.value)} aria-label="Current notebook">
+            <option value="all">All notes</option>
+            {notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name} ({notes.filter((note) => !note.deleted_at && note.folder_id === notebook.id).length})</option>)}
+          </select>
+          <IconButton label="New notebook" onClick={() => setNotebookEditor({ mode: "create", value: "" })}><Plus size={15} strokeWidth={2} /></IconButton>
+          {activeNotebook && !activeNotebook.is_inbox && <IconButton label={`Delete notebook ${activeNotebook.name}`} onClick={deleteNotebook}><Trash2 size={14} strokeWidth={1.8} /></IconButton>}
+        </div>
+        {notebookEditor && <form className="picker-form" onSubmit={submitNotebook}>
+          <input autoFocus value={notebookEditor.value} onChange={(event) => setNotebookEditor({ ...notebookEditor, value: event.target.value })} placeholder="Notebook name" aria-label="Notebook name" />
+          <button type="submit" className="button subtle">Create</button>
+          <IconButton label="Cancel new notebook" onClick={() => setNotebookEditor(null)}><X size={15} strokeWidth={1.8} /></IconButton>
+        </form>}
+        <NotesList notes={visibleNotes} currentId={current?.id} onSelect={selectNoteFromBrowser} onRemove={remove} onCreate={() => createNote()} />
+      </LibraryBrowser>}
+      <NotePage
+        note={current}
+        notebooks={notebooks}
+        notebookName={notebooks.find((notebook) => notebook.id === current?.folder_id)?.name || activeNotebook?.name}
+        status={saveState}
+        mode={editorMode}
+        browserOpen={libraryBrowserOpen && !searchQuery.trim()}
+        onBrowserToggle={toggleLibraryBrowser}
+        onMode={setEditorMode}
+        onEdit={edit}
+        onSave={saveNow}
+        onCopy={copyCurrent}
+        onCopyPath={copyDragTarget}
+        onCompress={() => setCompressOpen(true)}
+        onFormat={formatSelection}
+        onGoogleDoc={openInGoogleDocs}
+        onDrag={dragCurrent}
+        onDragEnd={() => showSaveNotice("Drag finished", 900)}
+        onTogglePin={togglePin}
+        onMove={moveCurrentTo}
+        onRemove={remove}
+        onAddTodo={addTodo}
+        onToggleTodo={toggleTodo}
+        onCreate={() => createNote()}
+        onHide={() => api.window.hide()}
+        editorRef={editorRef}
+      />
+    </div> : view === "projects" ? <ProjectsPage api={api.projects} skills={skills} commands={slashCommands} onHide={() => api.window.hide()} />
+      : view === "bots" ? <BotsWorkspace api={api} bots={bots} skills={skills} notes={notes} currentId={currentBotId} onCurrent={openBot} onBotsChange={reloadBots} onNotesChange={reloadNotes} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onHide={() => api.window.hide()} />
       : view === "skills" ? <SkillsWorkspace skills={skills} current={currentSkill} status={saveState} editorCategories={skillEditorCategories} onSelect={setCurrentSkill} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onCreate={createSkill} onTogglePin={toggleSkillStar} onHide={() => api.window.hide()} />
-      : view === "commands" ? <CommandPage item={currentSlashCommand} status={saveState} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} onHide={() => api.window.hide()} />
+      : view === "commands" ? <div className={`library-workspace ${libraryBrowserOpen ? "is-browsing" : ""}`}>
+        {libraryBrowserOpen && !searchQuery.trim() && <LibraryBrowser title="Commands" label="Command library" createLabel="New command" onCreate={createSlashCommand}>
+          <SlashCommandList items={slashCommands} currentId={currentSlashCommand?.id} onSelect={selectCommandFromBrowser} onRemove={removeSlashCommand} onCreate={createSlashCommand} />
+        </LibraryBrowser>}
+        <CommandPage item={currentSlashCommand} status={saveState} browserOpen={libraryBrowserOpen && !searchQuery.trim()} onBrowserToggle={toggleLibraryBrowser} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} onHide={() => api.window.hide()} />
+      </div>
         : <TodayPage page={daily} status={dailyStatus} onSelectDate={selectDailyDate} onAdd={addDailyTask} onToggle={toggleDailyTask} onLocalEdit={editDailyTaskLocal} onSave={saveDailyTask} onMove={moveDailyTask} onRemove={removeDailyTask} onHide={() => api.window.hide()} onRetry={() => loadDaily()} />}
 
     {view === "notes" && compressOpen && <Compressor note={current} onClose={() => setCompressOpen(false)} />}

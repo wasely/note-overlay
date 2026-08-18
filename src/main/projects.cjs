@@ -58,6 +58,12 @@ async function githubSignIn() {
   if (!result.authenticated) throw new Error("GitHub sign-in was not completed.");
   return result;
 }
+function githubRepositoryName(value, login) {
+  const raw = String(value || "").trim().replace(/\.git$/i, "");
+  const repository = raw.includes("/") ? raw : `${login}/${raw}`;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Use a GitHub repository name like owner/project.");
+  return repository;
+}
 function canonical(value) {
   const resolved = path.resolve(String(value || ""));
   if (!fs.existsSync(resolved)) throw new Error("Repository folder is unavailable.");
@@ -195,6 +201,34 @@ async function pushRepository(rootValue) {
   const root = await gitRoot(rootValue); if (!root) throw new Error("This project is not a Git repository.");
   return queue(root, async () => { const before = await repositoryStatus(root); await pushRoot(root, before); return repositoryStatus(root); });
 }
+async function setupGithubRepository(rootValue, input = {}) {
+  const selected = canonical(rootValue);
+  const auth = await githubAuthStatus();
+  if (!auth.authenticated) throw new Error("Sign in to GitHub before setting up this project.");
+  let root = await gitRoot(selected);
+  let initialized = false;
+  if (!root) {
+    if (!input.initialize) throw new Error("Initialize Git before connecting this folder to GitHub.");
+    await git(selected, ["init", "-b", "main"], { timeout: 30_000 });
+    root = await gitRoot(selected);
+    initialized = true;
+  }
+  const existing = await git(root, ["remote", "get-url", "origin"], { allowFailure: true });
+  if (!existing.code && existing.stdout.trim()) {
+    const url = githubUrl(existing.stdout);
+    if (!url) throw new Error("This repository already has a non-GitHub origin. Change it in a terminal first.");
+    return { root, url, repository: url.replace("https://github.com/", ""), created: false, initialized, status: await repositoryStatus(root) };
+  }
+  const repository = githubRepositoryName(input.repository || path.basename(root), auth.login);
+  const url = `https://github.com/${repository}`;
+  if (input.mode === "connect") {
+    await run("gh.exe", ["repo", "view", repository, "--json", "url", "--jq", ".url"], { timeout: 30_000 });
+    await git(root, ["remote", "add", "origin", `${url}.git`]);
+  } else {
+    await run("gh.exe", ["repo", "create", repository, input.visibility === "public" ? "--public" : "--private", "--source", root, "--remote", "origin", "--description", String(input.description || "").slice(0, 350)], { timeout: 120_000 });
+  }
+  return { root, url, repository, created: input.mode !== "connect", initialized, status: await repositoryStatus(root) };
+}
 function publishBlockers(root, files) {
   const blockers = [];
   for (const relative of files) {
@@ -249,4 +283,4 @@ function writeAgents(rootValue, input) {
 }
 function readReadme(rootValue) { const root = canonical(rootValue); for (const name of ["README.md", "README.MD", "readme.md"]) { const file = path.join(root, name); if (fs.existsSync(file)) return { path: file, content: fs.readFileSync(file, "utf8").slice(0, 250_000) }; } return null; }
 
-module.exports = { SECRET_FILE, run, gitRoot, githubUrl, githubAuthStatus, githubSignIn, inspectFolder, discoverRepositories, repositoryStatus, diff, mutateFiles, commit, pushRepository, publishBlockers, publishRepository, fetchRepository, readAgents, writeAgents, readReadme };
+module.exports = { SECRET_FILE, run, gitRoot, githubUrl, githubAuthStatus, githubSignIn, inspectFolder, discoverRepositories, repositoryStatus, diff, mutateFiles, commit, pushRepository, setupGithubRepository, publishBlockers, publishRepository, fetchRepository, readAgents, writeAgents, readReadme };

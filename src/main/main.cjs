@@ -5,7 +5,7 @@ const { spawn } = require("child_process");
 const { z } = require("zod");
 const { createStorage } = require("./storage.cjs");
 const { createBotMonitorService } = require("./bot-monitor.cjs");
-const { botInput, mcpServerInput } = require("./bot-schemas.cjs");
+const { botInput } = require("./bot-schemas.cjs");
 const { createBotFactory } = require("./bot-factory.cjs");
 const { createBotProcessService } = require("./bot-process.cjs");
 const { createBotProvisioning } = require("./bot-provisioning.cjs");
@@ -19,6 +19,7 @@ const { createHotkeyManager, shouldHideOverlay } = require("./hotkey-manager.cjs
 const { DEFAULT_MAIL_URL, createMailViewController } = require("./mail-view.cjs");
 const { DEFAULT_NOTION_URL, createNotionViewController } = require("./notion-view.cjs");
 const { DEFAULT_TWITTER_URL, createTwitterViewController } = require("./twitter-view.cjs");
+const { AI_SERVICES, createAiViewController } = require("./ai-view.cjs");
 const { syncStartAtLogin } = require("./startup.cjs");
 
 const DEFAULT_SETTINGS = { hotkey: "Control+Alt+Shift+N", startAtLogin: true, compressorDir: "C:\\Code\\llmlingua-local" };
@@ -37,7 +38,7 @@ const dailyTaskInput = z.object({ text: z.string().trim().min(1).max(500), bucke
 const dailyTaskPatch = z.object({ text: z.string().trim().min(1).max(500).optional(), bucket: z.enum(["today", "tomorrow"]).optional(), priority: z.number().int().min(1).max(3).optional(), owner: z.enum(["me", "agent"]).optional() }).refine((input) => Object.keys(input).length > 0);
 const projectStatus = z.enum(["active", "paused", "blocked", "completed", "archived"]);
 const projectPriority = z.enum(["critical", "high", "medium", "low", "none"]);
-const projectInput = z.object({ name: z.string().trim().min(1).max(240), description: z.string().max(4_000).optional(), status: projectStatus.optional(), priority: projectPriority.optional(), manualRank: z.number().int().min(0).max(100_000).optional(), localPath: z.string().max(1_000).nullable().optional(), gitRoot: z.string().max(1_000).nullable().optional(), githubUrl: z.string().url().max(2_000).nullable().optional(), primaryLanguage: z.string().max(80).optional(), tags: z.array(z.string().max(80)).max(24).optional(), nextAction: z.string().max(1_000).optional(), notes: z.string().max(100_000).optional(), pushAfterCommit: z.boolean().optional(), lastWorkedAt: z.string().datetime().nullable().optional() });
+const projectInput = z.object({ name: z.string().trim().min(1).max(240), description: z.string().max(4_000).optional(), status: projectStatus.optional(), priority: projectPriority.optional(), manualRank: z.number().int().min(0).max(100_000).optional(), category: z.string().trim().min(1).max(80).optional(), tier: z.number().int().min(1).max(4).optional(), tierOrder: z.number().int().min(0).max(100_000).optional(), localPath: z.string().max(1_000).nullable().optional(), gitRoot: z.string().max(1_000).nullable().optional(), githubUrl: z.string().url().max(2_000).nullable().optional(), primaryLanguage: z.string().max(80).optional(), tags: z.array(z.string().max(80)).max(24).optional(), nextAction: z.string().max(1_000).optional(), notes: z.string().max(100_000).optional(), pushAfterCommit: z.boolean().optional(), lastWorkedAt: z.string().datetime().nullable().optional() });
 const projectPatch = projectInput.partial().refine((input) => Object.keys(input).length > 0);
 const projectTaskInput = z.object({ title: z.string().trim().min(1).max(500), description: z.string().max(10_000).optional(), status: z.enum(["todo", "in_progress", "blocked", "done", "archived"]).optional(), priority: projectPriority.optional(), manualOrder: z.number().int().min(0).max(100_000).optional(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), tags: z.array(z.string().max(80)).max(24).optional(), related: z.string().max(2_000).optional() });
 const projectTaskPatch = projectTaskInput.partial().refine((input) => Object.keys(input).length > 0);
@@ -55,8 +56,9 @@ const botFactoryInput = z.object({
 const cloudInput = z.object({ repository: z.string().trim().min(1).max(140), visibility: z.enum(["private", "public"]).optional(), autoUpload: z.boolean().optional() });
 const dragNoteInput = z.object({ id: z.string().max(120).optional(), title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional() });
 const compressionInput = z.object({ noteId: z.string().nullable().optional(), sourceText: z.string().min(1).max(2_000_000), compressedText: z.string().min(1).max(2_000_000), preset: z.string().max(40), rate: z.number().min(0.1).max(1), originTokens: z.number().optional(), compressedTokens: z.number().optional(), ratio: z.string().optional() });
-let overlay; let tray; let store; let botMonitor; let botFactory; let botProcesses; let botSecrets; let botProvisioning; let githubSync; let boundsTimer; let hideTimer; let focusTimer; let placementTimer; let hotkeys; let mailHotkeys; let notionHotkeys; let twitterHotkeys; let mailView; let notionView; let twitterView; let quitFlushed = false;
-const isPrimaryInstance = app.requestSingleInstanceLock();
+let overlay; let tray; let store; let botMonitor; let botFactory; let botProcesses; let botSecrets; let botProvisioning; let githubSync; let boundsTimer; let hideTimer; let focusTimer; let placementTimer; let hotkeys; let mailHotkeys; let notionHotkeys; let twitterHotkeys; let mailView; let notionView; let twitterView; let aiViews = {}; let quitFlushed = false;
+const isolatedTestInstance = process.env.NOTEBOOK_TEST_ISOLATED === "1";
+const isPrimaryInstance = isolatedTestInstance || app.requestSingleInstanceLock();
 const openedInBackground = process.argv.includes("--background");
 
 function settings() { return { ...DEFAULT_SETTINGS, ...store.getSetting("app", {}) }; }
@@ -71,6 +73,10 @@ function persistWindowBounds() {
   store.setSetting("windowBoundsByDisplay", { ...savedBoundsByDisplay(), [display.id]: bounds });
 }
 function scheduleBoundsSave() { clearTimeout(boundsTimer); boundsTimer = setTimeout(persistWindowBounds, 220); }
+function forEachAiView(callback) { Object.values(aiViews).forEach(callback); }
+function hideAiViews(exceptId = "") { Object.entries(aiViews).forEach(([id, view]) => { if (id !== exceptId) view.hide(); }); }
+function resizeEmbeddedViews() { mailView?.resize(); notionView?.resize(); twitterView?.resize(); forEachAiView((view) => view.resize()); }
+function destroyAiViews() { forEachAiView((view) => view.destroy()); aiViews = {}; }
 function restoreNormalWindowState() {
   if (!overlay || overlay.isDestroyed()) return false;
   let restored = false;
@@ -90,7 +96,7 @@ function applyBounds(target, attempts = 5) {
   placementTimer = setTimeout(() => {
     if (!overlay || overlay.isDestroyed()) return;
     if (!boundsMatch(overlay.getBounds(), target)) applyBounds(target, attempts - 1);
-    else { mailView?.resize(); notionView?.resize(); twitterView?.resize(); }
+    else resizeEmbeddedViews();
   }, 45);
   placementTimer.unref?.();
 }
@@ -254,9 +260,9 @@ function createOverlay(showWhenReady = !openedInBackground, newNoteWhenReady = f
   overlay.webContents.on("render-process-gone", (_event, details) => console.error(`Notebook renderer ended: ${details.reason}`));
   overlay.loadFile(path.join(__dirname, "../../dist/renderer/index.html"));
   overlay.once("ready-to-show", () => { if (showWhenReady) showOverlay(newNoteWhenReady); });
-  overlay.on("resize", () => { scheduleBoundsSave(); mailView?.resize(); notionView?.resize(); twitterView?.resize(); }); overlay.on("move", scheduleBoundsSave);
+  overlay.on("resize", () => { scheduleBoundsSave(); resizeEmbeddedViews(); }); overlay.on("move", scheduleBoundsSave);
   overlay.on("close", (event) => { if (!app.isQuitting) { event.preventDefault(); hideOverlay(); } });
-  overlay.on("closed", () => { mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); mailView = null; notionView = null; twitterView = null; overlay = null; });
+  overlay.on("closed", () => { mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); destroyAiViews(); mailView = null; notionView = null; twitterView = null; overlay = null; });
 }
 function repairStartAtLogin() {
   try {
@@ -276,7 +282,7 @@ async function startCompressor() {
 }
 
 if (!isPrimaryInstance) app.quit();
-app.on("second-instance", () => showOverlay(false));
+if (!isolatedTestInstance) app.on("second-instance", () => showOverlay(false));
 
 app.whenReady().then(() => {
   if (!isPrimaryInstance) return;
@@ -327,6 +333,18 @@ app.whenReady().then(() => {
     twitterUrl: !app.isPackaged && process.env.NOTEBOOK_TWITTER_URL ? process.env.NOTEBOOK_TWITTER_URL : DEFAULT_TWITTER_URL,
     emitStatus: (status) => overlay?.webContents.send("twitter:status", status),
   });
+  aiViews = Object.fromEntries(Object.values(AI_SERVICES).map((service) => {
+    const overrideName = `NOTEBOOK_AI_${service.id.toUpperCase()}_URL`;
+    const configured = !app.isPackaged && process.env[overrideName] ? { ...service, url: process.env[overrideName] } : service;
+    return [service.id, createAiViewController({
+      WebContentsView,
+      parentWindow: overlay,
+      shell,
+      service: configured,
+      devTools: !app.isPackaged,
+      emitStatus: (status) => overlay?.webContents.send(`ai:${service.id}:status`, status),
+    })];
+  }));
   hotkeys = createHotkeyManager({
     globalShortcut,
     onTriggered: toggleOverlay,
@@ -385,11 +403,6 @@ app.whenReady().then(() => {
   ipcMain.handle("skills:create", (_event, input) => store.createSkill(skillInput.partial().parse(input || {})));
   ipcMain.handle("skills:update", (_event, id, input) => store.updateSkill(z.string().parse(id), skillInput.parse(input)));
   ipcMain.handle("skills:remove", (_event, id) => store.deleteSkill(z.string().parse(id)));
-  ipcMain.handle("mcp-servers:list", () => store.listMcpServers());
-  ipcMain.handle("mcp-servers:create", (_event, input) => store.createMcpServer(mcpServerInput.parse(input)));
-  ipcMain.handle("mcp-servers:update", (_event, id, input) => store.updateMcpServer(z.string().max(120).parse(id), mcpServerInput.parse(input)));
-  ipcMain.handle("mcp-servers:remove", (_event, id) => store.deleteMcpServer(z.string().max(120).parse(id)));
-  ipcMain.handle("mcp-servers:related-bots", (_event, id) => store.listRelatedBots("mcp", z.string().max(120).parse(id)));
   ipcMain.handle("skills:related-bots", (_event, id) => store.listRelatedBots("skill", z.string().max(120).parse(id)));
   ipcMain.handle("bots:list", (_event, options) => store.listBots(z.object({ includeArchived: z.boolean().optional() }).parse(options || {})));
   ipcMain.handle("bots:get", (_event, id) => store.getBot(z.string().max(120).parse(id)));
@@ -438,7 +451,7 @@ app.whenReady().then(() => {
     const connections = data.platforms.map((platform) => platform === "discord"
       ? { platform, externalBotId: data.discordApplicationId || "", avatarUrl: data.avatarUrl || "", credentialSecretRef: data.discordSecretRef, installPermissions: data.discordPermissions, credentialState: "not_configured" }
         : { platform, username: data.telegramUsername || "", avatarUrl: data.avatarUrl || "", credentialSecretRef: data.telegramSecretRef, credentialState: "not_configured" });
-    const bot = store.createBot({ name: data.name, description: data.description || "", platforms: data.platforms, executionMode: data.executionMode, environment: data.environment, enabled: true, tags: data.tags || [], repositoryUrl: built.repositoryUrl, localProjectPath: built.projectPath, runtime: built.runtime, version: "1.0.0", logsLocation: path.join(built.projectPath, "runtime"), connections, jobs: [], commands: data.platforms.map((platform) => ({ platform, command: platform === "discord" ? "/ping" : "/ping", description: "Confirm the generated bot responds.", usage: "/ping", category: "System", enabled: true })), monitoring: { adapter: "local-status", filePath: path.join(built.projectPath, "runtime", "status.json"), intervalSeconds: 60, timeoutMilliseconds: 5000, staleAfterSeconds: 180, failuresBeforeOffline: 3, monitoringEnabled: true, httpMethod: "GET", authSecretRef: "" }, mcpServerIds: [], skillIds: [] });
+    const bot = store.createBot({ name: data.name, description: data.description || "", platforms: data.platforms, executionMode: data.executionMode, environment: data.environment, enabled: true, tags: data.tags || [], repositoryUrl: built.repositoryUrl, localProjectPath: built.projectPath, runtime: built.runtime, version: "1.0.0", logsLocation: path.join(built.projectPath, "runtime"), connections, jobs: [], commands: data.platforms.map((platform) => ({ platform, command: platform === "discord" ? "/ping" : "/ping", description: "Confirm the generated bot responds.", usage: "/ping", category: "System", enabled: true })), monitoring: { adapter: "local-status", filePath: path.join(built.projectPath, "runtime", "status.json"), intervalSeconds: 60, timeoutMilliseconds: 5000, staleAfterSeconds: 180, failuresBeforeOffline: 3, monitoringEnabled: true, httpMethod: "GET", authSecretRef: "" }, skillIds: [] });
     try { store.createProject({ name: data.name, description: data.description || "Generated bot project", localPath: built.projectPath, gitRoot: built.projectPath, githubUrl: built.repositoryUrl || null, primaryLanguage: built.runtime, tags: ["bot", ...data.platforms], nextAction: "Start the bot locally and verify its first command", pushAfterCommit: Boolean(built.repositoryUrl) }); } catch (error) { console.error(`Bot project registry link failed: ${error.message}`); }
     botMonitor.start();
     return { bot, projectPath: built.projectPath, repositoryUrl: built.repositoryUrl };
@@ -457,6 +470,7 @@ app.whenReady().then(() => {
   ipcMain.handle("projects:create", (_event, input) => store.createProject(projectInput.parse(input)));
   ipcMain.handle("projects:update", (_event, id, input) => store.updateProject(z.string().max(120).parse(id), projectPatch.parse(input)));
   ipcMain.handle("projects:reorder", (_event, ids) => store.reorderProjects(z.array(z.string().max(120)).max(1_000).parse(ids)));
+  ipcMain.handle("projects:move", (_event, input) => { const data = z.object({ id: z.string().max(120), tier: z.number().int().min(1).max(4), beforeId: z.string().max(120).nullable().optional() }).parse(input); return store.moveProject(data.id, data.tier, data.beforeId || null); });
   ipcMain.handle("projects:remove", (_event, id) => store.removeProject(z.string().max(120).parse(id)));
   ipcMain.handle("projects:logo", (_event, id) => {
     const project = store.getProject(z.string().max(120).parse(id));
@@ -491,6 +505,13 @@ app.whenReady().then(() => {
   ipcMain.handle("projects:fetch", (_event, root) => projectsService.fetchRepository(z.string().max(1_000).parse(root)));
   ipcMain.handle("projects:github-auth-status", () => projectsService.githubAuthStatus());
   ipcMain.handle("projects:github-sign-in", () => projectsService.githubSignIn());
+  ipcMain.handle("projects:github-setup", async (_event, input) => {
+    const data = z.object({ projectId: z.string().max(120), root: z.string().max(1_000), repository: z.string().trim().min(1).max(140), mode: z.enum(["create", "connect"]), visibility: z.enum(["private", "public"]).optional(), initialize: z.boolean().optional(), description: z.string().max(350).optional() }).parse(input);
+    const result = await projectsService.setupGithubRepository(data.root, data);
+    const project = store.updateProject(data.projectId, { gitRoot: result.root, githubUrl: result.url, lastWorkedAt: new Date().toISOString() });
+    store.addProjectActivity(project.id, "github", result.created ? "GitHub repository created" : "GitHub repository connected", result.url);
+    return { ...result, project: store.getProject(project.id) };
+  });
   ipcMain.handle("github-sync:status", () => githubSync.status());
   ipcMain.handle("github-sync:sign-in", () => projectsService.githubSignIn());
   ipcMain.handle("github-sync:configure", (_event, input) => githubSync.configure(cloudInput.parse(input)));
@@ -584,6 +605,7 @@ app.whenReady().then(() => {
     if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
     notionView.hide();
     twitterView.hide();
+    hideAiViews();
     return mailView.show();
   });
   ipcMain.handle("mail:hide", () => mailView.hide());
@@ -593,6 +615,7 @@ app.whenReady().then(() => {
     if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
     mailView.hide();
     twitterView.hide();
+    hideAiViews();
     return notionView.show();
   });
   ipcMain.handle("notion:hide", () => notionView.hide());
@@ -602,11 +625,22 @@ app.whenReady().then(() => {
     if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
     mailView.hide();
     notionView.hide();
+    hideAiViews();
     return twitterView.show();
   });
   ipcMain.handle("twitter:hide", () => twitterView.hide());
   ipcMain.handle("twitter:reload", () => twitterView.reload());
   ipcMain.handle("twitter:open-external", () => twitterView.openExternal());
+  for (const [id, view] of Object.entries(aiViews)) {
+    ipcMain.handle(`ai:${id}:show`, () => {
+      if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
+      mailView.hide(); notionView.hide(); twitterView.hide(); hideAiViews(id);
+      return view.show();
+    });
+    ipcMain.handle(`ai:${id}:hide`, () => view.hide());
+    ipcMain.handle(`ai:${id}:reload`, () => view.reload());
+    ipcMain.handle(`ai:${id}:open-external`, () => view.openExternal());
+  }
   ipcMain.handle("compressor:status", compressorStatus);
   ipcMain.handle("compressor:start", startCompressor);
   ipcMain.handle("compressor:compress", async (_event, text, rate) => {
@@ -630,6 +664,6 @@ app.on("before-quit", (event) => {
     setTimeout(() => app.quit(), 400);
   }
 });
-app.on("will-quit", () => { botMonitor?.stop(); botProcesses?.stopAll(); hotkeys?.stop(); mailHotkeys?.stop(); notionHotkeys?.stop(); twitterHotkeys?.stop(); mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); });
+app.on("will-quit", () => { botMonitor?.stop(); botProcesses?.stopAll(); hotkeys?.stop(); mailHotkeys?.stop(); notionHotkeys?.stop(); twitterHotkeys?.stop(); mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); destroyAiViews(); });
 app.on("window-all-closed", () => {});
 app.on("activate", () => showOverlay(false));
