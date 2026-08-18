@@ -30,35 +30,40 @@ try {
       description: "Original overview",
       status: "active",
       priority: "high",
+      primaryLanguage: "TypeScript",
+      tags: ["desktop"],
       localPath: root,
       gitRoot: root,
-      nextAction: "Open the project",
     });
   }, projectRoot);
 
   await navButton(page, "Projects").click();
   await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
-  await page.getByText("Workspace fixture", { exact: true }).first().click();
+  const fixtureCard = page.locator(".project-card").filter({ hasText: "Workspace fixture" });
+  await fixtureCard.getByText("Original overview", { exact: true }).waitFor();
+  await fixtureCard.getByText("Desktop", { exact: true }).waitFor();
+  await fixtureCard.getByText("TypeScript", { exact: true }).waitFor();
+  if (await page.getByText(/next action|focus queue/i).count()) throw new Error("Project ledger still shows removed next-action UI.");
+  await fixtureCard.locator(".project-card-title").evaluate((button) => button.click());
   await page.getByRole("heading", { name: "Workspace fixture", exact: true }).first().waitFor();
   await page.getByRole("button", { name: "Overview", exact: true }).waitFor();
 
   await page.getByText("Project overview", { exact: true }).waitFor();
   await page.locator(".project-overview-form textarea").first().fill("Updated project overview");
-  await page.locator(".project-overview-form .important-field input").fill("Verify restored workspace");
   await page.getByRole("button", { name: "Save changes", exact: true }).evaluate((button) => button.click());
   await page.waitForFunction(async () => {
     const project = (await window.hushnote.projects.list()).find((item) => item.name === "Workspace fixture");
-    return project?.description === "Updated project overview" && project?.next_action === "Verify restored workspace";
+    return project?.description === "Updated project overview";
   });
 
-  await page.getByRole("button", { name: /Tasks/ }).click();
+  await page.getByRole("button", { name: /Tasks/ }).evaluate((button) => button.click());
   await page.getByLabel("New project task").fill("Manage restored task");
-  await page.getByRole("button", { name: "Add task", exact: true }).click();
+  await page.getByRole("button", { name: "Add task", exact: true }).evaluate((button) => button.click());
   await page.getByLabel("Task Manage restored task").waitFor();
 
-  await page.getByRole("button", { name: "AGENTS.md", exact: true }).click();
+  await page.getByRole("button", { name: "AGENTS.md", exact: true }).evaluate((button) => button.click());
   await page.getByLabel("AGENTS.md editor").fill("# Project instructions\n\nRestored and verified.");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).evaluate((button) => button.click());
   await page.getByText("AGENTS.md saved.", { exact: true }).waitFor();
   await page.screenshot({ path: "screenshots/projects-detail-wide.png" });
 
@@ -66,7 +71,7 @@ try {
   if (!savedAgents.includes("Restored and verified.")) throw new Error("AGENTS.md did not save to the real project folder.");
   const stored = await page.evaluate(async () => (await window.hushnote.projects.list()).find((item) => item.name === "Workspace fixture"));
   if (!stored?.tasks?.some((task) => task.title === "Manage restored task")) throw new Error("Project task did not persist.");
-  console.log("Real Electron project workspace passed: click-through, overview, tasks, and AGENTS.md persistence.");
+  console.log("Real Electron project ledger passed: explanations, tags, click-through, overview, tasks, and AGENTS.md persistence.");
 } finally {
   await app.close().catch(() => {});
   await fs.rm(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});

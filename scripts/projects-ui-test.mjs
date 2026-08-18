@@ -12,7 +12,10 @@ try {
     await page.getByRole("button", { name: "Projects", exact: true }).click();
     try { await page.getByRole("heading", { name: "Projects", exact: true }).waitFor({ timeout: 5000 }); }
     catch (error) { await page.screenshot({ path: `screenshots/projects-${name}-debug.png` }); console.error((await page.locator("body").innerText()).slice(0, 4000)); throw error; }
-    await page.getByText("Focus Queue", { exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Now", exact: true }).waitFor();
+    await page.getByText("Local-first notes, planning, and project control.", { exact: true }).waitFor();
+    await page.getByText("Electron", { exact: true }).waitFor();
+    if (await page.getByText(/next action|focus queue/i).count()) throw new Error(`${name} Projects still shows removed next-action UI.`);
     const overflow = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
     if (overflow.document > overflow.viewport || overflow.body > overflow.viewport) throw new Error(`${name} Projects overflow: ${JSON.stringify(overflow)}`);
     await page.screenshot({ path: `screenshots/projects-${name}.png` });
@@ -48,5 +51,5 @@ try {
     await page.getByText(expected, { exact: true }).waitFor();
     await context.close();
   }
-  console.log("Projects responsive collection, task, changes, commit, AGENTS.md, empty, loading, and error UI checks passed.");
+  console.log("Projects organized ledger, explanations, tags, drill-in workspace, responsive, empty, loading, and error UI checks passed.");
 } finally { await browser.close(); }
