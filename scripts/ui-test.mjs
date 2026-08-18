@@ -62,6 +62,23 @@ try {
   const page = await context.newPage();
   await page.goto(base, { waitUntil: "networkidle" });
 
+  // Today: write a line, check it off, and page back and forth through the days.
+  await navButton(page, "Today").click();
+  await page.locator(".paper").waitFor();
+  const todayHeading = await page.locator(".paper-date h1").innerText();
+  await page.getByLabel(/^Task for /).first().fill("Test the paper page");
+  await page.locator(".line-add button").first().click();
+  await page.getByLabel("Check off Test the paper page").waitFor();
+  await page.getByLabel("Check off Test the paper page").check();
+  await page.locator(".line.is-done", { hasText: "Test the paper page" }).waitFor();
+  await page.getByRole("button", { name: "Previous day" }).click();
+  await page.waitForFunction((heading) => document.querySelector(".paper-date h1")?.textContent !== heading, todayHeading);
+  await page.getByRole("button", { name: "Back to today" }).click();
+  await page.waitForFunction((heading) => document.querySelector(".paper-date h1")?.textContent === heading, todayHeading);
+  if (await page.locator(".paper-kicker", { hasText: "Today" }).count() !== 1) throw new Error("The daily page lost its Today marker.");
+  const selectedDay = await page.locator(".calendar-day.is-selected").innerText();
+  if (Number(selectedDay) !== new Date().getDate()) throw new Error(`Calendar selection is on the wrong day: ${selectedDay}`);
+
   // Notes: writing, Markdown preview, interactive checkboxes, pinning.
   await navButton(page, "Notes").click();
   await page.getByLabel("Note title").fill("Release checklist");
@@ -113,7 +130,7 @@ try {
   await page.getByRole("button", { name: "Close settings" }).click();
 
   await context.close();
-  console.log("UI test passed: layout at 4 widths, 11px minimum type, Markdown preview write-back, pinning, search, keyboard, and theme.");
+  console.log("UI test passed: layout at 4 widths, 11px minimum type, daily page capture/check/paging, Markdown preview write-back, pinning, search, keyboard, and theme.");
 } finally {
   await browser.close();
   await server.close();

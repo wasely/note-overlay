@@ -198,3 +198,33 @@ export function cleanSkillCategory(category) {
     .replace(/^\d+\s*·\s*/, "")
     .replace(/^Archive\s*[—-]\s*/, "");
 }
+
+export function isArchiveLabel(label) {
+  return /^archive/i.test(label);
+}
+
+// Shelf titles drop the "Archive · " prefix; the browser shows one Archive divider instead.
+export function shelfLabel(label) {
+  return label.replace(/^archive\s*[·—-]\s*/i, "") || "Archive";
+}
+
+function bestFirst(left, right) {
+  return Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || sortSkillsByStack(left, right);
+}
+
+// Splits a library into category shelves: starred and highest-ranked skills first, archive shelves last.
+export function groupSkills(skills, scope = "active", query = "") {
+  const needle = query.trim().toLowerCase();
+  const visible = skills.filter((skill) => {
+    if (scope === "active" && isArchivedSkill(skill)) return false;
+    if (scope === "starred" && !skill.pinned) return false;
+    if (!needle) return true;
+    return `${displaySkillName(skill)} ${cleanSkillCategory(skill.category)} ${skill.body || ""}`.toLowerCase().includes(needle);
+  });
+  const ordered = [...visible].sort(sortSkillsByStack);
+  const groups = [...new Set(ordered.map((skill) => cleanSkillCategory(skill.category)))].map((label) => {
+    const items = ordered.filter((skill) => cleanSkillCategory(skill.category) === label).sort(bestFirst);
+    return { label, items, archived: isArchiveLabel(label) || items.every(isArchivedSkill) };
+  });
+  return [...groups.filter((group) => !group.archived), ...groups.filter((group) => group.archived)];
+}

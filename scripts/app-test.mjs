@@ -58,8 +58,12 @@ try {
 
   const hotkeyRegistered = await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+N"));
   if (!hotkeyRegistered) console.log("Global hotkey is already owned by another running Notebook instance.");
-  const removedChannels = await page.evaluate(() => ["mail", "notion", "twitter", "bots", "projects", "mcpServers", "compressor"].filter((key) => window.hushnote[key]));
-  if (removedChannels.length) throw new Error(`Removed features are still exposed to the renderer: ${removedChannels.join(", ")}`);
+  // The workspaces removed in 0.9.0 were deliberately brought back; assert the bridge
+  // still exposes every surface the renderer actually renders.
+  const missingChannels = await page.evaluate(() => ["notes", "projects", "skills", "slashCommands", "daily"].filter((key) => !window.hushnote[key]));
+  if (missingChannels.length) throw new Error(`Preload bridge is missing: ${missingChannels.join(", ")}`);
+  const logoBridge = await page.evaluate(() => typeof window.hushnote.projects.logo === "function");
+  if (!logoBridge) throw new Error("Project logo bridge is missing from the preload API.");
 
   // Notebooks and notes.
   const folders = await page.evaluate(() => window.hushnote.folders.list());

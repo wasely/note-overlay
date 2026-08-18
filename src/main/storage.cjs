@@ -105,7 +105,7 @@ function createStorage(userDataPath) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_inbox INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', folder_id TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(folder_id) REFERENCES folders(id));
-    CREATE TABLE IF NOT EXISTS skills (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'Unsorted', body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS skills (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'Unsorted', body TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS slash_commands (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', command TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS note_tags (note_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY(note_id, tag_id), FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE, FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE);
@@ -127,8 +127,11 @@ function createStorage(userDataPath) {
   const dailyColumns = new Set(db.pragma("table_info(daily_tasks)").map((column) => column.name));
   if (!dailyColumns.has("priority")) db.exec("ALTER TABLE daily_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 3)");
   if (!dailyColumns.has("owner")) db.exec("ALTER TABLE daily_tasks ADD COLUMN owner TEXT NOT NULL DEFAULT 'me' CHECK(owner IN ('me', 'agent'))");
+  const skillColumns = new Set(db.pragma("table_info(skills)").map((column) => column.name));
+  if (!skillColumns.has("pinned")) db.exec("ALTER TABLE skills ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
   const projectColumns = new Set(db.pragma("table_info(projects)").map((column) => column.name));
   if (!projectColumns.has("last_device")) db.exec("ALTER TABLE projects ADD COLUMN last_device TEXT NOT NULL DEFAULT ''");
+  if (!projectColumns.has("logo_path")) db.exec("ALTER TABLE projects ADD COLUMN logo_path TEXT NOT NULL DEFAULT ''");
   let inbox = db.prepare("SELECT id FROM folders WHERE is_inbox = 1").get();
   if (!inbox) {
     inbox = { id: "inbox" };
@@ -187,20 +190,23 @@ function createStorage(userDataPath) {
     db.prepare("INSERT INTO notes (id, title, body, folder_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, input.title || "", input.body || "", input.folderId || inbox.id, timestamp, timestamp);
     return getNote(id);
   }
+  function hydrateSkill(row) {
+    return row ? { ...row, pinned: Boolean(row.pinned) } : null;
+  }
   function listSkills() {
-    return db.prepare("SELECT * FROM skills ORDER BY updated_at DESC").all();
+    return db.prepare("SELECT * FROM skills ORDER BY pinned DESC, updated_at DESC").all().map(hydrateSkill);
   }
   function getSkill(id) {
-    return db.prepare("SELECT * FROM skills WHERE id = ?").get(id) || null;
+    return hydrateSkill(db.prepare("SELECT * FROM skills WHERE id = ?").get(id) || null);
   }
   function createSkill(input = {}) {
     const id = randomUUID(); const timestamp = now();
-    db.prepare("INSERT INTO skills (id, name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, input.name || "", input.category || "Unsorted", input.body || "", timestamp, timestamp);
+    db.prepare("INSERT INTO skills (id, name, category, body, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, input.name || "", input.category || "Unsorted", input.body || "", Number(Boolean(input.pinned)), timestamp, timestamp);
     return getSkill(id);
   }
   function updateSkill(id, input) {
     const skill = getSkill(id); if (!skill) throw new Error("Skill not found.");
-    db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, updated_at = ? WHERE id = ?").run(input.name ?? skill.name, input.category ?? skill.category, input.body ?? skill.body, now(), id);
+    db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, pinned = ?, updated_at = ? WHERE id = ?").run(input.name ?? skill.name, input.category ?? skill.category, input.body ?? skill.body, Number(input.pinned ?? skill.pinned), now(), id);
     return getSkill(id);
   }
   function deleteSkill(id) { db.prepare("DELETE FROM skills WHERE id = ?").run(id); }
@@ -264,6 +270,10 @@ function createStorage(userDataPath) {
     const update = db.prepare("UPDATE projects SET manual_rank = ?, updated_at = ? WHERE id = ?");
     db.transaction(() => ids.forEach((id, rank) => update.run(rank, now(), id)))();
     return listProjects();
+  }
+  function setProjectLogo(id, logoPath) {
+    db.prepare("UPDATE projects SET logo_path = ? WHERE id = ?").run(logoPath || "", id);
+    return getProject(id);
   }
   function removeProject(id) { db.prepare("DELETE FROM projects WHERE id = ?").run(id); }
   function createProjectTask(projectId, input = {}) {
@@ -351,6 +361,33 @@ function createStorage(userDataPath) {
       carriedCount: todayTasks.filter((task) => task.carried_from_id).length,
     };
   }
+  function dailyPage(viewDate = localDate(), todayDate = localDate()) {
+    if (viewDate === todayDate) rollDailyTasks(todayDate);
+    const nextDate = shiftDate(viewDate, 1);
+    const hydrate = (task) => ({ ...task, carried: Boolean(task.carried_from_id), moved: task.status === "carried" });
+    const items = db.prepare("SELECT * FROM daily_tasks WHERE task_date = ? ORDER BY created_at").all(viewDate).map(hydrate);
+    const tomorrow = db.prepare("SELECT * FROM daily_tasks WHERE task_date = ? AND status <> 'carried' ORDER BY created_at").all(nextDate).map(hydrate);
+    const open = items.filter((task) => task.status === "open");
+    const done = items.filter((task) => task.status === "done");
+    const moved = items.filter((task) => task.status === "carried");
+    return {
+      date: viewDate,
+      today: todayDate,
+      tomorrowDate: nextDate,
+      isToday: viewDate === todayDate,
+      isFuture: viewDate > todayDate,
+      items,
+      tomorrow,
+      openCount: open.length,
+      doneCount: done.length,
+      movedCount: moved.length,
+      carriedCount: items.filter((task) => task.carried && task.status !== "carried").length,
+    };
+  }
+  function dailyMonth(month = localDate().slice(0, 7)) {
+    const rows = db.prepare("SELECT task_date AS date, COUNT(*) AS total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done FROM daily_tasks WHERE task_date LIKE ? GROUP BY task_date ORDER BY task_date").all(`${month}-%`);
+    return { month, days: rows.map((row) => ({ date: row.date, total: Number(row.total), done: Number(row.done) })) };
+  }
   function createDailyTask(input, date = localDate()) {
     const text = String(input?.text || "").trim();
     if (!text) throw new Error("Task text is required.");
@@ -430,7 +467,7 @@ function createStorage(userDataPath) {
         if (Array.isArray(note.tags)) setTags(note.id, note.tags.map((tag) => tag.name));
       }
       for (const skill of data.skills || []) {
-        db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", skill.created_at || now(), skill.updated_at || now());
+        db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
       }
       for (const slashCommand of data.slashCommands || []) {
         db.prepare("INSERT OR IGNORE INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(slashCommand.id || randomUUID(), slashCommand.name || "", slashCommand.command || "", slashCommand.body || "", slashCommand.created_at || now(), slashCommand.updated_at || now());
@@ -516,7 +553,7 @@ function createStorage(userDataPath) {
         db.prepare("INSERT INTO compressions (id, note_id, source_text, compressed_text, preset, rate, origin_tokens, compressed_tokens, ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(compression.id || randomUUID(), noteId || null, compression.source_text || "", compression.compressed_text || "", compression.preset || "Balanced", compression.rate || 0.6, compression.origin_tokens || null, compression.compressed_tokens || null, compression.ratio || null, compression.created_at || now());
       }
       for (const skill of data.skills || []) {
-        db.prepare("INSERT INTO skills (id, name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", skill.created_at || now(), skill.updated_at || now());
+        db.prepare("INSERT INTO skills (id, name, category, body, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
       }
       for (const slashCommand of data.slashCommands || []) {
         db.prepare("INSERT INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(slashCommand.id || randomUUID(), slashCommand.name || "", slashCommand.command || "", slashCommand.body || "", slashCommand.created_at || now(), slashCommand.updated_at || now());
@@ -579,7 +616,7 @@ function createStorage(userDataPath) {
   seedSkills();
   seedSlashCommands();
   migrateLegacyJson();
-  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, removeProject, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, removeProject, setProjectLogo, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
 }
 
 module.exports = { createStorage };

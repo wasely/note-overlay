@@ -17,8 +17,12 @@ try {
   for (const [tag, width, height] of [["narrow", 460, 800], ["wide", 1100, 860]]) {
     const page = await browser.newPage({ viewport: { width, height } });
     await page.goto(`${base}/?daily=demo`, { waitUntil: "networkidle" });
-    await page.locator(".capture").waitFor();
+    await page.locator(".paper").waitFor();
     await page.screenshot({ path: `screenshots/shot-${tag}-today.png` });
+    await page.getByRole("button", { name: "Previous day" }).click();
+    await page.getByRole("button", { name: "Back to today" }).waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-today-earlier.png` });
+    await page.getByRole("button", { name: "Back to today" }).click();
 
     await navButton(page, "Notes").click();
     await page.getByLabel("Note title").fill("Release checklist");

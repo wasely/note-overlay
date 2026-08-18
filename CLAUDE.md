@@ -6,9 +6,9 @@ Notebook is a Windows-only, local-first Markdown notebook. `Ctrl+Alt+Shift+N` to
 
 It has exactly four pages and nothing else:
 
-- **Today** — dated task plan: quick capture (priority P1–P3, owner me/agent), My focus, Next up, Agent queue, Tomorrow, Done today, plus a seven-day completion history. Opening the app on a new local calendar day carries every unfinished older task into today once, preserving completion history.
+- **Today** — one page per calendar day, shaped like paper: the day's checklist in the order it was written, an add line at the bottom, the next day's page below it, and previous/next arrows plus a sidebar month calendar for moving between days. An earlier page keeps its own record: what was checked off there, and what moved on unfinished. Unfinished work rolls forward once per day — `dailyPage(viewDate)` rolls only when the viewed date is the real local today, so opening an old page never rewrites it, and a window left open past midnight turns its own page.
 - **Notes** — Markdown notes in notebooks, autosaving, pinnable, with a write/preview toggle. Preview renders headings, lists, quotes, code, inline styles, and task lists; ticking a rendered checkbox rewrites that exact source line.
-- **Skills** — a flat library of reusable instructions with free-text categories and Active/Archived/All filters.
+- **Skills** — a library with three places: an **All categories** home of category cards, a **category page** listing that category's skills with a one-line summary and a star toggle, and the **skill page** itself (rendered Markdown, edit toggle, heading outline, `Alt+←`/`Alt+→` paging). The sidebar shows collapsed category rows — the chevron expands a shelf, the label opens the category page. Scope is Active/Starred/All; archive shelves sit below one Archive divider. Stars persist in `skills.pinned`.
 - **Commands** — saved slash-command invocations and reference pages.
 
 Search (`Ctrl+K`) spans notes, tasks, skills, and commands. Settings holds theme (system/light/dark), start-at-login, the keyboard reference, local backups, JSON/Markdown export, and optional GitHub repository backup.
@@ -23,10 +23,11 @@ Supported target: normal Windows apps and borderless/windowed games. Do not prom
 
 - `src/main/main.cjs`: Electron lifecycle, single-instance lock, global shortcut, tray, window placement, validated IPC, drag-out.
 - `src/main/preload.cjs`: the only renderer bridge. Add every native capability here as a narrowly scoped function.
-- `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill/command/daily operations, JSON export/import, rotating backups and restores.
+- `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill/command/daily operations, JSON export/import, rotating backups and restores. `dailyPage(viewDate, today)` returns one day's lines plus the next day's; `dailyMonth(month)` returns the per-day totals the calendar draws.
 - `src/main/github-sync.cjs` + `src/main/command-runner.cjs`: optional GitHub repository backup and the sandboxed `gh`/`git` runner it needs.
 - `src/main/hotkey-manager.cjs`, `window-bounds.cjs`, `startup.cjs`: shortcut recovery, multi-monitor placement, start-at-login repair.
 - `src/renderer/main.jsx`: the whole React UI. `window.hushnote` is real in Electron and mocked for the browser preview.
+- `src/renderer/skills.jsx` + `skills.css`: the Skills page. Its grouping, shelf ordering, and label rules live in `skill-stack.js` so `scripts/skill-stack-test.mjs` can cover them.
 - `src/renderer/markdown-blocks.js` (pure parser, unit-tested) + `markdown.jsx` (React renderer). Markdown is never turned into HTML strings — no `dangerouslySetInnerHTML`.
 - `src/renderer/styles.css` + `tokens.css`: one spacing/type scale. Minimum rendered text size is 11px and interactive controls are at least 22px tall; `scripts/ui-test.mjs` enforces both.
 

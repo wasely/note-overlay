@@ -8,8 +8,9 @@ A small, local-first Windows notebook. Press `Ctrl+Alt+Shift+N` anywhere, write,
 
 - Opens compact and centred on the monitor under your cursor, always on top, over regular apps and borderless/windowed games.
 - **Notes** — Markdown notes organised into notebooks, with autosave, pinning, word/task counts, and a rendered preview whose checkboxes are clickable and write straight back into the Markdown.
-- **Today** — one screen for the day: quick capture with priority and owner, a focus list capped at three, a delegated queue, tomorrow, and a record of what was finished. Unfinished work carries forward automatically.
-- **Skills** and **Commands** — two small libraries for reusable prompts, workflows, and slash-command invocations.
+- **Today** — one paper page per day: a plain checklist you tick off, the next day's page underneath, and arrows plus a month calendar to page back through what you finished on any date. Anything still unchecked at midnight moves onto the next day's page and keeps moving until it is done.
+- **Skills** — a browsable library: a home page of category cards, a page per category, and each skill as a readable page with its own outline and previous/next paging. Star the ones you actually use so they lead their category.
+- **Commands** — a small library for saved slash-command invocations and reference pages.
 - Search everything (`Ctrl+K`) across notes, tasks, skills, and commands.
 - Copy full Markdown, or drag a clean `Title.md` file into a terminal or editor while the real file stays in local app data.
 - Light, dark, or system theme.
@@ -25,6 +26,7 @@ No account, telemetry, cloud service, or auto-update feed. Notes never leave you
 | `Ctrl+K` | Search everything |
 | `Ctrl+N` | New note, skill, or command |
 | `Ctrl+E` | Switch between writing and Markdown preview |
+| `Alt+←` / `Alt+→` | Previous or next skill |
 | `Ctrl+1`–`4` | Today, Notes, Skills, Commands |
 | `Esc` | Clear search, close a panel, or hide the window |
 

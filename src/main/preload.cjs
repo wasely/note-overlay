@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld("hushnote", {
   },
   slashCommands: { list: () => call("slash-commands:list"), create: (data) => call("slash-commands:create", data), update: (id, data) => call("slash-commands:update", id, data), remove: (id) => call("slash-commands:remove", id) },
   projects: {
-    list: () => call("projects:list"), syncWorkshop: () => call("projects:workshop-sync"), create: (data) => call("projects:create", data), update: (id, data) => call("projects:update", id, data), reorder: (ids) => call("projects:reorder", ids), remove: (id) => call("projects:remove", id),
+    list: () => call("projects:list"), syncWorkshop: () => call("projects:workshop-sync"), create: (data) => call("projects:create", data), update: (id, data) => call("projects:update", id, data), reorder: (ids) => call("projects:reorder", ids), remove: (id) => call("projects:remove", id), logo: (id) => call("projects:logo", id),
     chooseFolder: () => call("projects:choose-folder"), chooseParent: () => call("projects:choose-parent"), inspect: (path) => call("projects:inspect", path), status: (root) => call("projects:status", root), diff: (data) => call("projects:diff", data),
     stage: (data) => call("projects:stage", data), unstage: (data) => call("projects:unstage", data), commit: (data) => call("projects:commit", data), push: (root) => call("projects:push", root), publish: (data) => call("projects:publish", data), fetch: (root) => call("projects:fetch", root),
     githubAuthStatus: () => call("projects:github-auth-status"), githubSignIn: () => call("projects:github-sign-in"),
@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld("hushnote", {
     canvas: { create: (projectId, data) => call("project-canvas:create", projectId, data), update: (id, data) => call("project-canvas:update", id, data), remove: (id) => call("project-canvas:remove", id) },
     assign: (projectId, data) => call("projects:assign", projectId, data),
   },
-  daily: { get: () => call("daily:get"), create: (data) => call("daily:create", data), update: (id, data) => call("daily:update", id, data), complete: (id, completed) => call("daily:complete", id, completed), remove: (id) => call("daily:remove", id) },
+  daily: { get: () => call("daily:get"), page: (date) => call("daily:page", date), month: (month) => call("daily:month", month), create: (data, date) => call("daily:create", data, date), update: (id, data, date) => call("daily:update", id, data, date), complete: (id, completed, date) => call("daily:complete", id, completed, date), remove: (id, date) => call("daily:remove", id, date) },
   folders: { list: () => call("folders:list"), create: (name) => call("folders:create", name), rename: (id, name) => call("folders:rename", id, name), remove: (id) => call("folders:remove", id) },
   tags: { list: () => call("tags:list") },
   compressions: { list: (noteId) => call("compressions:list", noteId), create: (data) => call("compressions:create", data) },

@@ -4,21 +4,73 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, Bold, Bot, CalendarCheck2, Check, Cloud, Code, Copy, Ellipsis, ExternalLink, Eye, FileText, FolderGit2, GripVertical, Heading1, Heading2, Heading3, Italic, Keyboard, Layers3, Link2, List, ListOrdered, ListTodo, Monitor, Moon, Pencil, Pin, Plus, Quote, RefreshCw, RotateCcw, Search, ServerCog, Settings, Shrink, SquareTerminal, Strikethrough, Sun, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bold, Bot, CalendarCheck2, Check, ChevronLeft, ChevronRight, Cloud, Code, Copy, Ellipsis, ExternalLink, Eye, FileText, FolderGit2, GripVertical, Heading1, Heading2, Heading3, Italic, Keyboard, Layers3, Link2, List, ListOrdered, ListTodo, Monitor, Moon, Pencil, Pin, Plus, Quote, RefreshCw, RotateCcw, Search, ServerCog, Settings, Shrink, SquareTerminal, Strikethrough, Sun, Trash2, X } from "lucide-react";
 import { siGmail, siNotion, siX } from "simple-icons";
 import notebookIconUrl from "../../build/notebook.ico";
 import { addBrowserFileDragData } from "./drag-file.mjs";
-import { cleanSkillCategory, displaySkillName, isArchivedSkill, sortSkillsByStack } from "./skill-stack.js";
+import { cleanSkillCategory, displaySkillName } from "./skill-stack.js";
 import { Markdown } from "./markdown.jsx";
 import { markdownToHtml, markdownToText } from "./markdown-html.js";
 import { applyMarkdownFormat } from "./format.js";
 import { BotsWorkspace, BotSidebar, McpServersWorkspace, McpSidebar } from "./bots.jsx";
 import { ProjectsPage } from "./ProjectsPage.jsx";
+import { SkillsWorkspace } from "./skills.jsx";
 import "./styles.css";
 import "./workspaces.css";
+import "./skills.css";
 
 const mockNotes = [];
-const mockSkills = [];
+// The browser preview ships a small stand-in library so the Skills page can be seen without Electron.
+const mockSkillShelves = [
+  ["01 · Core Workflow", [
+    ["grill-with-docs", "Pressure-test an idea against the repository and build shared vocabulary before planning."],
+    ["to-spec", "Turn an agreed conversation into a concrete build specification."],
+    ["implement", "Execute a specification, typecheck often, then run the full suite."],
+    ["diagnosing-bugs", "Create one reliable red feedback loop, find the cause, then lock the fix with a test."],
+    ["code-review", "Review a diff against repository standards and the originating specification."],
+  ]],
+  ["02 · Engineering Judgment", [
+    ["ponytail", "Cut speculative abstractions and write the least code that solves today's problem."],
+    ["codebase-design", "Design deep modules: substantial behaviour behind small interfaces."],
+    ["prototype", "Write the smallest throwaway program that answers one design question."],
+  ]],
+  ["03 · UI & Design", [
+    ["hallmark", "Apply opinionated rules that make an interface feel deliberately designed."],
+    ["ui-ux-pro-max", "Search styles, palettes, font pairings, and motion guidance."],
+  ]],
+  ["05 · Writing & Context", [
+    ["handoff", "Save a portable, redacted context summary so another session can continue."],
+    ["writing-for-agents", "Write reliable skills and agent-facing reference documents."],
+  ]],
+  ["99 · Archive · Personas & Meta", [
+    ["caveman", "Redundant: the global rules already require extreme concision."],
+    ["grilling", "Superseded by grill-with-docs, which keeps a paper trail."],
+  ]],
+  ["99 · Archive · UI & Design", [
+    ["shadcn", "Reactivate when a repository actually has components.json."],
+  ]],
+];
+const mockSkills = mockSkillShelves.flatMap(([category, items]) => items.map(([name, summary], index) => ({
+  id: `skill-${name}`,
+  name,
+  category,
+  body: `## What it does
+
+${summary}
+
+## When to use it
+
+Reach for it when the task matches the name and you want the same result twice.
+
+## Steps
+
+1. Open the repository you are working in.
+2. Invoke \`$${name}\`.
+3. Check what it changed before moving on.`,
+  pinned: index === 0 && !category.startsWith("99"),
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+})));
 const mockBots = [];
 const mockMcpServers = [];
 const mockProjectNow = new Date().toISOString();
@@ -45,30 +97,66 @@ function moveDate(value, days) {
   return dateKey(date);
 }
 const mockDailyDate = dateKey();
-const mockDailyTasks = new URLSearchParams(location.search).get("daily") === "demo" ? [
-  { id: "daily-carried", task_date: mockDailyDate, text: "Finish the onboarding flow", status: "open", priority: 1, owner: "me", carried_from_id: "yesterday-task", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: "daily-agent", task_date: mockDailyDate, text: "Audit the release checklist", status: "open", priority: 2, owner: "agent", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: "daily-next", task_date: mockDailyDate, text: "Write the progress update", status: "open", priority: 2, owner: "me", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: "daily-done", task_date: mockDailyDate, text: "Review yesterday's notes", status: "done", priority: 1, owner: "me", completed_on: mockDailyDate, completed_at: new Date().toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: "daily-tomorrow", task_date: moveDate(mockDailyDate, 1), text: "Prepare the launch checklist", status: "open", priority: 2, owner: "me", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-] : [];
-function mockDailyDashboard() {
-  const tomorrow = moveDate(mockDailyDate, 1);
-  const hydrate = (task) => ({ priority: 2, owner: "me", ...task, carried: Boolean(task.carried_from_id) });
-  const history = Array.from({ length: 7 }, (_value, offset) => {
-    const date = moveDate(mockDailyDate, -offset);
-    return { date, completed: mockDailyTasks.filter((task) => task.status === "done" && task.completed_on === date).length };
-  });
-  const today = mockDailyTasks.filter((task) => task.task_date === mockDailyDate && task.status === "open").map(hydrate);
+const mockNow = new Date().toISOString();
+let mockTaskSeed = 0;
+function mockTask(dayOffset, text, status, extra = {}) {
+  mockTaskSeed += 1;
+  const date = moveDate(mockDailyDate, dayOffset);
   return {
-    date: mockDailyDate,
-    tomorrowDate: tomorrow,
-    today,
-    done: mockDailyTasks.filter((task) => task.status === "done" && task.completed_on === mockDailyDate).map(hydrate),
-    tomorrow: mockDailyTasks.filter((task) => task.task_date === tomorrow && task.status === "open").map(hydrate),
-    history,
-    carriedCount: today.filter((task) => task.carried).length,
+    id: `daily-${mockTaskSeed}`,
+    task_date: date,
+    text,
+    status,
+    priority: 2,
+    owner: "me",
+    completed_on: status === "done" ? date : null,
+    completed_at: status === "done" ? mockNow : null,
+    carried_from_id: extra.carried ? `daily-source-${mockTaskSeed}` : null,
+    created_at: mockNow,
+    updated_at: mockNow,
   };
+}
+const mockDailyTasks = new URLSearchParams(location.search).get("daily") === "demo" ? [
+  mockTask(-3, "Cut the intro of the tutorial", "done"),
+  mockTask(-3, "Reply to the sponsor email", "done"),
+  mockTask(-2, "Storyboard the B-roll", "done"),
+  mockTask(-2, "Rewrite the hook", "carried"),
+  mockTask(-1, "Rewrite the hook", "done", { carried: true }),
+  mockTask(-1, "Render the thumbnail set", "carried"),
+  mockTask(0, "Render the thumbnail set", "open", { carried: true }),
+  mockTask(0, "Finish the notes app checklist page", "open"),
+  mockTask(0, "Review yesterday's footage", "done"),
+  mockTask(0, "Send the edit to review", "open"),
+  mockTask(1, "Record the voiceover", "open"),
+] : [];
+function mockDailyPage(viewDate = mockDailyDate) {
+  const hydrate = (task) => ({ ...task, carried: Boolean(task.carried_from_id), moved: task.status === "carried" });
+  const items = mockDailyTasks.filter((task) => task.task_date === viewDate).map(hydrate);
+  const tomorrowDate = moveDate(viewDate, 1);
+  return {
+    date: viewDate,
+    today: mockDailyDate,
+    tomorrowDate,
+    isToday: viewDate === mockDailyDate,
+    isFuture: viewDate > mockDailyDate,
+    items,
+    tomorrow: mockDailyTasks.filter((task) => task.task_date === tomorrowDate && task.status !== "carried").map(hydrate),
+    openCount: items.filter((task) => task.status === "open").length,
+    doneCount: items.filter((task) => task.status === "done").length,
+    movedCount: items.filter((task) => task.status === "carried").length,
+    carriedCount: items.filter((task) => task.carried && task.status !== "carried").length,
+  };
+}
+function mockDailyMonth(month = mockDailyDate.slice(0, 7)) {
+  const days = new Map();
+  for (const task of mockDailyTasks) {
+    if (!task.task_date.startsWith(`${month}-`)) continue;
+    const entry = days.get(task.task_date) || { date: task.task_date, total: 0, done: 0 };
+    entry.total += 1;
+    if (task.status === "done") entry.done += 1;
+    days.set(task.task_date, entry);
+  }
+  return { month, days: [...days.values()].sort((left, right) => left.date.localeCompare(right.date)) };
 }
 
 // Browser-only stand-in for the preload bridge, used by `npm run preview` and screenshots.
@@ -94,7 +182,7 @@ const mockApi = {
   skills: {
     list: async () => mockSkills.map((skill) => ({ ...skill })),
     create: async (input = {}) => {
-      const skill = { id: crypto.randomUUID(), name: input.name || "", category: input.category || "Unsorted", body: input.body || "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      const skill = { id: crypto.randomUUID(), name: input.name || "", category: input.category || "Unsorted", body: input.body || "", pinned: Boolean(input.pinned), created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       mockSkills.unshift(skill);
       return { ...skill };
     },
@@ -126,40 +214,40 @@ const mockApi = {
     },
   },
   daily: {
-    get: async () => {
+    get: async () => mockDailyPage(),
+    page: async (date = mockDailyDate) => {
       const state = new URLSearchParams(location.search).get("daily");
       if (state === "error") throw new Error("Daily preview error");
       if (state === "loading") return new Promise(() => {});
-      return mockDailyDashboard();
+      return mockDailyPage(date);
     },
-    create: async (input) => {
+    month: async (month) => mockDailyMonth(month),
+    create: async (input, date = mockDailyDate) => {
       const completed = Boolean(input.completed) && input.bucket !== "tomorrow";
+      const taskDate = input.bucket === "tomorrow" ? moveDate(date, 1) : date;
       const timestamp = new Date().toISOString();
-      mockDailyTasks.push({ id: crypto.randomUUID(), task_date: input.bucket === "tomorrow" ? moveDate(mockDailyDate, 1) : mockDailyDate, text: input.text.trim(), status: completed ? "done" : "open", priority: input.priority || 2, owner: input.owner === "agent" ? "agent" : "me", completed_on: completed ? mockDailyDate : null, completed_at: completed ? timestamp : null, created_at: timestamp, updated_at: timestamp });
-      return mockDailyDashboard();
+      mockDailyTasks.push({ id: crypto.randomUUID(), task_date: taskDate, text: input.text.trim(), status: completed ? "done" : "open", priority: input.priority || 2, owner: input.owner === "agent" ? "agent" : "me", completed_on: completed ? taskDate : null, completed_at: completed ? timestamp : null, carried_from_id: null, created_at: timestamp, updated_at: timestamp });
+      return mockDailyPage(date);
     },
-    update: async (id, input) => {
+    update: async (id, input, date = mockDailyDate) => {
       const task = mockDailyTasks.find((item) => item.id === id);
       const patch = typeof input === "string" ? { text: input } : input;
       if (patch.text !== undefined) task.text = patch.text.trim();
-      if (patch.priority !== undefined) task.priority = patch.priority;
-      if (patch.owner !== undefined) task.owner = patch.owner;
-      if (patch.bucket !== undefined) task.task_date = patch.bucket === "tomorrow" ? moveDate(mockDailyDate, 1) : mockDailyDate;
+      if (patch.bucket !== undefined) task.task_date = patch.bucket === "tomorrow" ? moveDate(date, 1) : date;
       task.updated_at = new Date().toISOString();
-      return mockDailyDashboard();
+      return mockDailyPage(date);
     },
-    complete: async (id, completed) => {
+    complete: async (id, completed, date = mockDailyDate) => {
       const task = mockDailyTasks.find((item) => item.id === id);
       task.status = completed ? "done" : "open";
-      task.task_date = mockDailyDate;
-      task.completed_on = completed ? mockDailyDate : null;
+      task.completed_on = completed ? date : null;
       task.completed_at = completed ? new Date().toISOString() : null;
-      return mockDailyDashboard();
+      return mockDailyPage(date);
     },
-    remove: async (id) => {
+    remove: async (id, date = mockDailyDate) => {
       const index = mockDailyTasks.findIndex((item) => item.id === id);
       if (index >= 0) mockDailyTasks.splice(index, 1);
-      return mockDailyDashboard();
+      return mockDailyPage(date);
     },
   },
   folders: {
@@ -225,6 +313,7 @@ const mockApi = {
     relatedBots: async () => [],
   },
   projects: {
+    logo: async () => null,
     list: async () => { const state = new URLSearchParams(location.search).get("projects"); if (state === "error") throw new Error("Project storage is unavailable in this preview."); if (state === "loading") return new Promise(() => {}); return structuredClone(mockProjects); },
     create: async (input) => { const timestamp = new Date().toISOString(); const item = { id: crypto.randomUUID(), name: input.name, description: input.description || "", status: input.status || "active", priority: input.priority || "none", manual_rank: mockProjects.length, local_path: input.localPath || null, git_root: input.gitRoot || null, github_url: input.githubUrl || null, primary_language: input.primaryLanguage || "", tags: input.tags || [], next_action: input.nextAction || "", notes: input.notes || "", push_after_commit: false, created_at: timestamp, updated_at: timestamp, last_worked_at: timestamp, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] }; mockProjects.push(item); return structuredClone(item); },
     update: async (id, input) => { const item = mockProjects.find((project) => project.id === id); Object.assign(item, input, { updated_at: new Date().toISOString() }); return structuredClone(item); },
@@ -329,10 +418,6 @@ function noteName(note) {
 function skillName(skill) {
   return displaySkillName(skill);
 }
-function skillPreview(skill) {
-  const text = (skill.body || "").split("\n").map((line) => line.replace(/^#{1,6}\s+/, "").trim()).filter(Boolean).join(" ");
-  return text || "No instructions yet";
-}
 function slashCommandName(item) {
   return item.name?.trim() || item.command?.trim() || preview({ body: item.body }).slice(0, 42) || "Untitled command";
 }
@@ -362,7 +447,7 @@ function countWords(body = "") {
   return words ? words.length : 0;
 }
 function dailyDate(value, options = {}) {
-  return new Date(`${value}T12:00:00`).toLocaleDateString([], { weekday: options.short ? "short" : "long", month: options.short ? undefined : "long", day: "numeric" });
+  return new Date(`${value}T12:00:00`).toLocaleDateString([], options.short ? { weekday: "short", month: "short", day: "numeric" } : { weekday: "long", month: "long", day: "numeric" });
 }
 
 const TOOLBAR = [
@@ -412,12 +497,11 @@ function SearchResults({ query, notes, skills, slashCommands, daily, onOpenNote,
   const needle = query.trim().toLowerCase();
   const matches = (value) => String(value || "").toLowerCase().includes(needle);
   const taskResults = daily ? [
-    ...daily.today.map((task) => ({ ...task, location: "Today" })),
-    ...daily.tomorrow.map((task) => ({ ...task, location: "Tomorrow" })),
-    ...daily.done.map((task) => ({ ...task, location: "Done today" })),
+    ...daily.items.filter((task) => task.status !== "carried").map((task) => ({ ...task, location: task.status === "done" ? "Checked off" : dailyDate(daily.date, { short: true }) })),
+    ...daily.tomorrow.map((task) => ({ ...task, location: "Next day" })),
   ].filter((task) => matches(task.text)) : [];
   const groups = [
-    { label: "Tasks", items: taskResults, render: (task) => <button type="button" key={task.id} onClick={onOpenTask}><span className="result-mark task"><ListTodo size={13} strokeWidth={1.8} /></span><span><strong>{task.text}</strong><small>{task.location} · P{task.priority || 2} · {task.owner === "agent" ? "Agent" : "Me"}</small></span></button> },
+    { label: "Tasks", items: taskResults, render: (task) => <button type="button" key={task.id} onClick={onOpenTask}><span className="result-mark task"><ListTodo size={13} strokeWidth={1.8} /></span><span><strong>{task.text}</strong><small>{task.location}{task.status === "done" ? "" : task.carried ? " · carried over" : ""}</small></span></button> },
     { label: "Notes", items: notes.filter((note) => !note.deleted_at && matches(`${noteName(note)} ${note.body || ""}`)), render: (note) => <button type="button" key={note.id} onClick={() => onOpenNote(note)}><span className="result-mark note"><FileText size={13} strokeWidth={1.8} /></span><span><strong>{noteName(note)}</strong><small>{preview(note)}</small></span></button> },
     { label: "Skills", items: skills.filter((skill) => matches(`${skillName(skill)} ${skill.category || ""} ${skill.body || ""}`)), render: (skill) => <button type="button" key={skill.id} onClick={() => onOpenSkill(skill)}><span className="result-mark skill"><Layers3 size={13} strokeWidth={1.8} /></span><span><strong>{skillName(skill)}</strong><small>{cleanSkillCategory(skill.category)}</small></span></button> },
     { label: "Commands", items: slashCommands.filter((item) => matches(`${slashCommandName(item)} ${item.command || ""} ${item.body || ""}`)), render: (item) => <button type="button" key={item.id} onClick={() => onOpenCommand(item)}><span className="result-mark command"><SquareTerminal size={13} strokeWidth={1.8} /></span><span><strong>{slashCommandName(item)}</strong><small>{item.command || "Reference"}</small></span></button> },
@@ -450,28 +534,6 @@ function NotesList({ notes, currentId, onSelect, onRemove, onCreate }) {
   </div>;
 }
 
-function SkillList({ items, currentId, onSelect, onRemove, onCreate }) {
-  if (!items.length) return <EmptyState title="No skills yet" body="Save a prompt, workflow, or instruction set to reuse it." action={<button type="button" className="button" onClick={onCreate}><Plus size={15} strokeWidth={2} />New skill</button>} />;
-  const ordered = [...items].sort(sortSkillsByStack);
-  const groups = [...new Set(ordered.map((skill) => cleanSkillCategory(skill.category)))].map((category) => ({ label: category, items: ordered.filter((skill) => cleanSkillCategory(skill.category) === category) }));
-  return <div className="list" aria-live="polite">
-    {groups.map((group) => <section className="list-group" key={group.label}>
-      <h2>{group.label}<span>{group.items.length}</span></h2>
-      {group.items.map((skill) => <ListRow
-        key={skill.id}
-        className={isArchivedSkill(skill) ? "is-muted" : ""}
-        selected={currentId === skill.id}
-        title={skillName(skill)}
-        detail={skillPreview(skill)}
-        meta={shortTime(skill.updated_at)}
-        onOpen={() => onSelect(skill)}
-        onRemove={() => onRemove(skill)}
-        removeLabel={`Delete ${skillName(skill)}`}
-      />)}
-    </section>)}
-  </div>;
-}
-
 function SlashCommandList({ items, currentId, onSelect, onRemove, onCreate }) {
   if (!items.length) return <EmptyState title="No commands saved" body="Keep the invocation and what it does in one place." action={<button type="button" className="button" onClick={onCreate}><Plus size={15} strokeWidth={2} />New command</button>} />;
   const groups = [
@@ -496,12 +558,6 @@ function SlashCommandList({ items, currentId, onSelect, onRemove, onCreate }) {
   </div>;
 }
 
-function CategoryFilters({ categories, active, onSelect }) {
-  return <div className="chips" role="group" aria-label="Skill categories">
-    {categories.map((category) => <button type="button" key={category} className={active === category ? "is-active" : ""} aria-pressed={active === category} onClick={() => onSelect(category)}>{category}</button>)}
-  </div>;
-}
-
 function EditorBar({ status, context, children, onHide }) {
   return <header className="editor-bar">
     <div className="editor-status"><span className={`save-state ${status === "Save failed" ? "is-failed" : ""}`}>{status}</span>{context && <span className="editor-context">{context}</span>}</div>
@@ -509,32 +565,98 @@ function EditorBar({ status, context, children, onHide }) {
   </header>;
 }
 
-function DailySidebar({ daily, status }) {
-  if (!daily) return <div className="side-panel"><p className="side-note">{status}</p></div>;
-  const focusCount = daily.today.filter((task) => task.priority === 1 && task.owner !== "agent").length;
-  const agentCount = daily.today.filter((task) => task.owner === "agent").length;
-  const maxDone = Math.max(1, ...daily.history.map((day) => day.completed));
+const WEEKDAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
+
+function monthOf(date) { return date.slice(0, 7); }
+function monthLabel(month) {
+  return new Date(`${month}-01T12:00:00`).toLocaleDateString([], { month: "long", year: "numeric" });
+}
+function shiftMonth(month, delta) {
+  const date = new Date(`${month}-01T12:00:00`);
+  date.setMonth(date.getMonth() + delta);
+  return dateKey(date).slice(0, 7);
+}
+function monthCells(month) {
+  const first = new Date(`${month}-01T12:00:00`);
+  const length = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const cells = Array.from({ length: first.getDay() }, () => null);
+  for (let day = 1; day <= length; day += 1) cells.push(`${month}-${String(day).padStart(2, "0")}`);
+  while (cells.length % 7) cells.push(null);
+  return cells;
+}
+function relativeDay(date, today) {
+  if (date === today) return "Today";
+  if (date === moveDate(today, -1)) return "Yesterday";
+  if (date === moveDate(today, 1)) return "Tomorrow";
+  return null;
+}
+function dayState(entry) {
+  if (!entry || !entry.total) return "empty";
+  if (entry.done >= entry.total) return "clear";
+  if (entry.done > 0) return "partial";
+  return "open";
+}
+
+function DailySidebar({ page, month, days, status, onSelectDate, onMonth }) {
+  if (!page) return <div className="side-panel"><p className="side-note">{status}</p></div>;
+  const byDate = new Map(days.map((entry) => [entry.date, entry]));
+  const monthDone = days.reduce((total, entry) => total + entry.done, 0);
+  const monthOpen = days.reduce((total, entry) => total + Math.max(0, entry.total - entry.done), 0);
   return <div className="side-panel">
-    <section className="stat-card">
-      <strong>{daily.today.length ? `${daily.today.length} open today` : "Today is clear"}</strong>
-      <dl>
-        <div><dt>My focus</dt><dd>{focusCount}</dd></div>
-        <div><dt>Agent queue</dt><dd>{agentCount}</dd></div>
-        <div><dt>Carried over</dt><dd>{daily.carriedCount}</dd></div>
-      </dl>
+    <section className="calendar" aria-label="Daily pages">
+      <header className="calendar-head">
+        <IconButton label="Previous month" onClick={() => onMonth(shiftMonth(month, -1))}><ChevronLeft size={15} strokeWidth={1.9} /></IconButton>
+        <strong>{monthLabel(month)}</strong>
+        <IconButton label="Next month" onClick={() => onMonth(shiftMonth(month, 1))}><ChevronRight size={15} strokeWidth={1.9} /></IconButton>
+      </header>
+      <div className="calendar-grid">
+        {WEEKDAY_LETTERS.map((letter, index) => <span className="calendar-weekday" key={index} aria-hidden="true">{letter}</span>)}
+        {monthCells(month).map((date, index) => date ? <button
+          type="button"
+          key={date}
+          className={`calendar-day is-${dayState(byDate.get(date))} ${date === page.date ? "is-selected" : ""} ${date === page.today ? "is-today" : ""}`}
+          aria-current={date === page.date ? "date" : undefined}
+          aria-label={`${dailyDate(date)}${byDate.get(date) ? ` · ${byDate.get(date).done} of ${byDate.get(date).total} checked` : " · nothing written"}`}
+          title={byDate.get(date) ? `${byDate.get(date).done}/${byDate.get(date).total} checked` : "Nothing written"}
+          onClick={() => onSelectDate(date)}
+        >{Number(date.slice(8))}</button> : <span className="calendar-blank" key={`blank-${index}`} aria-hidden="true" />)}
+      </div>
     </section>
-    <section className="history" aria-label="Completed tasks over the last seven days">
-      <h2>Last 7 days</h2>
-      {daily.history.map((day) => <div key={day.date}>
-        <span>{day.date === daily.date ? "Today" : dailyDate(day.date, { short: true })}</span>
-        <i aria-hidden="true"><b style={{ width: `${Math.max(6, (day.completed / maxDone) * 100)}%` }} /></i>
-        <strong>{day.completed}</strong>
-      </div>)}
-    </section>
+    <p className="calendar-summary"><strong>{monthDone}</strong> checked off in {monthLabel(month)} · <strong>{monthOpen}</strong> still open</p>
+    <p className="calendar-hint"><RotateCcw size={13} strokeWidth={1.8} />Anything unchecked at midnight moves to the next day.</p>
   </div>;
 }
 
-function DailyAddForm({ label, placeholder, onAdd, buttonLabel }) {
+function DailyLine({ task, onToggle, onLocalEdit, onSave, onRemove, onMove, moveLabel }) {
+  const done = task.status === "done";
+  const moved = task.status === "carried";
+  return <li className={`line ${done ? "is-done" : ""} ${moved ? "is-moved" : ""}`}>
+    <label className="line-check">
+      <input type="checkbox" checked={done} disabled={moved} onChange={(event) => onToggle(task.id, event.target.checked)} aria-label={`${done ? "Uncheck" : "Check off"} ${task.text}`} />
+      <span className="line-box" aria-hidden="true"><Check size={13} strokeWidth={2.8} /></span>
+    </label>
+    <textarea
+      className="line-text"
+      rows="1"
+      value={task.text}
+      readOnly={moved}
+      onChange={(event) => onLocalEdit(task.id, event.target.value)}
+      onBlur={() => onSave(task)}
+      onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}
+      aria-label={`Edit task: ${task.text}`}
+      maxLength={500}
+    />
+    <span className="line-tools">
+      {task.carried && !moved ? <span className="line-mark" title="Carried over from an earlier day"><RotateCcw size={12} strokeWidth={1.9} />carried</span> : null}
+      {moved ? <span className="line-mark" title="Unfinished, so it moved to the next day">moved on</span> : <>
+        {onMove && <IconButton className="line-move" label={`${moveLabel} — ${task.text}`} onClick={() => onMove(task.id)}><ArrowRight size={14} strokeWidth={1.8} /></IconButton>}
+        <IconButton className="line-remove" label={`Delete ${task.text}`} onClick={() => onRemove(task.id)}><Trash2 size={13} strokeWidth={1.8} /></IconButton>
+      </>}
+    </span>
+  </li>;
+}
+
+function DailyAddLine({ label, placeholder, onAdd }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   async function submit(event) {
@@ -545,96 +667,57 @@ function DailyAddForm({ label, placeholder, onAdd, buttonLabel }) {
     if (saved) setValue("");
     setBusy(false);
   }
-  return <form className="inline-add" onSubmit={submit}>
+  return <form className="line-add" onSubmit={submit}>
+    <span className="line-box is-blank" aria-hidden="true"><Plus size={13} strokeWidth={2.2} /></span>
     <input value={value} onChange={(event) => setValue(event.target.value)} placeholder={placeholder} aria-label={label} maxLength={500} />
-    <button type="submit" className="button subtle" disabled={!value.trim() || busy} aria-label={`Add ${label.toLowerCase()}`}>{buttonLabel || "Add"}</button>
+    <button type="submit" className="button subtle" disabled={!value.trim() || busy}>{busy ? "Adding…" : "Add"}</button>
   </form>;
 }
 
-function TodayCapture({ onAdd }) {
-  const [value, setValue] = useState("");
-  const [priority, setPriority] = useState(1);
-  const [owner, setOwner] = useState("me");
-  const [busy, setBusy] = useState(false);
-  async function submit(event) {
-    event.preventDefault();
-    if (!value.trim() || busy) return;
-    setBusy(true);
-    const saved = await onAdd(value.trim(), "today", false, { priority, owner });
-    if (saved) setValue("");
-    setBusy(false);
-  }
-  return <form className="capture" onSubmit={submit}>
-    <label className="capture-text"><span>Add a task</span><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="What needs to move today?" aria-label="Today task" maxLength={500} /></label>
-    <label><span>Priority</span><select value={priority} onChange={(event) => setPriority(Number(event.target.value))} aria-label="New task priority"><option value="1">P1 · Focus</option><option value="2">P2 · Next</option><option value="3">P3 · Later</option></select></label>
-    <label><span>Owner</span><select value={owner} onChange={(event) => setOwner(event.target.value)} aria-label="New task owner"><option value="me">Me</option><option value="agent">Agent</option></select></label>
-    <button type="submit" className="button primary" disabled={!value.trim() || busy} aria-label="Add today task">{busy ? "Adding…" : "Add"}</button>
-  </form>;
-}
-
-function DailyTaskRow({ task, completed = false, bucket = "today", onToggle, onLocalEdit, onSave, onUpdate, onRemove }) {
-  return <div className={`task ${completed ? "is-done" : ""}`}>
-    <input type="checkbox" checked={completed} onChange={(event) => onToggle(task.id, event.target.checked)} aria-label={`${completed ? "Reopen" : "Complete"} ${task.text}`} />
-    <div className="task-body">
-      <textarea rows="1" value={task.text} onChange={(event) => onLocalEdit(task.id, event.target.value)} onBlur={() => onSave(task)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} aria-label={`Edit task: ${task.text}`} maxLength={500} />
-      <div className="task-meta">
-        {completed ? <><span className="tag">P{task.priority || 2}</span><span className="tag">{task.owner === "agent" ? "Agent" : "Me"}</span></> : <>
-          <select value={task.priority || 2} onChange={(event) => onUpdate(task.id, { priority: Number(event.target.value) })} aria-label={`Priority for ${task.text}`}><option value="1">P1</option><option value="2">P2</option><option value="3">P3</option></select>
-          <select value={task.owner || "me"} onChange={(event) => onUpdate(task.id, { owner: event.target.value })} aria-label={`Owner for ${task.text}`}><option value="me">Me</option><option value="agent">Agent</option></select>
-          {task.carried ? <span className="tag">Carried</span> : null}
-          <button type="button" className="task-move" onClick={() => onUpdate(task.id, { bucket: bucket === "today" ? "tomorrow" : "today" })}>{bucket === "today" ? "Move to tomorrow" : "Move to today"}</button>
-        </>}
-      </div>
-    </div>
-    <IconButton className="task-remove" label={`Delete ${task.text}`} onClick={() => onRemove(task.id)}><Trash2 size={14} strokeWidth={1.8} /></IconButton>
-  </div>;
-}
-
-function TaskSection({ title, label, tasks, empty, tone = "", bucket = "today", taskProps, footer }) {
-  return <section className={`card ${tone}`}>
-    <header><div><span className="kicker">{label}</span><h2>{title}</h2></div><strong className="count">{tasks.length}</strong></header>
-    <div className="tasks">{tasks.map((task) => <DailyTaskRow key={task.id} task={task} bucket={bucket} completed={bucket === "done"} {...taskProps} />)}{!tasks.length && <p className="card-empty">{empty}</p>}</div>
-    {footer}
-  </section>;
-}
-
-function TodayPage({ daily, status, onAdd, onToggle, onLocalEdit, onSave, onUpdate, onRemove, onHide, onRetry }) {
+function TodayPage({ page, status, onSelectDate, onAdd, onToggle, onLocalEdit, onSave, onMove, onRemove, onHide, onRetry }) {
   const failed = status.startsWith("Could not");
-  if (!daily) return <section className="pane">
+  if (!page) return <section className="pane">
     <EditorBar status={status} onHide={onHide} />
-    <div className="pane-scroll"><EmptyState title={failed ? "Daily plan unavailable" : "Opening today…"} body={failed ? "Your notes are safe. Try loading the daily plan again." : "Checking yesterday and preparing today."} action={failed ? <button type="button" className="button" onClick={onRetry}><RotateCcw size={15} strokeWidth={1.8} />Try again</button> : null} /></div>
+    <div className="pane-scroll"><EmptyState title={failed ? "Daily page unavailable" : "Opening today…"} body={failed ? "Your notes are safe. Try loading the daily page again." : "Carrying yesterday's unfinished work into today."} action={failed ? <button type="button" className="button" onClick={onRetry}><RotateCcw size={15} strokeWidth={1.8} />Try again</button> : null} /></div>
   </section>;
-  const planned = daily.today.length + daily.done.length;
-  const percent = planned ? Math.round((daily.done.length / planned) * 100) : 0;
-  const myFocus = daily.today.filter((task) => task.owner !== "agent" && task.priority === 1);
-  const myNext = daily.today.filter((task) => task.owner !== "agent" && task.priority !== 1);
-  const agentQueue = daily.today.filter((task) => task.owner === "agent");
-  const taskProps = { onToggle, onLocalEdit, onSave, onUpdate, onRemove };
+  const listed = page.items.filter((task) => task.status !== "carried");
+  const moved = page.items.filter((task) => task.status === "carried");
+  const percent = listed.length ? Math.round((page.doneCount / listed.length) * 100) : 0;
+  const relative = relativeDay(page.date, page.today);
+  const lineProps = { onToggle, onLocalEdit, onSave, onRemove };
   return <section className="pane">
-    <EditorBar status={status} context="Today" onHide={onHide} />
-    <div className="pane-scroll">
-      <div className="pane-body">
-        <header className="page-head">
-          <div><h1>{dailyDate(daily.date)}</h1><p>One place for what matters today, what moved, and what runs next.</p></div>
-          <div className="progress" role="group" aria-label="Completed tasks today">
-            <strong>{daily.done.length}<span>/{planned}</span></strong>
-            <div><i style={{ width: `${percent}%` }} /></div>
+    <EditorBar status={status} context={relative || dailyDate(page.date, { short: true })} onHide={onHide} />
+    <div className="pane-scroll paper-scroll">
+      <article className="paper">
+        <header className="paper-head">
+          <IconButton className="paper-step" label="Previous day" onClick={() => onSelectDate(moveDate(page.date, -1))}><ChevronLeft size={17} strokeWidth={1.9} /></IconButton>
+          <div className="paper-date">
+            {relative && <span className="paper-kicker">{relative}</span>}
+            <h1>{dailyDate(page.date)}</h1>
+            <p>{page.doneCount} of {listed.length} checked off{page.carriedCount ? ` · ${page.carriedCount} carried over` : ""}</p>
           </div>
+          <IconButton className="paper-step" label="Next day" onClick={() => onSelectDate(moveDate(page.date, 1))}><ChevronRight size={17} strokeWidth={1.9} /></IconButton>
         </header>
-        <TodayCapture onAdd={onAdd} />
-        {daily.carriedCount > 0 && <p className="banner" role="status"><RotateCcw size={15} strokeWidth={1.8} /><span><strong>{daily.carriedCount} carried forward.</strong> Still open from earlier days — re-rank it or move it to tomorrow.</span></p>}
-        <div className="board">
-          <div className="board-column">
-            <TaskSection label="P1 · Limit 3" title="My focus" tasks={myFocus} empty="Choose the one thing that makes today count." tone="is-focus" taskProps={taskProps} />
-            <TaskSection label="P2–P3" title="Next up" tasks={myNext} empty="Everything else can wait here without being lost." taskProps={taskProps} />
-          </div>
-          <div className="board-column">
-            <TaskSection label="Delegated" title="Agent queue" tasks={agentQueue} empty="Assign clear, independent work here." tone="is-agent" taskProps={taskProps} />
-            <TaskSection label="Next day" title="Tomorrow" tasks={daily.tomorrow} bucket="tomorrow" empty="Leave tomorrow a clear first move." taskProps={taskProps} footer={<DailyAddForm label="Tomorrow task" placeholder="Set up tomorrow…" onAdd={(text) => onAdd(text, "tomorrow", false, { priority: 2, owner: "me" })} />} />
-          </div>
-        </div>
-        <TaskSection label="Record" title="Done today" tasks={daily.done} bucket="done" empty="Finished work shows up here." tone="is-done" taskProps={taskProps} footer={<DailyAddForm label="Completed task" placeholder="Log something already finished…" buttonLabel="Log" onAdd={(text) => onAdd(text, "today", true, { priority: 2, owner: "me" })} />} />
-      </div>
+        <div className="paper-progress" role="img" aria-label={`${percent}% of this day checked off`}><i style={{ width: `${percent}%` }} /></div>
+        {!page.isToday && <button type="button" className="button subtle paper-back" onClick={() => onSelectDate(page.today)}><CalendarCheck2 size={15} strokeWidth={1.8} />Back to today</button>}
+        <ol className="checklist">
+          {listed.map((task) => <DailyLine key={task.id} task={task} {...lineProps} onMove={(id) => onMove(id, "tomorrow")} moveLabel="Move to the next day" />)}
+        </ol>
+        {!listed.length && <p className="paper-empty">Nothing written on this page yet. Add the first thing below.</p>}
+        <DailyAddLine label={`Task for ${dailyDate(page.date)}`} placeholder={page.isToday ? "Add to today's list…" : `Add to ${dailyDate(page.date, { short: true })}…`} onAdd={(text) => onAdd(text, "today")} />
+        {moved.length > 0 && <section className="paper-moved">
+          <h2>Moved to the next day</h2>
+          <ol className="checklist is-quiet">{moved.map((task) => <DailyLine key={task.id} task={task} {...lineProps} />)}</ol>
+        </section>}
+        <section className="paper-next">
+          <h2>{relativeDay(page.tomorrowDate, page.today) || dailyDate(page.tomorrowDate, { short: true })}<small>{page.tomorrow.length}</small></h2>
+          <ol className="checklist is-quiet">
+            {page.tomorrow.map((task) => <DailyLine key={task.id} task={task} {...lineProps} onMove={(id) => onMove(id, "today")} moveLabel="Pull back to this page" />)}
+          </ol>
+          <DailyAddLine label={`Task for ${dailyDate(page.tomorrowDate)}`} placeholder="Line something up for the next day…" onAdd={(text) => onAdd(text, "tomorrow")} />
+        </section>
+        <footer className="paper-foot"><RotateCcw size={13} strokeWidth={1.8} />Unchecked items roll onto the next page at midnight.</footer>
+      </article>
     </div>
   </section>;
 }
@@ -696,25 +779,6 @@ function NotePage({ note, notebooks, status, mode, onMode, onEdit, onSave, onCop
   </section>;
 }
 
-function SkillPage({ skill, categories, status, onEdit, onSave, onCopy, onRemove, onCreate, onHide }) {
-  if (!skill) return <section className="pane">
-    <EditorBar status={status} onHide={onHide} />
-    <div className="pane-scroll"><EmptyState title="No skill selected" body="Skills hold a reusable prompt, workflow, or instruction set." action={<button type="button" className="button primary" onClick={onCreate}><Plus size={15} strokeWidth={2} />New skill</button>} /></div>
-  </section>;
-  return <section className="pane">
-    <EditorBar status={status} context={cleanSkillCategory(skill.category)} onHide={onHide}>
-      <button type="button" className="button subtle" onClick={onCopy}><Copy size={15} strokeWidth={1.8} />Copy</button>
-      <IconButton className="is-danger" label={`Delete ${skillName(skill)}`} onClick={() => onRemove(skill)}><Trash2 size={16} strokeWidth={1.8} /></IconButton>
-    </EditorBar>
-    <div className="note-canvas">
-      <input className="note-title" value={skill.name || ""} onChange={(event) => onEdit({ name: event.target.value })} placeholder="Skill name" aria-label="Skill name" autoFocus />
-      <label className="field inline"><span>Category</span><input value={skill.category || ""} onChange={(event) => onEdit({ category: event.target.value })} onBlur={() => onSave(skill)} list="skill-categories" placeholder="Unsorted" aria-label="Skill category" /><datalist id="skill-categories">{categories.map((category) => <option key={category} value={category} />)}</datalist></label>
-      <div className="field-heading"><span>Instructions</span><small>Markdown supported</small></div>
-      <textarea className="note-writing" value={skill.body || ""} onChange={(event) => onEdit({ body: event.target.value })} onBlur={() => onSave(skill)} placeholder="Paste the prompt, workflow, or instructions here." aria-label="Skill notes" />
-    </div>
-  </section>;
-}
-
 function CommandPage({ item, status, onEdit, onSave, onCopy, onRemove, onCreate, onHide }) {
   if (!item) return <section className="pane">
     <EditorBar status={status} onHide={onHide} />
@@ -739,6 +803,7 @@ const SHORTCUTS = [
   ["Ctrl + K", "Search everything"],
   ["Ctrl + N", "New note, skill, or command"],
   ["Ctrl + E", "Switch between writing and Markdown preview"],
+  ["Alt + ← / →", "Previous or next skill"],
   ["Ctrl + 1 – 4", "Jump to Today, Notes, Skills, Commands"],
   ["Esc", "Clear search, close a panel, or hide the window"],
 ];
@@ -927,7 +992,6 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [skills, setSkills] = useState([]);
   const [currentSkill, setCurrentSkill] = useState(null);
-  const [skillCategory, setSkillCategory] = useState("Active");
   const [slashCommands, setSlashCommands] = useState([]);
   const [currentSlashCommand, setCurrentSlashCommand] = useState(null);
   const [bots, setBots] = useState([]);
@@ -941,7 +1005,11 @@ function App() {
   // Services stay loaded and signed in for the session once opened; the view is only detached.
   const [loadedServices, setLoadedServices] = useState(() => new Set());
   const [daily, setDaily] = useState(null);
+  const [dailyMonth, setDailyMonth] = useState({ month: dateKey().slice(0, 7), days: [] });
   const [dailyStatus, setDailyStatus] = useState("Loading…");
+  const [midnightTick, setMidnightTick] = useState(0);
+  const dailyDateRef = useRef(dateKey());
+  const dailyMonthRef = useRef(dateKey().slice(0, 7));
   const [saveState, setSaveState] = useState("Loading…");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [backups, setBackups] = useState([]);
@@ -993,10 +1061,26 @@ function App() {
     await loadDaily();
   };
 
-  async function loadDaily() {
+  async function readDaily(date = dailyDateRef.current, month = dailyMonthRef.current) {
+    const [page, calendar] = await Promise.all([api.daily.page(date), api.daily.month(month)]);
+    dailyDateRef.current = page.date;
+    dailyMonthRef.current = calendar.month;
+    setDaily(page);
+    setDailyMonth(calendar);
+    return page;
+  }
+  async function loadDaily(date = dailyDateRef.current) {
     setDailyStatus("Loading…");
-    try { setDaily(await api.daily.get()); setDailyStatus("Saved"); }
-    catch { setDailyStatus("Could not load daily plan"); }
+    try { await readDaily(date, monthOf(date)); setDailyStatus("Saved"); }
+    catch { setDailyStatus("Could not load daily page"); }
+  }
+  function selectDailyDate(date) {
+    dailyDateRef.current = date;
+    loadDaily(date);
+  }
+  function selectDailyMonth(month) {
+    dailyMonthRef.current = month;
+    api.daily.month(month).then(setDailyMonth).catch(() => setDailyStatus("Could not load the calendar"));
   }
 
   useEffect(() => {
@@ -1076,7 +1160,7 @@ function App() {
     };
     document.addEventListener("keydown", handleKeys);
     return () => document.removeEventListener("keydown", handleKeys);
-  }, [searchQuery, settingsOpen, activeNotebookId, notebooks, skillCategory]);
+  }, [searchQuery, settingsOpen, activeNotebookId, notebooks]);
 
   const serviceStatus = { mail: mailStatus, notion: notionStatus, twitter: twitterStatus };
   const setServiceStatus = { mail: setMailStatus, notion: setNotionStatus, twitter: setTwitterStatus };
@@ -1135,7 +1219,6 @@ function App() {
       const skill = await api.skills.create({ name: "", category: "Unsorted", body: "" });
       setSkills((items) => [skill, ...items]);
       setCurrentSkill(skill);
-      setSkillCategory("All");
       selectView("skills");
       setSaveState("Saved");
     } catch { setSaveState("Could not create skill"); }
@@ -1157,30 +1240,40 @@ function App() {
     return createNote();
   }
 
+  useEffect(() => {
+    const startedOn = dateKey();
+    const midnight = new Date();
+    midnight.setHours(24, 0, 2, 0);
+    const timer = setTimeout(() => {
+      const today = dateKey();
+      loadDaily(dailyDateRef.current === startedOn ? today : dailyDateRef.current);
+      setMidnightTick((tick) => tick + 1);
+    }, Math.max(1_000, midnight.getTime() - Date.now()));
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [midnightTick]);
+
   async function runDailyAction(action) {
     setDailyStatus("Saving…");
     try {
-      setDaily(await action());
+      await action();
+      await readDaily();
       setDailyStatus("Saved");
       return true;
     } catch {
-      try { setDaily(await api.daily.get()); } catch { /* Keep the last visible state. */ }
-      setDailyStatus("Could not save daily plan");
+      try { await readDaily(); } catch { /* Keep the last visible state. */ }
+      setDailyStatus("Could not save this page");
       return false;
     }
   }
-  const addDailyTask = (text, bucket, completed, details = {}) => runDailyAction(() => api.daily.create({ text, bucket, completed, ...details }));
-  const toggleDailyTask = (id, completed) => runDailyAction(() => api.daily.complete(id, completed));
-  const saveDailyTask = (task) => runDailyAction(() => api.daily.update(task.id, { text: task.text, priority: task.priority || 2, owner: task.owner || "me" }));
-  const updateDailyTask = (id, patch) => runDailyAction(() => api.daily.update(id, patch));
-  const removeDailyTask = (id) => runDailyAction(() => api.daily.remove(id));
+  const addDailyTask = (text, bucket = "today") => runDailyAction(() => api.daily.create({ text, bucket }, dailyDateRef.current));
+  const toggleDailyTask = (id, completed) => runDailyAction(() => api.daily.complete(id, completed, dailyDateRef.current));
+  const saveDailyTask = (task) => runDailyAction(() => api.daily.update(task.id, { text: task.text }, dailyDateRef.current));
+  const moveDailyTask = (id, bucket) => runDailyAction(() => api.daily.update(id, { bucket }, dailyDateRef.current));
+  const removeDailyTask = (id) => runDailyAction(() => api.daily.remove(id, dailyDateRef.current));
   function editDailyTaskLocal(id, text) {
-    setDaily((value) => value ? {
-      ...value,
-      today: value.today.map((task) => task.id === id ? { ...task, text } : task),
-      done: value.done.map((task) => task.id === id ? { ...task, text } : task),
-      tomorrow: value.tomorrow.map((task) => task.id === id ? { ...task, text } : task),
-    } : value);
+    const edit = (task) => task.id === id ? { ...task, text } : task;
+    setDaily((value) => value ? { ...value, items: value.items.map(edit), tomorrow: value.tomorrow.map(edit) } : value);
   }
 
   async function saveNow(note) {
@@ -1222,6 +1315,14 @@ function App() {
       setSkills((items) => items.map((item) => item.id === saved.id ? saved : item));
       setCurrentSkill((item) => item?.id === saved.id ? saved : item);
       setSaveState("Saved");
+    } catch { setSaveState("Save failed"); }
+  }
+  async function toggleSkillStar(skill) {
+    try {
+      const saved = await api.skills.update(skill.id, { pinned: !skill.pinned });
+      setSkills((items) => items.map((item) => item.id === saved.id ? saved : item));
+      setCurrentSkill((item) => item?.id === saved.id ? saved : item);
+      showSaveNotice(saved.pinned ? "Starred" : "Star removed");
     } catch { setSaveState("Save failed"); }
   }
   function editSkill(patch) {
@@ -1495,7 +1596,7 @@ function App() {
     if (nextView === "daily") loadDaily();
   }
   function openSearchNote(note) { setCurrent(note); setActiveNotebookId(note.folder_id); selectView("notes"); }
-  function openSearchSkill(skill) { setCurrentSkill(skill); setSkillCategory("All"); selectView("skills"); }
+  function openSearchSkill(skill) { setCurrentSkill(skill); selectView("skills"); }
   function openSearchCommand(item) { setCurrentSlashCommand(item); selectView("commands"); }
 
   const visibleNotes = useMemo(() => notes
@@ -1504,14 +1605,9 @@ function App() {
   [notes, activeNotebookId]);
   const activeNotebook = notebooks.find((notebook) => notebook.id === activeNotebookId);
   const skillEditorCategories = [...new Set(skills.map((skill) => skill.category?.trim() || "Unsorted"))].sort((left, right) => left.localeCompare(right));
-  const customSkillCategories = [...new Set(skillEditorCategories.map(cleanSkillCategory))].filter(Boolean);
-  const categories = ["Active", "Archived", "All", ...customSkillCategories];
-  const visibleSkills = skills.filter((skill) => skillCategory === "All"
-    || (skillCategory === "Active" && !isArchivedSkill(skill))
-    || (skillCategory === "Archived" && isArchivedSkill(skill))
-    || cleanSkillCategory(skill.category) === skillCategory);
+  const todayCounts = dailyMonth.days.find((day) => day.date === dateKey());
   const counts = {
-    daily: daily?.today.length || 0,
+    daily: todayCounts ? Math.max(0, todayCounts.total - todayCounts.done) : 0,
     notes: notes.filter((note) => !note.deleted_at).length,
     skills: skills.length,
     commands: slashCommands.length,
@@ -1582,15 +1678,12 @@ function App() {
             </form>}
             <NotesList notes={visibleNotes} currentId={current?.id} onSelect={(note) => { setCurrent(note); setEditorMode("write"); }} onRemove={remove} onCreate={() => createNote()} />
           </>
-            : view === "skills" ? <>
-              <CategoryFilters categories={categories} active={skillCategory} onSelect={setSkillCategory} />
-              <SkillList items={visibleSkills} currentId={currentSkill?.id} onSelect={setCurrentSkill} onRemove={removeSkill} onCreate={createSkill} />
-            </>
+            : view === "skills" ? null
               : view === "commands" ? <SlashCommandList items={slashCommands} currentId={currentSlashCommand?.id} onSelect={setCurrentSlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} />
                 : view === "bots" ? <BotSidebar bots={bots} currentId={currentBotId} onSelect={openBot} />
                   : view === "mcp-servers" ? <McpSidebar servers={mcpServers} currentId={currentMcpId} onSelect={openMcp} />
                     : view === "projects" ? null
-                      : <DailySidebar daily={daily} status={dailyStatus} />}
+                      : <DailySidebar page={daily} month={dailyMonth.month} days={dailyMonth.days} status={dailyStatus} onSelectDate={selectDailyDate} onMonth={selectDailyMonth} />}
       </div>
     </aside>
 
@@ -1621,9 +1714,9 @@ function App() {
     /> : view === "projects" ? <ProjectsPage api={api.projects} skills={skills} commands={slashCommands} onHide={() => api.window.hide()} />
       : view === "bots" ? <BotsWorkspace api={api} bots={bots} mcpServers={mcpServers} skills={skills} notes={notes} currentId={currentBotId} onCurrent={openBot} onBotsChange={reloadBots} onNotesChange={reloadNotes} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenMcp={openMcp} onHide={() => api.window.hide()} />
       : view === "mcp-servers" ? <McpServersWorkspace api={api} servers={mcpServers} bots={bots} currentId={currentMcpId} onCurrent={openMcp} onServersChange={reloadMcpServers} onOpenBot={openBot} onHide={() => api.window.hide()} />
-      : view === "skills" ? <SkillPage skill={currentSkill} categories={skillEditorCategories} status={saveState} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onCreate={createSkill} onHide={() => api.window.hide()} />
+      : view === "skills" ? <SkillsWorkspace skills={skills} current={currentSkill} status={saveState} editorCategories={skillEditorCategories} onSelect={setCurrentSkill} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onCreate={createSkill} onTogglePin={toggleSkillStar} onHide={() => api.window.hide()} />
       : view === "commands" ? <CommandPage item={currentSlashCommand} status={saveState} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} onHide={() => api.window.hide()} />
-        : <TodayPage daily={daily} status={dailyStatus} onAdd={addDailyTask} onToggle={toggleDailyTask} onLocalEdit={editDailyTaskLocal} onSave={saveDailyTask} onUpdate={updateDailyTask} onRemove={removeDailyTask} onHide={() => api.window.hide()} onRetry={loadDaily} />}
+        : <TodayPage page={daily} status={dailyStatus} onSelectDate={selectDailyDate} onAdd={addDailyTask} onToggle={toggleDailyTask} onLocalEdit={editDailyTaskLocal} onSave={saveDailyTask} onMove={moveDailyTask} onRemove={removeDailyTask} onHide={() => api.window.hide()} onRetry={() => loadDaily()} />}
 
     {view === "notes" && compressOpen && <Compressor note={current} onClose={() => setCompressOpen(false)} />}
     {settingsOpen && <SettingsPanel
