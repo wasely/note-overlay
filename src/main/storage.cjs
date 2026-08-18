@@ -1,8 +1,11 @@
 const Database = require("better-sqlite3");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { randomUUID } = require("crypto");
 const { createBotRepository } = require("./bot-storage.cjs");
+const { enrichProject } = require("./workshop.cjs");
+const DEVICE_NAME = os.hostname();
 
 function now() { return new Date().toISOString(); }
 function localDate(value = new Date()) {
@@ -110,18 +113,22 @@ function createStorage(userDataPath) {
     CREATE TABLE IF NOT EXISTS daily_tasks (id TEXT PRIMARY KEY, task_date TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'done', 'carried')), priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 3), owner TEXT NOT NULL DEFAULT 'me' CHECK(owner IN ('me', 'agent')), completed_at TEXT, completed_on TEXT, carried_from_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(carried_from_id) REFERENCES daily_tasks(id) ON DELETE SET NULL);
     CREATE INDEX IF NOT EXISTS daily_tasks_date_status ON daily_tasks(task_date, status);
     CREATE INDEX IF NOT EXISTS daily_tasks_completed_on ON daily_tasks(completed_on);
-    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'blocked', 'completed', 'archived')), priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_rank INTEGER NOT NULL DEFAULT 0, local_path TEXT UNIQUE, git_root TEXT, github_url TEXT, primary_language TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', next_action TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', push_after_commit INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_worked_at TEXT);
+    CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'blocked', 'completed', 'archived')), priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_rank INTEGER NOT NULL DEFAULT 0, local_path TEXT UNIQUE, git_root TEXT, github_url TEXT, primary_language TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', next_action TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', push_after_commit INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_worked_at TEXT, last_device TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS project_tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'blocked', 'done', 'archived')), priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_order INTEGER NOT NULL DEFAULT 0, due_date TEXT, tags_json TEXT NOT NULL DEFAULT '[]', related TEXT NOT NULL DEFAULT '', completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
     CREATE INDEX IF NOT EXISTS project_tasks_project_status ON project_tasks(project_id, status, manual_order);
     CREATE TABLE IF NOT EXISTS project_skills (project_id TEXT NOT NULL, skill_id TEXT NOT NULL, PRIMARY KEY(project_id, skill_id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS project_slash_commands (project_id TEXT NOT NULL, slash_command_id TEXT NOT NULL, PRIMARY KEY(project_id, slash_command_id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(slash_command_id) REFERENCES slash_commands(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS project_activity (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
     CREATE INDEX IF NOT EXISTS project_activity_project_time ON project_activity(project_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS project_canvas_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT 'yellow' CHECK(color IN ('yellow', 'blue', 'green', 'pink', 'gray')), x INTEGER NOT NULL DEFAULT 24, y INTEGER NOT NULL DEFAULT 24, width INTEGER NOT NULL DEFAULT 220, height INTEGER NOT NULL DEFAULT 150, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
+    CREATE INDEX IF NOT EXISTS project_canvas_project ON project_canvas_items(project_id, created_at);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
   const dailyColumns = new Set(db.pragma("table_info(daily_tasks)").map((column) => column.name));
   if (!dailyColumns.has("priority")) db.exec("ALTER TABLE daily_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 3)");
   if (!dailyColumns.has("owner")) db.exec("ALTER TABLE daily_tasks ADD COLUMN owner TEXT NOT NULL DEFAULT 'me' CHECK(owner IN ('me', 'agent'))");
+  const projectColumns = new Set(db.pragma("table_info(projects)").map((column) => column.name));
+  if (!projectColumns.has("last_device")) db.exec("ALTER TABLE projects ADD COLUMN last_device TEXT NOT NULL DEFAULT ''");
   let inbox = db.prepare("SELECT id FROM folders WHERE is_inbox = 1").get();
   if (!inbox) {
     inbox = { id: "inbox" };
@@ -221,7 +228,7 @@ function createStorage(userDataPath) {
   function projectRow(row) {
     if (!row) return null;
     const tasks = db.prepare("SELECT * FROM project_tasks WHERE project_id = ? ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'todo' THEN 2 WHEN 'done' THEN 3 ELSE 4 END, manual_order, created_at").all(row.id).map((task) => ({ ...task, tags: JSON.parse(task.tags_json || "[]") }));
-    return {
+    return enrichProject({
       ...row,
       tags: JSON.parse(row.tags_json || "[]"),
       push_after_commit: Boolean(row.push_after_commit),
@@ -229,25 +236,27 @@ function createStorage(userDataPath) {
       skill_ids: db.prepare("SELECT skill_id FROM project_skills WHERE project_id = ? ORDER BY skill_id").all(row.id).map((item) => item.skill_id),
       slash_command_ids: db.prepare("SELECT slash_command_id FROM project_slash_commands WHERE project_id = ? ORDER BY slash_command_id").all(row.id).map((item) => item.slash_command_id),
       activity: db.prepare("SELECT * FROM project_activity WHERE project_id = ? ORDER BY created_at DESC LIMIT 100").all(row.id),
-    };
+      canvas_items: db.prepare("SELECT * FROM project_canvas_items WHERE project_id = ? ORDER BY created_at").all(row.id),
+    });
   }
   function listProjects() { return db.prepare("SELECT * FROM projects ORDER BY manual_rank, updated_at DESC").all().map(projectRow); }
   function getProject(id) { return projectRow(db.prepare("SELECT * FROM projects WHERE id = ?").get(id)); }
   function addProjectActivity(projectId, kind, summary, detail = "") {
     db.prepare("INSERT INTO project_activity (id, project_id, kind, summary, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(randomUUID(), projectId, kind, summary, detail, now());
   }
+  function touchProject(projectId, worked = true) { const timestamp = now(); db.prepare("UPDATE projects SET updated_at = ?, last_worked_at = CASE WHEN ? THEN ? ELSE last_worked_at END, last_device = ? WHERE id = ?").run(timestamp, Number(worked), timestamp, DEVICE_NAME, projectId); }
   function createProject(input = {}) {
     const id = randomUUID(); const timestamp = now();
     const duplicate = db.prepare("SELECT name FROM projects WHERE (? IS NOT NULL AND lower(local_path) = lower(?)) OR (? IS NOT NULL AND lower(git_root) = lower(?)) OR (? IS NOT NULL AND lower(github_url) = lower(?))").get(input.localPath || null, input.localPath || null, input.gitRoot || null, input.gitRoot || null, input.githubUrl || null, input.githubUrl || null);
     if (duplicate) throw new Error(`This repository is already tracked as ${duplicate.name}.`);
     const rank = Number.isInteger(input.manualRank) ? input.manualRank : (db.prepare("SELECT COALESCE(MAX(manual_rank), -1) + 1 AS rank FROM projects").get().rank);
-    db.prepare("INSERT INTO projects (id, name, description, status, priority, manual_rank, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, String(input.name || "Untitled project").trim(), input.description || "", input.status || "active", input.priority || "none", rank, input.localPath || null, input.gitRoot || input.localPath || null, input.githubUrl || null, input.primaryLanguage || "", JSON.stringify(cleanJsonList(input.tags)), input.nextAction || "", input.notes || "", Number(Boolean(input.pushAfterCommit)), timestamp, timestamp, input.lastWorkedAt || timestamp);
+    db.prepare("INSERT INTO projects (id, name, description, status, priority, manual_rank, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, String(input.name || "Untitled project").trim(), input.description || "", input.status || "active", input.priority || "none", rank, input.localPath || null, input.gitRoot || input.localPath || null, input.githubUrl || null, input.primaryLanguage || "", JSON.stringify(cleanJsonList(input.tags)), input.nextAction || "", input.notes || "", Number(Boolean(input.pushAfterCommit)), timestamp, timestamp, input.lastWorkedAt || timestamp, DEVICE_NAME);
     addProjectActivity(id, "created", "Project added");
     return getProject(id);
   }
   function updateProject(id, input = {}) {
     const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(id); if (!project) throw new Error("Project not found.");
-    db.prepare("UPDATE projects SET name = ?, description = ?, status = ?, priority = ?, manual_rank = ?, local_path = ?, git_root = ?, github_url = ?, primary_language = ?, tags_json = ?, next_action = ?, notes = ?, push_after_commit = ?, updated_at = ?, last_worked_at = ? WHERE id = ?").run(input.name ?? project.name, input.description ?? project.description, input.status ?? project.status, input.priority ?? project.priority, input.manualRank ?? project.manual_rank, input.localPath === undefined ? project.local_path : input.localPath || null, input.gitRoot === undefined ? project.git_root : input.gitRoot || null, input.githubUrl === undefined ? project.github_url : input.githubUrl || null, input.primaryLanguage ?? project.primary_language, JSON.stringify(input.tags === undefined ? JSON.parse(project.tags_json || "[]") : cleanJsonList(input.tags)), input.nextAction ?? project.next_action, input.notes ?? project.notes, input.pushAfterCommit === undefined ? project.push_after_commit : Number(Boolean(input.pushAfterCommit)), now(), input.lastWorkedAt ?? project.last_worked_at, id);
+    db.prepare("UPDATE projects SET name = ?, description = ?, status = ?, priority = ?, manual_rank = ?, local_path = ?, git_root = ?, github_url = ?, primary_language = ?, tags_json = ?, next_action = ?, notes = ?, push_after_commit = ?, updated_at = ?, last_worked_at = ?, last_device = ? WHERE id = ?").run(input.name ?? project.name, input.description ?? project.description, input.status ?? project.status, input.priority ?? project.priority, input.manualRank ?? project.manual_rank, input.localPath === undefined ? project.local_path : input.localPath || null, input.gitRoot === undefined ? project.git_root : input.gitRoot || null, input.githubUrl === undefined ? project.github_url : input.githubUrl || null, input.primaryLanguage ?? project.primary_language, JSON.stringify(input.tags === undefined ? JSON.parse(project.tags_json || "[]") : cleanJsonList(input.tags)), input.nextAction ?? project.next_action, input.notes ?? project.notes, input.pushAfterCommit === undefined ? project.push_after_commit : Number(Boolean(input.pushAfterCommit)), now(), input.lastWorkedAt ?? project.last_worked_at, DEVICE_NAME, id);
     addProjectActivity(id, "updated", "Project details updated");
     return getProject(id);
   }
@@ -262,6 +271,7 @@ function createStorage(userDataPath) {
     const id = randomUUID(); const timestamp = now();
     const order = db.prepare("SELECT COALESCE(MAX(manual_order), -1) + 1 AS value FROM project_tasks WHERE project_id = ? AND status = ?").get(projectId, input.status || "todo").value;
     db.prepare("INSERT INTO project_tasks (id, project_id, title, description, status, priority, manual_order, due_date, tags_json, related, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, projectId, String(input.title || "").trim(), input.description || "", input.status || "todo", input.priority || "medium", order, input.dueDate || null, JSON.stringify(cleanJsonList(input.tags)), input.related || "", timestamp, timestamp);
+    touchProject(projectId);
     addProjectActivity(projectId, "task", "Task added", String(input.title || "").trim());
     return getProject(projectId);
   }
@@ -269,19 +279,33 @@ function createStorage(userDataPath) {
     const task = db.prepare("SELECT * FROM project_tasks WHERE id = ?").get(id); if (!task) throw new Error("Task not found.");
     const status = input.status ?? task.status; const timestamp = now();
     db.prepare("UPDATE project_tasks SET title = ?, description = ?, status = ?, priority = ?, manual_order = ?, due_date = ?, tags_json = ?, related = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(input.title ?? task.title, input.description ?? task.description, status, input.priority ?? task.priority, input.manualOrder ?? task.manual_order, input.dueDate === undefined ? task.due_date : input.dueDate || null, JSON.stringify(input.tags === undefined ? JSON.parse(task.tags_json || "[]") : cleanJsonList(input.tags)), input.related ?? task.related, status === "done" ? task.completed_at || timestamp : null, timestamp, id);
+    touchProject(task.project_id);
     addProjectActivity(task.project_id, "task", status === "done" ? "Task completed" : "Task updated", input.title ?? task.title);
     return getProject(task.project_id);
   }
-  function removeProjectTask(id) { const task = db.prepare("SELECT project_id, title FROM project_tasks WHERE id = ?").get(id); if (!task) throw new Error("Task not found."); db.prepare("DELETE FROM project_tasks WHERE id = ?").run(id); addProjectActivity(task.project_id, "task", "Task deleted", task.title); return getProject(task.project_id); }
+  function removeProjectTask(id) { const task = db.prepare("SELECT project_id, title FROM project_tasks WHERE id = ?").get(id); if (!task) throw new Error("Task not found."); db.prepare("DELETE FROM project_tasks WHERE id = ?").run(id); touchProject(task.project_id); addProjectActivity(task.project_id, "task", "Task deleted", task.title); return getProject(task.project_id); }
   function setProjectAssignments(projectId, input = {}) {
     if (!db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId)) throw new Error("Project not found.");
     db.transaction(() => {
       if (input.skillIds) { db.prepare("DELETE FROM project_skills WHERE project_id = ?").run(projectId); const insert = db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) VALUES (?, ?)"); cleanJsonList(input.skillIds, 200).forEach((id) => insert.run(projectId, id)); }
       if (input.slashCommandIds) { db.prepare("DELETE FROM project_slash_commands WHERE project_id = ?").run(projectId); const insert = db.prepare("INSERT OR IGNORE INTO project_slash_commands (project_id, slash_command_id) VALUES (?, ?)"); cleanJsonList(input.slashCommandIds, 200).forEach((id) => insert.run(projectId, id)); }
     })();
+    touchProject(projectId, false);
     addProjectActivity(projectId, "assignment", "Skills and commands updated");
     return getProject(projectId);
   }
+  function createProjectCanvasItem(projectId, input = {}) {
+    if (!db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId)) throw new Error("Project not found.");
+    const id = randomUUID(); const timestamp = now(); const count = db.prepare("SELECT COUNT(*) AS value FROM project_canvas_items WHERE project_id = ?").get(projectId).value;
+    db.prepare("INSERT INTO project_canvas_items (id, project_id, title, body, color, x, y, width, height, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, projectId, String(input.title || "New card").slice(0, 160), String(input.body || "").slice(0, 10_000), input.color || "yellow", input.x ?? 24 + (count % 3) * 244, input.y ?? 24 + Math.floor(count / 3) * 174, input.width ?? 220, input.height ?? 150, timestamp, timestamp);
+    touchProject(projectId); addProjectActivity(projectId, "canvas", "Canvas card added", String(input.title || "New card").slice(0, 160)); return getProject(projectId);
+  }
+  function updateProjectCanvasItem(id, input = {}) {
+    const item = db.prepare("SELECT * FROM project_canvas_items WHERE id = ?").get(id); if (!item) throw new Error("Canvas card not found.");
+    db.prepare("UPDATE project_canvas_items SET title = ?, body = ?, color = ?, x = ?, y = ?, width = ?, height = ?, updated_at = ? WHERE id = ?").run(input.title ?? item.title, input.body ?? item.body, input.color ?? item.color, input.x ?? item.x, input.y ?? item.y, input.width ?? item.width, input.height ?? item.height, now(), id);
+    touchProject(item.project_id); return getProject(item.project_id);
+  }
+  function removeProjectCanvasItem(id) { const item = db.prepare("SELECT project_id FROM project_canvas_items WHERE id = ?").get(id); if (!item) throw new Error("Canvas card not found."); db.prepare("DELETE FROM project_canvas_items WHERE id = ?").run(id); touchProject(item.project_id); return getProject(item.project_id); }
   function getDailyTask(id) {
     const task = db.prepare("SELECT * FROM daily_tasks WHERE id = ?").get(id);
     return task ? { ...task, carried: Boolean(task.carried_from_id) } : null;
@@ -395,7 +419,7 @@ function createStorage(userDataPath) {
     return { id, ...input, created_at: timestamp };
   }
   function listCompressions(noteId) { return db.prepare("SELECT * FROM compressions WHERE note_id = ? ORDER BY created_at DESC").all(noteId); }
-  function exportData() { return { version: 8, exportedAt: now(), folders: listFolders(), notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), dailyTasks: listDailyTasks(), compressions: db.prepare("SELECT * FROM compressions ORDER BY created_at DESC").all(), ...botRepo.exportBotData() }; }
+  function exportData() { return { version: 9, exportedAt: now(), folders: listFolders(), notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), dailyTasks: listDailyTasks(), compressions: db.prepare("SELECT * FROM compressions ORDER BY created_at DESC").all(), ...botRepo.exportBotData() }; }
   function importData(data) {
     if (!data || !Array.isArray(data.notes)) throw new Error("That is not a Notebook JSON backup.");
     const run = db.transaction(() => {
@@ -512,14 +536,26 @@ function createStorage(userDataPath) {
     return { notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), bots: botRepo.listBots({ includeArchived: true }), mcpServers: botRepo.listMcpServers() };
   }
 
+  function replaceData(data) {
+    if (!data || !Array.isArray(data.notes)) throw new Error("This is not a Notebook backup.");
+    const name = `notebook-backup-0000-${randomUUID().replaceAll("-", "").slice(0, 12)}.json`;
+    const destination = path.join(backupDirectory(), name);
+    const temporary = `${destination}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(data), "utf8");
+    fs.renameSync(temporary, destination);
+    try { return restoreBackup(name); }
+    finally { fs.rmSync(destination, { force: true }); }
+  }
+
   function importProject(project, ignore = true) {
     const verb = ignore ? "INSERT OR IGNORE" : "INSERT"; const projectId = project.id || randomUUID();
-    db.prepare(`${verb} INTO projects (id, name, description, status, priority, manual_rank, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).run(projectId, project.name || "Untitled project", project.description || "", project.status || "active", project.priority || "none", project.manual_rank ?? project.manualRank ?? 0, project.local_path || project.localPath || null, project.git_root || project.gitRoot || null, project.github_url || project.githubUrl || null, project.primary_language || project.primaryLanguage || "", JSON.stringify(cleanJsonList(project.tags)), project.next_action || project.nextAction || "", project.notes || "", Number(Boolean(project.push_after_commit ?? project.pushAfterCommit)), project.created_at || now(), project.updated_at || now(), project.last_worked_at || project.lastWorkedAt || null);
+    db.prepare(`${verb} INTO projects (id, name, description, status, priority, manual_rank, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).run(projectId, project.name || "Untitled project", project.description || "", project.status || "active", project.priority || "none", project.manual_rank ?? project.manualRank ?? 0, project.local_path || project.localPath || null, project.git_root || project.gitRoot || null, project.github_url || project.githubUrl || null, project.primary_language || project.primaryLanguage || "", JSON.stringify(cleanJsonList(project.tags)), project.next_action || project.nextAction || "", project.notes || "", Number(Boolean(project.push_after_commit ?? project.pushAfterCommit)), project.created_at || now(), project.updated_at || now(), project.last_worked_at || project.lastWorkedAt || null, project.last_device || DEVICE_NAME);
     const taskInsert = db.prepare(`${verb} INTO project_tasks (id, project_id, title, description, status, priority, manual_order, due_date, tags_json, related, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const task of project.tasks || []) taskInsert.run(task.id || randomUUID(), projectId, task.title || "Untitled task", task.description || "", task.status || "todo", task.priority || "medium", task.manual_order ?? task.manualOrder ?? 0, task.due_date || task.dueDate || null, JSON.stringify(cleanJsonList(task.tags)), task.related || "", task.completed_at || null, task.created_at || now(), task.updated_at || now());
     const skillInsert = db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) VALUES (?, ?)"); for (const id of project.skill_ids || project.skillIds || []) skillInsert.run(projectId, id);
     const commandInsert = db.prepare("INSERT OR IGNORE INTO project_slash_commands (project_id, slash_command_id) VALUES (?, ?)"); for (const id of project.slash_command_ids || project.slashCommandIds || []) commandInsert.run(projectId, id);
     const activityInsert = db.prepare("INSERT OR IGNORE INTO project_activity (id, project_id, kind, summary, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)"); for (const item of project.activity || []) activityInsert.run(item.id || randomUUID(), projectId, item.kind || "imported", item.summary || "Imported", item.detail || "", item.created_at || now());
+    const canvasInsert = db.prepare("INSERT OR IGNORE INTO project_canvas_items (id, project_id, title, body, color, x, y, width, height, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); for (const item of project.canvas_items || project.canvasItems || []) canvasInsert.run(item.id || randomUUID(), projectId, item.title || "Card", item.body || "", item.color || "yellow", item.x ?? 24, item.y ?? 24, item.width ?? 220, item.height ?? 150, item.created_at || now(), item.updated_at || now());
   }
 
   function seedSkills() {
@@ -543,7 +579,7 @@ function createStorage(userDataPath) {
   seedSkills();
   seedSlashCommands();
   migrateLegacyJson();
-  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, removeProject, createProjectTask, updateProjectTask, removeProjectTask, setProjectAssignments, addProjectActivity, dailyDashboard, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  return { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, removeProject, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
 }
 
 module.exports = { createStorage };

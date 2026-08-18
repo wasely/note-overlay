@@ -7,6 +7,14 @@ const MAX_OUTPUT = 8 * 1024 * 1024;
 const DIFF_LIMIT = 600_000;
 const queues = new Map();
 const SECRET_FILE = /(^|[\\/])(\.env(?:\..+)?|.*(?:credentials?|secrets?|tokens?|service[-_]?account).*(?:\.json|\.ya?ml)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|.*\.(?:pem|p12|pfx|key))$/i;
+const SECRET_CONTENT = [
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\b(?:ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{20,}\b/,
+  /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/,
+  /\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*["'][^"'\r\n]{10,}["']/i,
+];
+const PUBLISH_FILE_LIMIT = 10 * 1024 * 1024;
 const LANGUAGE_MARKERS = [
   ["TypeScript", [".ts", ".tsx"]], ["JavaScript", [".js", ".jsx", ".mjs", ".cjs"]], ["Python", [".py"]],
   ["Rust", [".rs"]], ["Go", [".go"]], ["C#", [".cs"]], ["Java", [".java"]], ["C++", [".cpp", ".cc", ".hpp"]],
@@ -30,6 +38,26 @@ function run(executable, args, options = {}) {
 }
 
 async function git(root, args, options = {}) { return run("git.exe", args, { ...options, cwd: root }); }
+async function githubAuthStatus() {
+  try {
+    const version = await run("gh.exe", ["--version"], { allowFailure: true, timeout: 10_000 });
+    if (version.code) return { available: false, authenticated: false, login: null };
+    const account = await run("gh.exe", ["api", "user", "--jq", ".login"], { allowFailure: true, timeout: 20_000 });
+    const login = account.code ? "" : account.stdout.trim();
+    return { available: true, authenticated: Boolean(login), login: login || null };
+  } catch {
+    return { available: false, authenticated: false, login: null };
+  }
+}
+async function githubSignIn() {
+  const current = await githubAuthStatus();
+  if (!current.available) throw new Error("GitHub CLI is not installed. Install it to sign in from Notebook.");
+  if (!current.authenticated) await run("gh.exe", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--clipboard"], { timeout: 10 * 60_000 });
+  await run("gh.exe", ["auth", "setup-git", "--hostname", "github.com"], { timeout: 30_000 });
+  const result = await githubAuthStatus();
+  if (!result.authenticated) throw new Error("GitHub sign-in was not completed.");
+  return result;
+}
 function canonical(value) {
   const resolved = path.resolve(String(value || ""));
   if (!fs.existsSync(resolved)) throw new Error("Repository folder is unavailable.");
@@ -149,8 +177,63 @@ async function commit(rootValue, input) {
     const before = await repositoryStatus(root); if (before.counts.conflicts) throw new Error("Resolve merge conflicts before committing.");
     await git(root, ["add", "--", ...files]); await git(root, ["commit", "--only", "-m", input.message.trim(), "--", ...files], { timeout: 120_000 });
     const created = await git(root, ["log", "-1", "--format=%H%x00%s"]); const [hash, message] = created.stdout.trim().split("\0");
-    if (input.push) await git(root, ["push"], { timeout: 120_000 });
+    if (input.push) await pushRoot(root, await repositoryStatus(root));
     return { hash, shortHash: hash.slice(0, 8), message, pushed: Boolean(input.push), status: await repositoryStatus(root) };
+  });
+}
+async function pushRoot(root, status) {
+  if (status.counts?.conflicts) throw new Error("Resolve merge conflicts before pushing.");
+  if (status.detached || !status.branch) throw new Error("Choose a branch before pushing a detached HEAD.");
+  if (status.upstream) await git(root, ["push"], { timeout: 120_000 });
+  else {
+    const origin = await git(root, ["remote", "get-url", "--push", "origin"], { allowFailure: true });
+    if (origin.code || !origin.stdout.trim()) throw new Error("Add an origin remote before pushing to GitHub.");
+    await git(root, ["push", "--set-upstream", "origin", status.branch], { timeout: 120_000 });
+  }
+}
+async function pushRepository(rootValue) {
+  const root = await gitRoot(rootValue); if (!root) throw new Error("This project is not a Git repository.");
+  return queue(root, async () => { const before = await repositoryStatus(root); await pushRoot(root, before); return repositoryStatus(root); });
+}
+function publishBlockers(root, files) {
+  const blockers = [];
+  for (const relative of files) {
+    const file = inside(root, relative);
+    if (SECRET_FILE.test(file.relative)) { blockers.push({ file: file.relative, reason: "sensitive filename" }); continue; }
+    if (!fs.existsSync(file.target)) continue;
+    const stat = fs.lstatSync(file.target); if (stat.isSymbolicLink() || stat.isDirectory()) continue;
+    if (stat.size > PUBLISH_FILE_LIMIT) { blockers.push({ file: file.relative, reason: "file exceeds 10 MB" }); continue; }
+    const content = fs.readFileSync(file.target); if (content.includes(0)) continue;
+    if (SECRET_CONTENT.some((pattern) => pattern.test(content.toString("utf8")))) blockers.push({ file: file.relative, reason: "possible credential" });
+  }
+  return blockers;
+}
+async function publishRepository(rootValue, input = {}) {
+  const root = await gitRoot(rootValue); if (!root) throw new Error("This project is not a Git repository.");
+  const auth = await githubAuthStatus(); if (!auth.authenticated) throw new Error("Sign in to GitHub before publishing this project.");
+  return queue(root, async () => {
+    const remote = await git(root, ["remote", "get-url", "--push", "origin"], { allowFailure: true });
+    if (remote.code || !githubUrl(remote.stdout)) throw new Error("Connect an origin GitHub repository before publishing.");
+    await git(root, ["fetch", "origin"], { timeout: 120_000 });
+    let status = await repositoryStatus(root);
+    if (status.counts?.conflicts) throw new Error("Resolve merge conflicts before publishing.");
+    if (status.detached || !status.branch) throw new Error("Choose a branch before publishing a detached HEAD.");
+    if (status.behind) throw new Error(`GitHub has ${status.behind} newer commit${status.behind === 1 ? "" : "s"}. Review and pull them before publishing.`);
+    const files = [...new Set(status.files.map((item) => item.path))];
+    const blockers = publishBlockers(root, files);
+    if (blockers.length) throw new Error(`Safety check blocked publishing: ${blockers.map((item) => `${item.file} (${item.reason})`).join(", ")}`);
+    let commitResult = null;
+    if (files.length) {
+      await git(root, ["add", "--", ...files]);
+      const message = `Update ${String(input.projectName || path.basename(root)).replace(/[\r\n]+/g, " ").trim()}`.slice(0, 120);
+      await git(root, ["commit", "--only", "-m", message, "--", ...files], { timeout: 120_000 });
+      const created = await git(root, ["log", "-1", "--format=%H%x00%s"]); const [hash, committedMessage] = created.stdout.trim().split("\0");
+      commitResult = { hash, shortHash: hash.slice(0, 8), message: committedMessage };
+      status = await repositoryStatus(root);
+    }
+    const shouldPush = Boolean(status.ahead || commitResult);
+    if (shouldPush) { await pushRoot(root, status); status = await repositoryStatus(root); }
+    return { pushed: shouldPush, alreadyUpToDate: !shouldPush, commit: commitResult, files, checks: ["GitHub authentication", "GitHub origin", "branch state", "remote freshness", "merge conflicts", "sensitive filenames", "credential patterns", "large files"], status };
   });
 }
 async function fetchRepository(rootValue) { const root = await gitRoot(rootValue); if (!root) throw new Error("This project is not a Git repository."); return queue(root, async () => { await git(root, ["fetch"], { timeout: 120_000 }); return repositoryStatus(root); }); }
@@ -166,4 +249,4 @@ function writeAgents(rootValue, input) {
 }
 function readReadme(rootValue) { const root = canonical(rootValue); for (const name of ["README.md", "README.MD", "readme.md"]) { const file = path.join(root, name); if (fs.existsSync(file)) return { path: file, content: fs.readFileSync(file, "utf8").slice(0, 250_000) }; } return null; }
 
-module.exports = { SECRET_FILE, run, gitRoot, githubUrl, inspectFolder, discoverRepositories, repositoryStatus, diff, mutateFiles, commit, fetchRepository, readAgents, writeAgents, readReadme };
+module.exports = { SECRET_FILE, run, gitRoot, githubUrl, githubAuthStatus, githubSignIn, inspectFolder, discoverRepositories, repositoryStatus, diff, mutateFiles, commit, pushRepository, publishBlockers, publishRepository, fetchRepository, readAgents, writeAgents, readReadme };

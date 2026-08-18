@@ -1,30 +1,36 @@
 # Notebook
 
-A tiny, local-first Windows overlay notebook. Press `Ctrl+Alt+Shift+N`, type, and carry on.
+A small, local-first Windows notebook. Press `Ctrl+Alt+Shift+N` anywhere, write, and carry on.
 
-![Notebook overlay](./screenshots/overview.png)
+![Notebook](./screenshots/shot-wide-note-preview.png)
 
 ## What it does
 
-- Opens compact and centered on the monitor under your cursor, always on top.
-- Works over regular desktop apps and borderless/windowed games.
-- Organizes Markdown notes into separate notebooks.
-- Standard Markdown to-dos (`- [ ]`) with a clickable checklist view.
-- Dedicated **Daily** loop: today’s work, completed wins, tomorrow planning, automatic carry-forward, and a seven-day completion history.
-- Copies full Markdown, or drags a clean `Title.md` reference into terminals and other apps while the real file stays in local app data.
-- Ranked **Skill Stack** landing page: active workflow first, archived references grouped by reason, plus searchable autosaving skill instructions.
-- Separate **Slash Commands** library with autosaving invocation and documentation pages.
-- Local **Bots** operations registry for Discord/Telegram setup, app-open health checks, cron evidence, job history, commands, runbooks, MCP/Skill links, and archive/restore. See [Bot operations](docs/bot-operations.md).
-- Full-window Gmail view from the **Mail** tab or `Ctrl+Alt+Shift+M`, with an external-browser fallback when Google blocks embedded sign-in.
-- Full-window Notion view from the **Notion** tab or `Ctrl+Alt+Shift+O`, with its own persistent sign-in session and external-browser fallback.
-- Rotating local backups; export/import JSON and Markdown from the `···` menu.
-- Optional local LLMLingua compressor.
+- Opens compact and centred on the monitor under your cursor, always on top, over regular apps and borderless/windowed games.
+- **Notes** — Markdown notes organised into notebooks, with autosave, pinning, word/task counts, and a rendered preview whose checkboxes are clickable and write straight back into the Markdown.
+- **Today** — one screen for the day: quick capture with priority and owner, a focus list capped at three, a delegated queue, tomorrow, and a record of what was finished. Unfinished work carries forward automatically.
+- **Skills** and **Commands** — two small libraries for reusable prompts, workflows, and slash-command invocations.
+- Search everything (`Ctrl+K`) across notes, tasks, skills, and commands.
+- Copy full Markdown, or drag a clean `Title.md` file into a terminal or editor while the real file stays in local app data.
+- Light, dark, or system theme.
+- Rotating local backups, JSON/Markdown export, and an optional private GitHub repository backup.
 
-No Notebook account, cloud sync, telemetry, or auto-update service. Notes never leave your computer. Gmail and Notion connect directly to their services only when you open those views.
+No account, telemetry, cloud service, or auto-update feed. Notes never leave your computer unless you turn on the GitHub backup yourself.
+
+## Keyboard
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+Alt+Shift+N` | Show or hide Notebook anywhere in Windows |
+| `Ctrl+K` | Search everything |
+| `Ctrl+N` | New note, skill, or command |
+| `Ctrl+E` | Switch between writing and Markdown preview |
+| `Ctrl+1`–`4` | Today, Notes, Skills, Commands |
+| `Esc` | Clear search, close a panel, or hide the window |
 
 ## Install
 
-Prebuilt Windows installers are distributed as manual downloads. To build one:
+Prebuilt Windows installers are manual downloads. To build one:
 
 ```powershell
 npm install
@@ -32,7 +38,7 @@ npm run pack:dir       # portable unpacked build
 npm run pack:release   # signed NSIS installer (requires signing credentials)
 ```
 
-> Exclusive-fullscreen games can block normal Windows overlays. Use borderless/windowed mode for reliable use. Unsigned builds may trigger a Windows SmartScreen prompt.
+> Exclusive-fullscreen games can block normal Windows overlays; use borderless or windowed mode. Unsigned builds may trigger a SmartScreen prompt.
 
 ## Develop
 
@@ -40,17 +46,17 @@ Requires Node.js 20+ and the .NET Framework 4.x C# compiler (for the drag helper
 
 ```powershell
 npm install
-npm run dev            # build + launch the app
-npm test               # storage, bounds, hotkey, startup, drag, and app tests
+npm run dev            # build and launch the app
+npm test               # storage, bounds, hotkey, startup, Markdown, drag, Electron, and UI tests
 npm run preview        # browser UI preview at 127.0.0.1:5181
-npm run shot           # render screenshots
+npm run shot           # render screenshots into screenshots/
 ```
 
-See [CLAUDE.md](CLAUDE.md) for architecture, safety, and release instructions.
+See [CLAUDE.md](CLAUDE.md) for architecture, safety rules, and release steps.
 
 ## Data
 
-Your notes live at `%APPDATA%\note-overlay` — a `hushnote.sqlite` database plus rotating JSON backups in `backups`. Gmail and Notion cookies stay in separate persistent Electron sessions under the same app-data folder so you remain signed in.
+Everything lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus rotating JSON backups in `backups`. Notebook keeps one automatic backup per day and holds the newest 21.
 
 ## License
 

@@ -12,7 +12,7 @@ fs.copyFileSync(databasePath, path.join(backupDir, `hushnote-before-settings-res
 
 const db = new Database(databasePath);
 db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-  .run("app", JSON.stringify({ hotkey: "Control+Alt+Shift+N", startAtLogin: true, compressorDir: "C:\\Code\\llmlingua-local" }));
+  .run("app", JSON.stringify({ hotkey: "Control+Alt+Shift+N", startAtLogin: true, theme: "system" }));
 db.close();
 console.log("Notebook settings reset. Notes were preserved and backed up.");
 process.exit(0);

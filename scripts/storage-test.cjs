@@ -20,6 +20,8 @@ try {
   assert.ok(store.listSlashCommands().some((item) => item.command === "/prompts:gitpush"));
   assert.ok(store.listSlashCommands().some((item) => item.name === "Markdown, skills, and slash commands"));
   store.setTags(note.id, ["work"]);
+  store.updateNote(note.id, { title: "Before backup", body: "This stays safe.", folderId: "inbox", pinned: true });
+  assert.equal(store.listNotes()[0].pinned, true, "pinned notes sort first");
   store.createDailyTask({ text: "Carry this forward", bucket: "today", priority: 3, owner: "me" }, "2026-08-13");
   store.createDailyTask({ text: "Planned last night", bucket: "tomorrow", priority: 1, owner: "agent" }, "2026-08-13");
   let daily = store.dailyDashboard("2026-08-14");
@@ -53,7 +55,7 @@ try {
   assert.equal(daily.tomorrow[0].text, "Set up Friday");
   assert.equal(daily.history[0].completed, 1);
   assert.equal(daily.carriedCount, 1);
-  assert.equal(store.exportData().version, 8);
+  assert.equal(store.exportData().version, 9);
   const notebook = store.createFolder("To-do");
   const taskNote = store.createNote({ title: "Launch", body: "- [ ] Ship it", folderId: notebook.id });
   assert.equal(store.listFolders().find((folder) => folder.id === notebook.id).note_count, 1);

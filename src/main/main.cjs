@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, Tray, Menu, globalShortcut, ipcMain, dialog, nativeImage, screen, clipboard, powerMonitor, shell } = require("electron");
+const { app, BrowserWindow, WebContentsView, Tray, Menu, globalShortcut, ipcMain, dialog, nativeImage, screen, clipboard, powerMonitor, shell, safeStorage } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -6,17 +6,25 @@ const { z } = require("zod");
 const { createStorage } = require("./storage.cjs");
 const { createBotMonitorService } = require("./bot-monitor.cjs");
 const { botInput, mcpServerInput } = require("./bot-schemas.cjs");
+const { createBotFactory } = require("./bot-factory.cjs");
+const { createBotProcessService } = require("./bot-process.cjs");
+const { createBotProvisioning } = require("./bot-provisioning.cjs");
+const { createBotSecretStore } = require("./bot-secrets.cjs");
+const { createGithubSync } = require("./github-sync.cjs");
 const projectsService = require("./projects.cjs");
-const { validBounds, boundsForDisplay } = require("./window-bounds.cjs");
-const { createHotkeyManager } = require("./hotkey-manager.cjs");
+const { syncWorkshop } = require("./workshop.cjs");
+const { validBounds, boundsForDisplay, boundsMatch } = require("./window-bounds.cjs");
+const { createHotkeyManager, shouldHideOverlay } = require("./hotkey-manager.cjs");
 const { DEFAULT_MAIL_URL, createMailViewController } = require("./mail-view.cjs");
 const { DEFAULT_NOTION_URL, createNotionViewController } = require("./notion-view.cjs");
+const { DEFAULT_TWITTER_URL, createTwitterViewController } = require("./twitter-view.cjs");
 const { syncStartAtLogin } = require("./startup.cjs");
 
 const DEFAULT_SETTINGS = { hotkey: "Control+Alt+Shift+N", startAtLogin: true, compressorDir: "C:\\Code\\llmlingua-local" };
 const FALLBACK_HOTKEYS = ["Control+Alt+N"];
 const MAIL_HOTKEY = "Control+Alt+Shift+M";
 const NOTION_HOTKEY = "Control+Alt+Shift+O";
+const TWITTER_HOTKEY = "Control+Alt+Shift+X";
 const RETIRED_HOTKEYS = new Set(["Control+Shift+Space", "Control+Alt+N", "F8"]);
 const COMPRESSOR_URL = process.env.NOTEBOOK_COMPRESSOR_URL || "http://127.0.0.1:8787";
 const noteInput = z.object({ title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional(), folderId: z.string().max(120).optional(), pinned: z.boolean().optional(), archived: z.boolean().optional() });
@@ -31,11 +39,20 @@ const projectPatch = projectInput.partial().refine((input) => Object.keys(input)
 const projectTaskInput = z.object({ title: z.string().trim().min(1).max(500), description: z.string().max(10_000).optional(), status: z.enum(["todo", "in_progress", "blocked", "done", "archived"]).optional(), priority: projectPriority.optional(), manualOrder: z.number().int().min(0).max(100_000).optional(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), tags: z.array(z.string().max(80)).max(24).optional(), related: z.string().max(2_000).optional() });
 const projectTaskPatch = projectTaskInput.partial().refine((input) => Object.keys(input).length > 0);
 const projectAssignments = z.object({ skillIds: z.array(z.string().max(120)).max(200).optional(), slashCommandIds: z.array(z.string().max(120)).max(200).optional() });
+const projectCanvasInput = z.object({ title: z.string().max(160).optional(), body: z.string().max(10_000).optional(), color: z.enum(["yellow", "blue", "green", "pink", "gray"]).optional(), x: z.number().int().min(0).max(5_000).optional(), y: z.number().int().min(0).max(5_000).optional(), width: z.number().int().min(140).max(800).optional(), height: z.number().int().min(100).max(800).optional() });
+const projectCanvasPatch = projectCanvasInput.refine((input) => Object.keys(input).length > 0);
 const repositoryFilesInput = z.object({ root: z.string().max(1_000), files: z.array(z.string().max(2_000)).min(1).max(500) });
 const commitInput = repositoryFilesInput.extend({ message: z.string().trim().min(1).max(5_000), push: z.boolean().optional(), acknowledgeSensitive: z.boolean().optional() });
+const botFactoryInput = z.object({
+  name: z.string().trim().min(1).max(120), description: z.string().max(2_000).optional(), platforms: z.array(z.enum(["discord", "telegram"])).min(1).max(2), runtime: z.enum(["node", "python"]),
+  parentPath: z.string().min(3).max(1_000), folderName: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_. -]{0,79}$/).optional(), executionMode: z.enum(["continuous", "scheduled", "webhook", "manual"]).default("continuous"), environment: z.string().trim().min(1).max(120).default("development"), tags: z.array(z.string().max(80)).max(24).optional(), avatarUrl: z.union([z.string().url().max(2_000), z.literal("")]).optional(),
+  discordApplicationId: z.union([z.string().regex(/^\d{5,30}$/), z.literal("")]).optional(), discordPermissions: z.string().regex(/^\d{1,24}$/).default("0"), discordSecretRef: z.string().regex(/^[A-Z_][A-Z0-9_]{1,127}$/).default("DISCORD_BOT_TOKEN"), telegramUsername: z.union([z.string().regex(/^[A-Za-z0-9_]{5,32}$/), z.literal("")]).optional(), telegramSecretRef: z.string().regex(/^[A-Z_][A-Z0-9_]{1,127}$/).default("TELEGRAM_BOT_TOKEN"),
+  publishToGithub: z.boolean().default(false), githubRepository: z.string().max(140).default(""), githubVisibility: z.enum(["private", "public"]).default("private"), commitMessage: z.string().trim().min(1).max(200).default("Create bot project"),
+}).superRefine((input, context) => { if (input.publishToGithub && !/^(?:[A-Za-z0-9_.-]+\/)?[A-Za-z0-9_.-]+$/.test(input.githubRepository)) context.addIssue({ code: "custom", path: ["githubRepository"], message: "GitHub repository is required." }); });
+const cloudInput = z.object({ repository: z.string().trim().min(1).max(140), visibility: z.enum(["private", "public"]).optional(), autoUpload: z.boolean().optional() });
 const dragNoteInput = z.object({ id: z.string().max(120).optional(), title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional() });
 const compressionInput = z.object({ noteId: z.string().nullable().optional(), sourceText: z.string().min(1).max(2_000_000), compressedText: z.string().min(1).max(2_000_000), preset: z.string().max(40), rate: z.number().min(0.1).max(1), originTokens: z.number().optional(), compressedTokens: z.number().optional(), ratio: z.string().optional() });
-let overlay; let tray; let store; let botMonitor; let boundsTimer; let hideTimer; let hotkeys; let mailHotkeys; let notionHotkeys; let mailView; let notionView; let quitFlushed = false;
+let overlay; let tray; let store; let botMonitor; let botFactory; let botProcesses; let botSecrets; let botProvisioning; let githubSync; let boundsTimer; let hideTimer; let focusTimer; let placementTimer; let hotkeys; let mailHotkeys; let notionHotkeys; let twitterHotkeys; let mailView; let notionView; let twitterView; let quitFlushed = false;
 const isPrimaryInstance = app.requestSingleInstanceLock();
 const openedInBackground = process.argv.includes("--background");
 
@@ -59,27 +76,52 @@ function restoreNormalWindowState() {
   if (overlay.isMinimized()) { overlay.restore(); restored = true; }
   return restored;
 }
+// Re-applies bounds until Windows reports them. Windows converts a setBounds call with the scale
+// factor of the display the window is still on, so moving between monitors with different DPI
+// would otherwise leave the window at double or half its intended size.
+function applyBounds(target, attempts = 5) {
+  if (!overlay || overlay.isDestroyed()) return;
+  overlay.setBounds(target);
+  if (attempts <= 0) return;
+  clearTimeout(placementTimer);
+  placementTimer = setTimeout(() => {
+    if (!overlay || overlay.isDestroyed()) return;
+    if (!boundsMatch(overlay.getBounds(), target)) applyBounds(target, attempts - 1);
+    else { mailView?.resize(); notionView?.resize(); twitterView?.resize(); }
+  }, 45);
+  placementTimer.unref?.();
+}
 function moveOverlayToCursorDisplay() {
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const saved = savedBoundsByDisplay()[display.id];
-  overlay.setBounds(boundsForDisplay({ saved, fallback: savedWindowBounds() || overlay.getBounds(), workArea: display.workArea }));
+  applyBounds(boundsForDisplay({ saved, fallback: savedWindowBounds() || overlay.getBounds(), workArea: display.workArea }));
 }
 function showOverlay(newNote = false) {
   if (!overlay || overlay.isDestroyed()) { createOverlay(true, newNote); return; }
-  clearTimeout(hideTimer);
+  clearTimeout(hideTimer); clearTimeout(focusTimer);
   restoreNormalWindowState();
   moveOverlayToCursorDisplay();
-  overlay.show(); overlay.focus(); overlay.webContents.send("overlay:focus-editor"); overlay.webContents.send("overlay:shown");
+  const reclaimForeground = overlay.isVisible() && !overlay.isFocused();
+  const focus = () => {
+    if (!overlay || overlay.isDestroyed() || !overlay.isVisible()) return;
+    overlay.setAlwaysOnTop(true, "screen-saver");
+    if (process.platform === "win32" && !overlay.isFocused()) { overlay.setFocusable(false); overlay.setFocusable(true); }
+    overlay.moveTop(); overlay.focus();
+  };
+  if (reclaimForeground) overlay.hide();
+  overlay.show(); focus();
+  focusTimer = setTimeout(() => { if (!overlay?.isFocused()) focus(); }, 180); focusTimer.unref?.();
+  overlay.webContents.send("overlay:focus-editor"); overlay.webContents.send("overlay:shown");
   if (newNote) overlay.webContents.send("overlay:new-inbox");
 }
 function hideOverlay() {
   if (!overlay || overlay.isDestroyed()) return;
   overlay.webContents.send("overlay:flush-editor");
   overlay.webContents.send("overlay:hiding");
-  clearTimeout(hideTimer);
+  clearTimeout(hideTimer); clearTimeout(focusTimer);
   hideTimer = setTimeout(() => { overlay?.hide(); overlay?.blur(); }, 130);
 }
-function toggleOverlay() { if (overlay?.isVisible()) hideOverlay(); else showOverlay(false); }
+function toggleOverlay() { if (shouldHideOverlay(overlay)) hideOverlay(); else showOverlay(false); }
 function toggleMailOverlay() {
   if (overlay?.isVisible() && mailView?.isActive()) { hideOverlay(); return; }
   showOverlay(false);
@@ -94,6 +136,13 @@ function toggleNotionOverlay() {
   if (overlay?.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", openNotion);
   else openNotion();
 }
+function toggleTwitterOverlay() {
+  if (overlay?.isVisible() && twitterView?.isActive()) { hideOverlay(); return; }
+  showOverlay(false);
+  const openTwitter = () => overlay?.webContents.send("overlay:open-twitter");
+  if (overlay?.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", openTwitter);
+  else openTwitter();
+}
 function readableHotkey(hotkey) { return hotkey ? hotkey.replaceAll("Control", "Ctrl").replaceAll("+", " + ") : "Unavailable"; }
 function refreshTrayMenu() {
   if (!tray) return;
@@ -101,11 +150,13 @@ function refreshTrayMenu() {
     { label: `Notebook: ${readableHotkey(hotkeys?.getActive())}`, enabled: false },
     { label: `Mail: ${readableHotkey(mailHotkeys?.getActive())}`, enabled: false },
     { label: `Notion: ${readableHotkey(notionHotkeys?.getActive())}`, enabled: false },
+    { label: `Twitter: ${readableHotkey(twitterHotkeys?.getActive())}`, enabled: false },
     { type: "separator" },
     { label: "New Inbox note", click: () => showOverlay(true) },
     { label: "Show Notebook", click: () => showOverlay(false) },
     { label: "Open Gmail", click: toggleMailOverlay },
     { label: "Open Notion", click: toggleNotionOverlay },
+    { label: "Open Twitter", click: toggleTwitterOverlay },
     { type: "separator" },
     { label: "Quit", click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -200,9 +251,9 @@ function createOverlay(showWhenReady = !openedInBackground, newNoteWhenReady = f
   overlay.webContents.on("render-process-gone", (_event, details) => console.error(`Notebook renderer ended: ${details.reason}`));
   overlay.loadFile(path.join(__dirname, "../../dist/renderer/index.html"));
   overlay.once("ready-to-show", () => { if (showWhenReady) showOverlay(newNoteWhenReady); });
-  overlay.on("resize", () => { scheduleBoundsSave(); mailView?.resize(); notionView?.resize(); }); overlay.on("move", scheduleBoundsSave);
+  overlay.on("resize", () => { scheduleBoundsSave(); mailView?.resize(); notionView?.resize(); twitterView?.resize(); }); overlay.on("move", scheduleBoundsSave);
   overlay.on("close", (event) => { if (!app.isQuitting) { event.preventDefault(); hideOverlay(); } });
-  overlay.on("closed", () => { mailView?.destroy(); notionView?.destroy(); mailView = null; notionView = null; overlay = null; });
+  overlay.on("closed", () => { mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); mailView = null; notionView = null; twitterView = null; overlay = null; });
 }
 function repairStartAtLogin() {
   try {
@@ -232,9 +283,20 @@ app.whenReady().then(() => {
   });
   store = createStorage(app.getPath("userData"));
   botMonitor = createBotMonitorService({ store, emit: (update) => overlay?.webContents.send("bots:status", update) });
+  botFactory = createBotFactory({ run: projectsService.run });
+  botSecrets = createBotSecretStore({ userDataPath: app.getPath("userData"), safeStorage });
+  botProcesses = createBotProcessService({ run: projectsService.run, resolveSecret: (reference) => { try { return botSecrets.get(reference); } catch { return undefined; } } });
+  botProvisioning = createBotProvisioning({ env: process.env, fetchImpl: fetch, openExternal: (url) => shell.openExternal(url), getSetting: (key, fallback) => store.getSetting(key, fallback), setSetting: (key, value) => store.setSetting(key, value), secrets: botSecrets });
+  githubSync = createGithubSync({ userDataPath: app.getPath("userData"), store, run: projectsService.run, authStatus: projectsService.githubAuthStatus });
   try { store.ensureDailyBackup(); } catch (error) { console.error(`Notebook automatic backup failed: ${error.message}`); }
   const backupInterval = setInterval(() => { try { store.ensureDailyBackup(); } catch (error) { console.error(`Notebook automatic backup failed: ${error.message}`); } }, 6 * 60 * 60 * 1000);
   backupInterval.unref();
+  let cloudAutoUploading = false;
+  const cloudInterval = setInterval(async () => {
+    const config = store.getSetting("githubSync", {}); if (!config.autoUpload || !config.repository || cloudAutoUploading) return;
+    cloudAutoUploading = true; try { await githubSync.push(config); } catch (error) { console.error(`Notebook GitHub auto-upload failed: ${error.message}`); } finally { cloudAutoUploading = false; }
+  }, 5 * 60 * 1000);
+  cloudInterval.unref();
   const savedSettings = store.getSetting("app", {});
   if (!savedSettings.hotkey || RETIRED_HOTKEYS.has(savedSettings.hotkey)) store.setSetting("app", { ...savedSettings, hotkey: DEFAULT_SETTINGS.hotkey });
   createOverlay();
@@ -253,6 +315,14 @@ app.whenReady().then(() => {
     devTools: !app.isPackaged,
     notionUrl: !app.isPackaged && process.env.NOTEBOOK_NOTION_URL ? process.env.NOTEBOOK_NOTION_URL : DEFAULT_NOTION_URL,
     emitStatus: (status) => overlay?.webContents.send("notion:status", status),
+  });
+  twitterView = createTwitterViewController({
+    WebContentsView,
+    parentWindow: overlay,
+    shell,
+    devTools: !app.isPackaged,
+    twitterUrl: !app.isPackaged && process.env.NOTEBOOK_TWITTER_URL ? process.env.NOTEBOOK_TWITTER_URL : DEFAULT_TWITTER_URL,
+    emitStatus: (status) => overlay?.webContents.send("twitter:status", status),
   });
   hotkeys = createHotkeyManager({
     globalShortcut,
@@ -283,9 +353,18 @@ app.whenReady().then(() => {
     },
   });
   notionHotkeys.start(NOTION_HOTKEY);
+  twitterHotkeys = createHotkeyManager({
+    globalShortcut,
+    onTriggered: toggleTwitterOverlay,
+    onChange: (active) => {
+      refreshTrayMenu();
+      if (!active) console.error(`Notebook Twitter shortcut ${TWITTER_HOTKEY} is unavailable.`);
+    },
+  });
+  twitterHotkeys.start(TWITTER_HOTKEY);
   createTray();
-  const hotkeyRepairInterval = setInterval(() => { hotkeys.repair(); mailHotkeys.repair(); notionHotkeys.repair(); }, 15_000); hotkeyRepairInterval.unref();
-  const repairAfterWake = () => setTimeout(() => { hotkeys?.repair(); mailHotkeys?.repair(); notionHotkeys?.repair(); botMonitor?.start(); botMonitor?.checkAllBots().catch(() => {}); }, 1_000);
+  const hotkeyRepairInterval = setInterval(() => { hotkeys.repair(); mailHotkeys.repair(); notionHotkeys.repair(); twitterHotkeys.repair(); }, 15_000); hotkeyRepairInterval.unref();
+  const repairAfterWake = () => setTimeout(() => { hotkeys?.repair(); mailHotkeys?.repair(); notionHotkeys?.repair(); twitterHotkeys?.repair(); botMonitor?.start(); botMonitor?.checkAllBots().catch(() => {}); }, 1_000);
   powerMonitor.on("resume", repairAfterWake); powerMonitor.on("unlock-screen", repairAfterWake);
   botMonitor.start();
   repairStartAtLogin();
@@ -324,11 +403,54 @@ app.whenReady().then(() => {
   ipcMain.handle("bots:upcoming", (_event, limit) => store.getUpcomingJobs(new Date(), z.number().int().min(1).max(100).optional().parse(limit)));
   ipcMain.handle("bots:open-setup", (_event, botId, connectionId, action) => openBotSetup(botId, connectionId, action));
   ipcMain.handle("bots:open-resource", (_event, botId, kind) => openBotResource(botId, kind));
+  ipcMain.handle("bots:factory-choose-parent", async () => {
+    const result = await dialog.showOpenDialog({ title: "Choose where to create the bot project", defaultPath: "C:\\code", properties: ["openDirectory", "createDirectory"] });
+    return result.canceled || !result.filePaths[0] ? { canceled: true } : { canceled: false, path: result.filePaths[0] };
+  });
+  ipcMain.handle("bots:factory-defaults", () => {
+    const preferred = "C:\\code";
+    const parentPath = fs.existsSync(preferred) && fs.statSync(preferred).isDirectory() ? fs.realpathSync.native(preferred) : app.getPath("documents");
+    return { parentPath };
+  });
+  ipcMain.handle("bots:provisioning-status", () => botProvisioning.status());
+  ipcMain.handle("bots:provisioning-begin", (_event, input) => botProvisioning.begin(z.discriminatedUnion("platform", [
+    z.object({ platform: z.literal("discord"), name: z.string().trim().min(1).max(64), permissions: z.string().regex(/^\d{1,24}$/), guildId: z.string().regex(/^\d{5,30}$/).optional() }),
+    z.object({ platform: z.literal("telegram"), name: z.string().trim().min(1).max(64), username: z.string().regex(/^[A-Za-z0-9_]{5,32}$/) }),
+  ]).parse(input)));
+  ipcMain.handle("bots:provisioning-complete-telegram", (_event, input) => botProvisioning.completeTelegram(z.object({ username: z.string().regex(/^[A-Za-z0-9_]{5,32}$/) }).parse(input)));
+  ipcMain.handle("bots:factory-open-platform", async (_event, platform) => { const value = z.enum(["discord", "telegram"]).parse(platform); await shell.openExternal(value === "discord" ? "https://discord.com/developers/applications" : "https://t.me/BotFather"); return true; });
+  ipcMain.handle("bots:factory-open-install", async (_event, input) => {
+    const data = z.discriminatedUnion("platform", [
+      z.object({ platform: z.literal("discord"), applicationId: z.string().regex(/^\d{5,30}$/), permissions: z.string().regex(/^\d{1,24}$/) }),
+      z.object({ platform: z.literal("telegram"), username: z.string().regex(/^[A-Za-z0-9_]{5,32}$/) }),
+    ]).parse(input);
+    const url = data.platform === "discord" ? `https://discord.com/oauth2/authorize?client_id=${data.applicationId}&scope=bot+applications.commands&permissions=${data.permissions}` : `https://t.me/${data.username}`;
+    await shell.openExternal(url); return true;
+  });
+  ipcMain.handle("bots:process-status", (_event, botId) => { const bot = store.getBot(z.string().max(120).parse(botId)); if (!bot) throw new Error("Bot not found."); return botProcesses.status(bot); });
+  ipcMain.handle("bots:process-start", (_event, botId) => { const bot = store.getBot(z.string().max(120).parse(botId)); if (!bot) throw new Error("Bot not found."); return botProcesses.start(bot); });
+  ipcMain.handle("bots:process-stop", (_event, botId) => { const bot = store.getBot(z.string().max(120).parse(botId)); if (!bot) throw new Error("Bot not found."); return botProcesses.stop(bot); });
+  ipcMain.handle("bots:factory-create", async (_event, input) => {
+    const data = botFactoryInput.parse(input); const built = await botFactory.scaffold(data);
+    const connections = data.platforms.map((platform) => platform === "discord"
+      ? { platform, externalBotId: data.discordApplicationId || "", avatarUrl: data.avatarUrl || "", credentialSecretRef: data.discordSecretRef, installPermissions: data.discordPermissions, credentialState: "not_configured" }
+        : { platform, username: data.telegramUsername || "", avatarUrl: data.avatarUrl || "", credentialSecretRef: data.telegramSecretRef, credentialState: "not_configured" });
+    const bot = store.createBot({ name: data.name, description: data.description || "", platforms: data.platforms, executionMode: data.executionMode, environment: data.environment, enabled: true, tags: data.tags || [], repositoryUrl: built.repositoryUrl, localProjectPath: built.projectPath, runtime: built.runtime, version: "1.0.0", logsLocation: path.join(built.projectPath, "runtime"), connections, jobs: [], commands: data.platforms.map((platform) => ({ platform, command: platform === "discord" ? "/ping" : "/ping", description: "Confirm the generated bot responds.", usage: "/ping", category: "System", enabled: true })), monitoring: { adapter: "local-status", filePath: path.join(built.projectPath, "runtime", "status.json"), intervalSeconds: 60, timeoutMilliseconds: 5000, staleAfterSeconds: 180, failuresBeforeOffline: 3, monitoringEnabled: true, httpMethod: "GET", authSecretRef: "" }, mcpServerIds: [], skillIds: [] });
+    try { store.createProject({ name: data.name, description: data.description || "Generated bot project", localPath: built.projectPath, gitRoot: built.projectPath, githubUrl: built.repositoryUrl || null, primaryLanguage: built.runtime, tags: ["bot", ...data.platforms], nextAction: "Start the bot locally and verify its first command", pushAfterCommit: Boolean(built.repositoryUrl) }); } catch (error) { console.error(`Bot project registry link failed: ${error.message}`); }
+    botMonitor.start();
+    return { bot, projectPath: built.projectPath, repositoryUrl: built.repositoryUrl };
+  });
   ipcMain.handle("slash-commands:list", () => store.listSlashCommands());
   ipcMain.handle("slash-commands:create", (_event, input) => store.createSlashCommand(slashCommandInput.partial().parse(input || {})));
   ipcMain.handle("slash-commands:update", (_event, id, input) => store.updateSlashCommand(z.string().parse(id), slashCommandInput.parse(input)));
   ipcMain.handle("slash-commands:remove", (_event, id) => store.deleteSlashCommand(z.string().parse(id)));
-  ipcMain.handle("projects:list", () => store.listProjects());
+  let workshopSyncPromise = null;
+  async function runWorkshopSync() {
+    if (!workshopSyncPromise) workshopSyncPromise = syncWorkshop(store, projectsService.inspectFolder).finally(() => { workshopSyncPromise = null; });
+    return workshopSyncPromise;
+  }
+  ipcMain.handle("projects:list", async () => { await runWorkshopSync(); return store.listProjects(); });
+  ipcMain.handle("projects:workshop-sync", async () => ({ ...(await runWorkshopSync()), projects: store.listProjects() }));
   ipcMain.handle("projects:create", (_event, input) => store.createProject(projectInput.parse(input)));
   ipcMain.handle("projects:update", (_event, id, input) => store.updateProject(z.string().max(120).parse(id), projectPatch.parse(input)));
   ipcMain.handle("projects:reorder", (_event, ids) => store.reorderProjects(z.array(z.string().max(120)).max(1_000).parse(ids)));
@@ -336,6 +458,9 @@ app.whenReady().then(() => {
   ipcMain.handle("project-tasks:create", (_event, projectId, input) => store.createProjectTask(z.string().max(120).parse(projectId), projectTaskInput.parse(input)));
   ipcMain.handle("project-tasks:update", (_event, id, input) => store.updateProjectTask(z.string().max(120).parse(id), projectTaskPatch.parse(input)));
   ipcMain.handle("project-tasks:remove", (_event, id) => store.removeProjectTask(z.string().max(120).parse(id)));
+  ipcMain.handle("project-canvas:create", (_event, projectId, input) => store.createProjectCanvasItem(z.string().max(120).parse(projectId), projectCanvasInput.parse(input || {})));
+  ipcMain.handle("project-canvas:update", (_event, id, input) => store.updateProjectCanvasItem(z.string().max(120).parse(id), projectCanvasPatch.parse(input)));
+  ipcMain.handle("project-canvas:remove", (_event, id) => store.removeProjectCanvasItem(z.string().max(120).parse(id)));
   ipcMain.handle("projects:assign", (_event, projectId, input) => store.setProjectAssignments(z.string().max(120).parse(projectId), projectAssignments.parse(input)));
   ipcMain.handle("projects:choose-folder", async () => {
     const result = await dialog.showOpenDialog({ title: "Add local project", properties: ["openDirectory"] });
@@ -353,9 +478,19 @@ app.whenReady().then(() => {
   ipcMain.handle("projects:stage", (_event, input) => { const data = repositoryFilesInput.parse(input); return projectsService.mutateFiles(data.root, "stage", data.files); });
   ipcMain.handle("projects:unstage", (_event, input) => { const data = repositoryFilesInput.parse(input); return projectsService.mutateFiles(data.root, "unstage", data.files); });
   ipcMain.handle("projects:commit", async (_event, input) => { const data = commitInput.parse(input); const result = await projectsService.commit(data.root, data); const project = store.listProjects().find((item) => item.git_root && path.resolve(item.git_root).toLowerCase() === path.resolve(data.root).toLowerCase()); if (project) { store.addProjectActivity(project.id, "commit", `Committed ${result.shortHash}`, result.message); store.updateProject(project.id, { lastWorkedAt: new Date().toISOString() }); } return result; });
+  ipcMain.handle("projects:push", async (_event, root) => { const value = z.string().max(1_000).parse(root); const result = await projectsService.pushRepository(value); const project = store.listProjects().find((item) => item.git_root && path.resolve(item.git_root).toLowerCase() === path.resolve(value).toLowerCase()); if (project) { store.addProjectActivity(project.id, "push", "Updated GitHub", `${result.branch || "Branch"} pushed to ${result.upstream || "origin"}`); store.updateProject(project.id, { lastWorkedAt: new Date().toISOString() }); } return result; });
+  ipcMain.handle("projects:publish", async (_event, input) => { const data = z.object({ root: z.string().max(1_000), projectName: z.string().max(240) }).parse(input); const result = await projectsService.publishRepository(data.root, data); const project = store.listProjects().find((item) => item.git_root && path.resolve(item.git_root).toLowerCase() === path.resolve(data.root).toLowerCase()); if (project) { store.addProjectActivity(project.id, "push", result.alreadyUpToDate ? "GitHub already current" : "Published safely to GitHub", result.commit ? `${result.commit.shortHash} · ${result.commit.message}` : `${result.status.branch || "Branch"} pushed`); store.updateProject(project.id, { lastWorkedAt: new Date().toISOString() }); } return result; });
   ipcMain.handle("projects:fetch", (_event, root) => projectsService.fetchRepository(z.string().max(1_000).parse(root)));
+  ipcMain.handle("projects:github-auth-status", () => projectsService.githubAuthStatus());
+  ipcMain.handle("projects:github-sign-in", () => projectsService.githubSignIn());
+  ipcMain.handle("github-sync:status", () => githubSync.status());
+  ipcMain.handle("github-sync:sign-in", () => projectsService.githubSignIn());
+  ipcMain.handle("github-sync:configure", (_event, input) => githubSync.configure(cloudInput.parse(input)));
+  ipcMain.handle("github-sync:push", (_event, input) => githubSync.push(cloudInput.parse(input)));
+  ipcMain.handle("github-sync:pull", (_event, input) => githubSync.pull(cloudInput.parse(input)));
+  ipcMain.handle("github-sync:open", async () => { const value = await githubSync.status(); if (!value.url) throw new Error("Configure a cloud repository first."); await shell.openExternal(value.url); return true; });
   ipcMain.handle("projects:agents-read", (_event, root) => projectsService.readAgents(z.string().max(1_000).parse(root)));
-  ipcMain.handle("projects:agents-write", (_event, input) => { const data = z.object({ root: z.string().max(1_000), content: z.string().max(2_000_000), version: z.string().max(128).nullable().optional() }).parse(input); return projectsService.writeAgents(data.root, data); });
+  ipcMain.handle("projects:agents-write", (_event, input) => { const data = z.object({ root: z.string().max(1_000), content: z.string().max(2_000_000), version: z.string().max(128).nullable().optional() }).parse(input); const result = projectsService.writeAgents(data.root, data); const project = store.listProjects().find((item) => item.local_path && path.resolve(item.local_path).toLowerCase() === path.resolve(data.root).toLowerCase()); if (project) store.updateProject(project.id, { lastWorkedAt: new Date().toISOString() }); return result; });
   ipcMain.handle("projects:readme", (_event, root) => projectsService.readReadme(z.string().max(1_000).parse(root)));
   ipcMain.handle("projects:open", async (_event, input) => {
     const data = z.object({ kind: z.enum(["folder", "terminal", "editor", "github"]), path: z.string().max(2_000).optional(), url: z.string().url().max(2_000).optional() }).parse(input);
@@ -382,7 +517,7 @@ app.whenReady().then(() => {
   ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.handle("settings:set", (_event, input) => {
     const current = settings();
-    const patch = z.object({ hotkey: z.string().min(3).max(80).optional(), startAtLogin: z.boolean().optional(), compressorDir: z.string().min(3).max(400).optional() }).parse(input);
+    const patch = z.object({ hotkey: z.string().min(3).max(80).optional(), startAtLogin: z.boolean().optional(), theme: z.enum(["system", "light", "dark"]).optional(), compressorDir: z.string().min(3).max(400).optional() }).parse(input);
     const next = { ...current, ...patch };
     if (next.hotkey !== current.hotkey && !hotkeys.setPreferred(next.hotkey)) throw new Error("Windows could not register that shortcut.");
     store.setSetting("app", next);
@@ -428,9 +563,17 @@ app.whenReady().then(() => {
   ipcMain.handle("backups:restore", (_event, name) => { store.createBackup(); return store.restoreBackup(z.string().max(180).parse(name)); });
   ipcMain.handle("data:location", () => store.userDataPath);
   ipcMain.handle("clipboard:write-text", (_event, text) => { clipboard.writeText(z.string().max(2_000_000).parse(text)); });
+  ipcMain.handle("clipboard:write-rich", (_event, input) => {
+    const data = z.object({ text: z.string().max(2_000_000), html: z.string().max(4_000_000) }).parse(input);
+    clipboard.write({ text: data.text, html: data.html });
+    return true;
+  });
+  // Opens a blank Google Doc. The URL is fixed, never taken from the renderer.
+  ipcMain.handle("docs:new", async () => { await shell.openExternal("https://docs.new"); return true; });
   ipcMain.handle("mail:show", () => {
     if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
     notionView.hide();
+    twitterView.hide();
     return mailView.show();
   });
   ipcMain.handle("mail:hide", () => mailView.hide());
@@ -439,11 +582,21 @@ app.whenReady().then(() => {
   ipcMain.handle("notion:show", () => {
     if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
     mailView.hide();
+    twitterView.hide();
     return notionView.show();
   });
   ipcMain.handle("notion:hide", () => notionView.hide());
   ipcMain.handle("notion:reload", () => notionView.reload());
   ipcMain.handle("notion:open-external", () => notionView.openExternal());
+  ipcMain.handle("twitter:show", () => {
+    if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
+    mailView.hide();
+    notionView.hide();
+    return twitterView.show();
+  });
+  ipcMain.handle("twitter:hide", () => twitterView.hide());
+  ipcMain.handle("twitter:reload", () => twitterView.reload());
+  ipcMain.handle("twitter:open-external", () => twitterView.openExternal());
   ipcMain.handle("compressor:status", compressorStatus);
   ipcMain.handle("compressor:start", startCompressor);
   ipcMain.handle("compressor:compress", async (_event, text, rate) => {
@@ -467,6 +620,6 @@ app.on("before-quit", (event) => {
     setTimeout(() => app.quit(), 400);
   }
 });
-app.on("will-quit", () => { botMonitor?.stop(); hotkeys?.stop(); mailHotkeys?.stop(); notionHotkeys?.stop(); mailView?.destroy(); notionView?.destroy(); });
+app.on("will-quit", () => { botMonitor?.stop(); botProcesses?.stopAll(); hotkeys?.stop(); mailHotkeys?.stop(); notionHotkeys?.stop(); twitterHotkeys?.stop(); mailView?.destroy(); notionView?.destroy(); twitterView?.destroy(); });
 app.on("window-all-closed", () => {});
 app.on("activate", () => showOverlay(false));

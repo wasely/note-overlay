@@ -1,116 +1,59 @@
 import { chromium } from "playwright";
+import { createServer } from "vite";
+
+// Screenshots every page at a narrow and a wide window, in light and dark.
+const server = await createServer({ configFile: "vite.config.js", server: { host: "127.0.0.1", port: 5184, strictPort: true } });
+await server.listen();
+const base = "http://127.0.0.1:5184";
 
 async function launch() {
-  try {
-    return await chromium.launch({ channel: "chrome" });
-  } catch {
-    return chromium.launch();
-  }
+  try { return await chromium.launch({ channel: "chrome" }); }
+  catch { return chromium.launch(); }
 }
 
+const navButton = (page, view) => page.locator(".nav button").filter({ hasText: view }).first();
 const browser = await launch();
-for (const [tag, width, height] of [["narrow", 440, 800], ["wide", 1100, 860]]) {
-  const page = await browser.newPage({ viewport: { width, height } });
-  await page.goto("http://127.0.0.1:5181/", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
-  const emptyDrag = await page.locator(".drag-action").evaluate((element) => ({ draggable: element.draggable, disabled: element.getAttribute("aria-disabled") }));
-  if (emptyDrag.draggable || emptyDrag.disabled !== "true") throw new Error(`Empty note drag control is not disabled: ${JSON.stringify(emptyDrag)}`);
-  await page.screenshot({ path: `shot-${tag}-empty.png`, fullPage: true });
-  await page.getByRole("button", { name: "New notebook" }).click();
-  await page.screenshot({ path: `shot-${tag}-notebook-create.png`, fullPage: true });
-  await page.getByLabel("Notebook name").fill("Projects");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
-  await page.getByLabel("Note title").fill("Project dump");
-  await page.getByLabel("Note content").fill("Keep this simple. It saves automatically and stays on this computer.\n\n- [ ] Send draft\n- [x] Collect references");
-  await page.getByText("Saved", { exact: true }).waitFor();
-  const browserDrag = await page.locator(".drag-action").evaluate((element) => {
-    const dataTransfer = new DataTransfer();
-    element.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer }));
-    return { draggable: element.draggable, disabled: element.getAttribute("aria-disabled"), types: [...dataTransfer.types], text: dataTransfer.getData("text/plain"), download: dataTransfer.getData("DownloadURL") };
-  });
-  if (!browserDrag.draggable || browserDrag.disabled !== "false" || !browserDrag.types.includes("Files") || !browserDrag.download.includes("Project dump.md") || browserDrag.text !== "Project dump.md") throw new Error(`Browser Markdown drag payload is incomplete: ${JSON.stringify(browserDrag)}`);
-  await page.screenshot({ path: `shot-${tag}-note.png`, fullPage: true });
-  await page.getByRole("button", { name: "More note actions" }).click();
-  await page.screenshot({ path: `shot-${tag}-menu.png`, fullPage: true });
-  await page.getByRole("button", { name: "More note actions" }).click();
-  await page.getByRole("button", { name: /Checklist/ }).click();
-  await page.waitForTimeout(180);
-  await page.screenshot({ path: `shot-${tag}-checklist.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/", { waitUntil: "networkidle" });
-  await page.locator(".today-capture").waitFor();
-  await page.screenshot({ path: `shot-${tag}-today-empty.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/?daily=loading", { waitUntil: "networkidle" });
-  await page.getByText("Opening today…", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-today-loading.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/?daily=error", { waitUntil: "networkidle" });
-  await page.getByText("Daily plan unavailable", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-today-error.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/?daily=demo", { waitUntil: "networkidle" });
-  await page.getByRole("textbox", { name: "Today task", exact: true }).fill("Send progress update");
-  await page.getByLabel("New task owner").selectOption("agent");
-  await page.getByRole("button", { name: "Add today task" }).click();
-  await page.getByLabel("Complete Finish the onboarding flow").click();
-  await page.getByRole("textbox", { name: "Tomorrow task", exact: true }).fill("Choose the first priority");
-  await page.getByRole("button", { name: "Add tomorrow task" }).click();
-  await page.getByText("Saved", { exact: true }).waitFor();
-  await page.locator(".daily-scroll").evaluate((element) => { element.scrollTop = 0; });
-  await page.screenshot({ path: `shot-${tag}-today.png`, fullPage: true });
-  await page.getByLabel("Search everything").fill("onboarding");
-  await page.getByText("Finish the onboarding flow", { exact: true }).first().waitFor();
-  await page.screenshot({ path: `shot-${tag}-search.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/?demo=success", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Notes", exact: true }).click();
-  await page.getByLabel("Note content").fill("Write a clear project update. The feature is complete and ready for review.");
-  await page.getByRole("button", { name: "More note actions" }).click();
-  await page.getByRole("button", { name: "Compress" }).click();
-  await page.getByRole("button", { name: "Compress note" }).click();
-  await page.screenshot({ path: `shot-${tag}-compressor.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Backups and settings" }).click();
-  await page.screenshot({ path: `shot-${tag}-backups.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Skills", exact: true }).click();
-  await page.getByRole("heading", { name: "Skill Stack", exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-skill-stack.png`, fullPage: true });
-  await page.getByRole("heading", { name: "Archived Skills", exact: true }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `shot-${tag}-skill-stack-archived.png`, fullPage: true });
-  await page.getByRole("button", { name: "New skill" }).click();
-  await page.getByLabel("Skill name").fill("Terminal workflow");
-  await page.getByLabel("Skill category").fill("Automation");
-  await page.getByLabel("Skill notes").fill("Open the terminal, verify the working folder, then run the checked command.");
-  await page.waitForTimeout(400);
-  await page.getByText("Saved", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-skills.png`, fullPage: true });
-  await page.getByRole("button", { name: "Slash commands", exact: true }).click();
-  await page.getByText("Git push", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-slash-commands.png`, fullPage: true });
-  await page.getByText("Markdown, skills, and slash commands", { exact: true }).click();
-  await page.screenshot({ path: `shot-${tag}-command-guide.png`, fullPage: true });
-  await page.getByRole("button", { name: "Mail", exact: true }).click();
-  await page.getByLabel("Gmail preview").waitFor();
-  await page.screenshot({ path: `shot-${tag}-mail.png`, fullPage: true });
-  await page.getByRole("button", { name: "Back to Notebook" }).click();
-  await page.goto("http://127.0.0.1:5181/?mail=error", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Mail", exact: true }).click();
-  await page.getByText("Gmail couldn’t load", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-mail-error.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/?mail=loading", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Mail", exact: true }).click();
-  await page.getByText("Connecting to Gmail…", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-mail-loading.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Notion", exact: true }).click();
-  await page.getByLabel("Notion preview").waitFor();
-  await page.screenshot({ path: `shot-${tag}-notion.png`, fullPage: true });
-  await page.getByRole("button", { name: "Back to Notebook" }).click();
-  await page.goto("http://127.0.0.1:5181/?notion=error", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Notion", exact: true }).click();
-  await page.getByText("Notion couldn’t load", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-notion-error.png`, fullPage: true });
-  await page.goto("http://127.0.0.1:5181/?notion=loading", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Notion", exact: true }).click();
-  await page.getByText("Connecting to Notion…", { exact: true }).waitFor();
-  await page.screenshot({ path: `shot-${tag}-notion-loading.png`, fullPage: true });
-  await page.close();
+try {
+  for (const [tag, width, height] of [["narrow", 460, 800], ["wide", 1100, 860]]) {
+    const page = await browser.newPage({ viewport: { width, height } });
+    await page.goto(`${base}/?daily=demo`, { waitUntil: "networkidle" });
+    await page.locator(".capture").waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-today.png` });
+
+    await navButton(page, "Notes").click();
+    await page.getByLabel("Note title").fill("Release checklist");
+    await page.getByLabel("Note content").fill("# Ship it\n\nA **short** plan for the week.\n\n- [ ] Verify the build\n- [x] Update the notes\n\n> Everything stays on this computer.\n\n```bash\nnpm run pack:dir\n```");
+    await page.getByText("Saved", { exact: true }).waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-note-write.png` });
+    await page.getByRole("button", { name: "Preview" }).click();
+    await page.getByRole("heading", { name: "Ship it" }).waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-note-preview.png` });
+
+    await page.getByLabel("Search everything").fill("build");
+    await page.locator(".results").waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-search.png` });
+    await page.getByLabel("Search everything").fill("");
+
+    await navButton(page, "Skills").click();
+    await page.screenshot({ path: `screenshots/shot-${tag}-skills.png` });
+    await navButton(page, "Commands").click();
+    await page.getByText("Git push", { exact: true }).first().waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-commands.png` });
+
+    await page.getByRole("button", { name: "Settings and backups" }).click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-settings.png` });
+    await page.getByRole("button", { name: "Dark" }).click();
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+    await page.getByRole("button", { name: "Close settings" }).click();
+    await navButton(page, "Notes").click();
+    await page.screenshot({ path: `screenshots/shot-${tag}-note-dark.png` });
+    await navButton(page, "Today").click();
+    await page.screenshot({ path: `screenshots/shot-${tag}-today-dark.png` });
+    await page.close();
+  }
+  console.log("Screenshots written to screenshots/.");
+} finally {
+  await browser.close();
+  await server.close();
 }
-await browser.close();

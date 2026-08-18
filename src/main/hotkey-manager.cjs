@@ -64,4 +64,8 @@ function createHotkeyManager({ globalShortcut, onTriggered, fallbacks = [], onCh
   return { start, repair, setPreferred, stop, getActive: () => active, getPreferred: () => preferred };
 }
 
-module.exports = { createHotkeyManager };
+function shouldHideOverlay(window) {
+  return Boolean(window && !window.isDestroyed() && window.isVisible() && window.isFocused());
+}
+
+module.exports = { createHotkeyManager, shouldHideOverlay };

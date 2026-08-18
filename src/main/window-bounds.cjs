@@ -23,4 +23,11 @@ function boundsForDisplay({ saved, fallback, workArea }) {
   return centeredBounds(size, workArea);
 }
 
-module.exports = { MIN_WIDTH, MIN_HEIGHT, DEFAULT_WIDTH, DEFAULT_HEIGHT, MAX_WIDTH, MAX_HEIGHT, validBounds, boundsForDisplay };
+// Windows converts a setBounds call using the scale factor of the display the window is still on.
+// Moving between monitors with different DPI therefore lands the window at the wrong size until the
+// bounds are applied again, so callers re-apply until the real bounds match what was asked for.
+function boundsMatch(actual, target, tolerance = 2) {
+  return Boolean(actual) && Boolean(target) && ["x", "y", "width", "height"].every((key) => Math.abs(actual[key] - target[key]) <= tolerance);
+}
+
+module.exports = { MIN_WIDTH, MIN_HEIGHT, DEFAULT_WIDTH, DEFAULT_HEIGHT, MAX_WIDTH, MAX_HEIGHT, validBounds, boundsForDisplay, boundsMatch };

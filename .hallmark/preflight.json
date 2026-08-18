@@ -1,0 +1,9 @@
+{
+  "date": "2026-08-17",
+  "framework": "React 19 + Vite 7 + Electron 39",
+  "font": "Geist Variable with Segoe Variable fallback",
+  "palette": "Warm paper, sage anchor, OKLCH tokens",
+  "motion": "motion-cut; no animation library",
+  "spacing": "4-point named scale",
+  "design_system": "design.md"
+}

@@ -2,41 +2,39 @@
  * Derived from FastNote's note-area / sidebar interaction model.
  * FastNote © 2024, MIT License. See THIRD_PARTY_NOTICES.md.
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Archive, BookOpenCheck, Bot, CalendarCheck2, FolderGit2, Layers3, LayoutDashboard, NotebookPen, ServerCog, Sparkles, SquareTerminal } from "lucide-react";
-import { siGmail, siNotion } from "simple-icons";
+import { ArrowLeft, Bold, Bot, CalendarCheck2, Check, Cloud, Code, Copy, Ellipsis, ExternalLink, Eye, FileText, FolderGit2, GripVertical, Heading1, Heading2, Heading3, Italic, Keyboard, Layers3, Link2, List, ListOrdered, ListTodo, Monitor, Moon, Pencil, Pin, Plus, Quote, RefreshCw, RotateCcw, Search, ServerCog, Settings, Shrink, SquareTerminal, Strikethrough, Sun, Trash2, X } from "lucide-react";
+import { siGmail, siNotion, siX } from "simple-icons";
+import notebookIconUrl from "../../build/notebook.ico";
 import { addBrowserFileDragData } from "./drag-file.mjs";
-import { SKILL_STACK_GROUPS, cleanSkillCategory, displaySkillName, isArchivedSkill, skillStackReference, sortSkillsByStack } from "./skill-stack.js";
-import { ProjectsPage } from "./ProjectsPage.jsx";
+import { cleanSkillCategory, displaySkillName, isArchivedSkill, sortSkillsByStack } from "./skill-stack.js";
+import { Markdown } from "./markdown.jsx";
+import { markdownToHtml, markdownToText } from "./markdown-html.js";
+import { applyMarkdownFormat } from "./format.js";
 import { BotsWorkspace, BotSidebar, McpServersWorkspace, McpSidebar } from "./bots.jsx";
+import { ProjectsPage } from "./ProjectsPage.jsx";
 import "./styles.css";
+import "./workspaces.css";
 
 const mockNotes = [];
+const mockSkills = [];
 const mockBots = [];
 const mockMcpServers = [];
-const mockSkills = SKILL_STACK_GROUPS.flatMap((group, groupIndex) => group.items.map(([name, summary], itemIndex) => ({
-  id: `stack-${group.status}-${groupIndex}-${itemIndex}`,
-  name: name === "Unnamed empty entry" ? "" : name,
-  category: group.status === "active" ? `${String(groupIndex + 1).padStart(2, "0")} · ${group.label.replaceAll(" and ", " & ")}` : `99 · Archive — ${group.label.replaceAll(" and ", " & ")}`,
-  body: summary,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-})));
+const mockProjectNow = new Date().toISOString();
+const mockProjects = new URLSearchParams(location.search).get("projects") === "demo" ? [
+  { id: "project-notebook", name: "note-overlay", description: "The Notebook overlay itself: notes, Today, projects, bots.", status: "active", priority: "critical", manual_rank: 0, local_path: "C:\code\note-overlay", git_root: "C:\code\note-overlay", github_url: "https://github.com/wasely/note-overlay", primary_language: "JavaScript", tags: ["electron"], next_action: "Ship the ranked projects view", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+  { id: "project-clipforge", name: "ClipForge AI", description: "Turn a YouTube URL into captioned vertical shorts.", status: "active", priority: "high", manual_rank: 1, local_path: "C:\live\clipforge-ai", git_root: "C:\live\clipforge-ai", github_url: null, primary_language: "Python", tags: ["live", "mine"], next_action: "Run one clean end-to-end export", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+  { id: "project-proxy", name: "claude-code-proxy-src", description: "", status: "active", priority: "none", manual_rank: 2, local_path: "C:\else\claude-code-proxy", git_root: "C:\else\claude-code-proxy", github_url: null, primary_language: "Rust", tags: [], next_action: "", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+  { id: "project-meme", name: "reddit-meme-finder-review", description: "", status: "active", priority: "medium", manual_rank: 3, local_path: "C:\else\reddit-meme-finder", git_root: "C:\else\reddit-meme-finder", github_url: null, primary_language: "TypeScript", tags: [], next_action: "", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] },
+] : [];
 const mockSlashCommands = [
   { id: "starter-gitpush", name: "Git push", command: "/prompts:gitpush", body: "Run `/prompts:gitpush` inside the Git repository you want to publish.\n\n## What it does\nStages every change, commits with `Update project files`, then pushes the current tracking branch. It does not run checks.\n\n## Related skill\n`$gitpush`", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: "starter-command-guide", name: "Markdown, skills, and slash commands", command: "", body: "## Markdown (`.md`)\nA text-file format. It can hold instructions but is not automatically a command.\n\n## Custom prompt\nA Markdown file in `.codex/prompts`. `gitpush.md` becomes `/prompts:gitpush`.\n\n## Skill\nA folder containing `SKILL.md` and optional scripts. Invoke it with `$name`.\n\n## Slash command\nA `/` command parsed by Codex. Built-ins use top-level names; custom prompts use `/prompts:<name>`.\n\n## Script\nThe executable that performs deterministic work after a prompt or skill invokes it.", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: "starter-command-guide", name: "Markdown, skills, and slash commands", command: "", body: "## Markdown (`.md`)\nA text-file format. It can hold instructions but is not automatically a command.\n\n## Custom prompt\nA Markdown file in `.codex/prompts`. `gitpush.md` becomes `/prompts:gitpush`.\n\n## Skill\nA folder containing `SKILL.md` and optional scripts. Invoke it with `$name`.\n\n## Slash command\nA `/` command parsed by Codex. Built-ins use top-level names; custom prompts use `/prompts:<name>`.", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ];
 const mockFolders = [{ id: "inbox", name: "Inbox", is_inbox: true, note_count: 0 }];
-function hydrateMockBot(input, existing = {}) {
-  const timestamp = new Date().toISOString();
-  const bot = { ...existing, ...structuredClone(input), id: existing.id || input.id || String(input.name || "bot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || crypto.randomUUID(), createdAt: existing.createdAt || timestamp, updatedAt: timestamp, archivedAt: existing.archivedAt || null };
-  bot.jobs = (bot.jobs || []).map((job) => ({ ...job, createdAt: job.createdAt || timestamp, updatedAt: timestamp, archivedAt: job.archivedAt || null }));
-  bot.runtime = existing.runtime || null;
-  const state = bot.archivedAt || bot.monitoring?.monitoringEnabled === false ? "paused" : bot.executionMode === "manual" || bot.monitoring?.adapter === "manual" ? "manual" : bot.executionMode === "scheduled" ? "on_schedule" : bot.runtime?.reportedState || "unknown";
-  bot.derivedState = { state, reason: state === "manual" ? "No automatic monitoring is configured." : state === "on_schedule" ? "No expected execution has been missed." : state === "paused" ? "Monitoring is paused." : "This bot has never been checked.", source: state === "on_schedule" ? "Job history" : state === "manual" ? "Manual" : "No source", observedAt: bot.runtime?.observedAt || null, isStale: false };
-  return bot;
-}
+let mockSettings = { hotkey: "Control+Alt+Shift+N", startAtLogin: true, theme: "system" };
+
 function dateKey(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -54,14 +52,6 @@ const mockDailyTasks = new URLSearchParams(location.search).get("daily") === "de
   { id: "daily-done", task_date: mockDailyDate, text: "Review yesterday's notes", status: "done", priority: 1, owner: "me", completed_on: mockDailyDate, completed_at: new Date().toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: "daily-tomorrow", task_date: moveDate(mockDailyDate, 1), text: "Prepare the launch checklist", status: "open", priority: 2, owner: "me", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ] : [];
-const mockProjectNow = new Date().toISOString();
-const mockProjects = new URLSearchParams(location.search).get("projects") === "demo" ? [
-  { id: "project-notebook", name: "Note Overlay", description: "Local-first workspace for focused notes and developer workflows.", status: "active", priority: "critical", manual_rank: 0, local_path: "C:\\code\\note-overlay", git_root: "C:\\code\\note-overlay", github_url: "https://github.com/kai/note-overlay", primary_language: "JavaScript", tags: ["electron", "personal"], next_action: "Finish and verify the Projects workspace", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: mockProjectNow, skill_ids: [], slash_command_ids: ["starter-gitpush"], activity: [{ id: "activity-1", kind: "created", summary: "Project added", detail: "", created_at: mockProjectNow }], tasks: [{ id: "task-1", project_id: "project-notebook", title: "Implement project command center", description: "", status: "in_progress", priority: "critical", manual_order: 0, due_date: null, tags: [], related: "", created_at: mockProjectNow, updated_at: mockProjectNow }, { id: "task-2", project_id: "project-notebook", title: "Verify packaged Electron build", description: "", status: "todo", priority: "high", manual_order: 1, due_date: null, tags: [], related: "", created_at: mockProjectNow, updated_at: mockProjectNow }, { id: "task-3", project_id: "project-notebook", title: "Map existing storage patterns", description: "", status: "done", priority: "medium", manual_order: 0, completed_at: mockProjectNow, tags: [], related: "", created_at: mockProjectNow, updated_at: mockProjectNow }] },
-  { id: "project-shader", name: "Shader Lab", description: "Procedural GLSL experiments and reusable visual studies.", status: "active", priority: "high", manual_rank: 1, local_path: "C:\\code\\shader-lab", git_root: "C:\\code\\shader-lab", github_url: null, primary_language: "GLSL", tags: ["graphics"], next_action: "Tune the atmospheric scattering pass", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: new Date(Date.now() - 86400000).toISOString(), skill_ids: [], slash_command_ids: [], activity: [], tasks: [{ id: "task-4", project_id: "project-shader", title: "Tune scattering", status: "todo", priority: "high", manual_order: 0, tags: [], created_at: mockProjectNow, updated_at: mockProjectNow }] },
-  { id: "project-archive", name: "Portfolio 2025", description: "Archived portfolio site.", status: "completed", priority: "low", manual_rank: 2, local_path: "C:\\code\\portfolio", git_root: "C:\\code\\portfolio", github_url: "https://github.com/kai/portfolio", primary_language: "TypeScript", tags: ["web"], next_action: "", notes: "", push_after_commit: false, created_at: mockProjectNow, updated_at: mockProjectNow, last_worked_at: new Date(Date.now() - 86400000 * 21).toISOString(), skill_ids: [], slash_command_ids: [], activity: [], tasks: [{ id: "task-5", project_id: "project-archive", title: "Publish final build", status: "done", priority: "medium", manual_order: 0, tags: [], created_at: mockProjectNow, updated_at: mockProjectNow }] },
-] : [];
-function cloneProject(project) { return structuredClone(project); }
-function mockProjectStatus(project) { return project?.id === "project-notebook" ? { available: true, isGit: true, clean: false, branch: "main", upstream: "origin/main", ahead: 2, behind: 0, counts: { modified: 4, added: 2, deleted: 0, untracked: 1, staged: 1, conflicts: 0 }, files: [{ path: "src/renderer/ProjectsPage.jsx", index: ".", working: "M", staged: false, unstaged: true, kind: "modified" }, { path: "src/renderer/projects.css", index: "A", working: ".", staged: true, unstaged: false, kind: "added" }], lastCommit: { hash: "d5cf012345", shortHash: "d5cf0123", message: "Polish daily workspace", committedAt: new Date(Date.now() - 3600000 * 6).toISOString() } } : { available: true, isGit: true, clean: true, branch: "main", upstream: "origin/main", ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0 }, files: [], lastCommit: { hash: "a123456789", shortHash: "a1234567", message: "Update project", committedAt: project?.last_worked_at } }; }
 function mockDailyDashboard() {
   const tomorrow = moveDate(mockDailyDate, 1);
   const hydrate = (task) => ({ priority: 2, owner: "me", ...task, carried: Boolean(task.carried_from_id) });
@@ -80,18 +70,13 @@ function mockDailyDashboard() {
     carriedCount: today.filter((task) => task.carried).length,
   };
 }
+
+// Browser-only stand-in for the preload bridge, used by `npm run preview` and screenshots.
 const mockApi = {
   notes: {
     list: async () => mockNotes.filter((note) => !note.deleted_at).map((note) => ({ ...note })),
     create: async (input = {}) => {
-      const note = {
-        id: crypto.randomUUID(),
-        title: input.title || "",
-        body: input.body || "",
-        folder_id: input.folderId || "inbox",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
+      const note = { id: crypto.randomUUID(), title: input.title || "", body: input.body || "", folder_id: input.folderId || "inbox", pinned: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       mockNotes.unshift(note);
       return { ...note };
     },
@@ -109,14 +94,7 @@ const mockApi = {
   skills: {
     list: async () => mockSkills.map((skill) => ({ ...skill })),
     create: async (input = {}) => {
-      const skill = {
-        id: crypto.randomUUID(),
-        name: input.name || "",
-        category: input.category || "Unsorted",
-        body: input.body || "",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
+      const skill = { id: crypto.randomUUID(), name: input.name || "", category: input.category || "Unsorted", body: input.body || "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       mockSkills.unshift(skill);
       return { ...skill };
     },
@@ -130,42 +108,10 @@ const mockApi = {
       if (index >= 0) mockSkills.splice(index, 1);
     },
   },
-  mcpServers: {
-    list: async () => structuredClone(mockMcpServers),
-    create: async (input) => { const timestamp = new Date().toISOString(); const server = { id: input.id || input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), description: "", transport: "stdio", command: "", url: "", body: "", ...input, createdAt: timestamp, updatedAt: timestamp }; mockMcpServers.push(server); return structuredClone(server); },
-    update: async (id, input) => { const server = mockMcpServers.find((item) => item.id === id); Object.assign(server, input, { updatedAt: new Date().toISOString() }); return structuredClone(server); },
-    remove: async (id) => { const index = mockMcpServers.findIndex((item) => item.id === id); if (index >= 0) mockMcpServers.splice(index, 1); },
-    relatedBots: async (id) => structuredClone(mockBots.filter((bot) => bot.mcpServerIds?.includes(id))),
-  },
-  bots: {
-    list: async () => structuredClone(mockBots),
-    get: async (id) => structuredClone(mockBots.find((bot) => bot.id === id) || null),
-    create: async (input) => { const bot = hydrateMockBot(input); const note = { id: crypto.randomUUID(), title: `${bot.name} bot operations`, body: "# What this bot does\n\nDocument purpose, setup, deployment, recovery, and troubleshooting here.", folder_id: "inbox", created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; mockNotes.unshift(note); bot.documentationNoteId = note.id; mockBots.unshift(bot); return structuredClone(bot); },
-    update: async (id, input) => { const index = mockBots.findIndex((bot) => bot.id === id); mockBots[index] = hydrateMockBot(input, mockBots[index]); return structuredClone(mockBots[index]); },
-    archive: async (id) => { const bot = mockBots.find((item) => item.id === id); bot.archivedAt = new Date().toISOString(); Object.assign(bot, hydrateMockBot(bot, bot)); return structuredClone(bot); },
-    restore: async (id) => { const bot = mockBots.find((item) => item.id === id); bot.archivedAt = null; bot.monitoring = { ...bot.monitoring, monitoringEnabled: true }; const next = hydrateMockBot(bot, bot); next.archivedAt = null; Object.assign(bot, next); return structuredClone(bot); },
-    check: async (id) => { const bot = mockBots.find((item) => item.id === id); if (bot.monitoring?.adapter === "manual") return { ok: true, skipped: true, snapshot: bot.runtime, derivedState: bot.derivedState }; const checkedAt = new Date().toISOString(); bot.runtime = { reportedState: "healthy", activityState: "idle", observedAt: checkedAt, lastCheckedAt: checkedAt, lastSuccessfulCheckAt: checkedAt, consecutiveFailures: 0, responseLatencyMilliseconds: 34, source: bot.monitoring.adapter === "local-status" ? "Local status file" : "HTTP health response", message: "Preview check succeeded." }; bot.derivedState = { state: bot.executionMode === "scheduled" ? "on_schedule" : "healthy", reason: "Preview check succeeded.", source: bot.runtime.source, observedAt: checkedAt, isStale: false }; return { ok: true, snapshot: structuredClone(bot.runtime), derivedState: structuredClone(bot.derivedState) }; },
-    checkAll: async () => { const configured = mockBots.filter((bot) => bot.monitoring?.adapter !== "manual"); for (const bot of configured) await mockApi.bots.check(bot.id); return { checked: configured.length, succeeded: configured.length, failed: 0, results: [] }; },
-    testMonitoring: async (bot) => bot.monitoring?.adapter === "manual" ? { ok: true, skipped: true, source: "Manual", message: "Manual monitoring performs no check." } : { ok: true, source: bot.monitoring?.adapter === "local-status" ? "Local status file" : "HTTP health response", latencyMilliseconds: 34, parsedStatus: { state: "healthy", activity: "idle", observedAt: new Date().toISOString(), message: "Preview check succeeded.", jobCount: 0 } },
-    verifyConnection: async (botId, connectionId) => { const bot = mockBots.find((item) => item.id === botId); const connection = bot.connections.find((item) => item.id === connectionId); Object.assign(connection, { credentialState: "verified", credentialVerifiedAt: new Date().toISOString(), externalBotId: connection.externalBotId || "123456789", username: connection.username || `${connection.platform}_bot`, displayName: connection.displayName || "Verified Bot" }); return structuredClone(connection); },
-    activity: async (id) => [{ id: `${id}-created`, botId: id, type: "configuration_updated", timestamp: mockBots.find((bot) => bot.id === id)?.createdAt || new Date().toISOString(), summary: "Bot registry entry created.", source: "Registry", metadata: {} }],
-    runs: async () => [],
-    upcoming: async () => mockBots.flatMap((bot) => (bot.jobs || []).filter((job) => job.enabled && !job.archivedAt).map((job, index) => { const nextRunAt = job.authoritativeNextRunAt || new Date(Date.now() + (index + 1) * 3_600_000).toISOString(); return { botId: bot.id, botName: bot.name, platforms: bot.platforms, job: { ...job, nextCalculatedAt: nextRunAt, nextReportedAt: job.authoritativeNextRunAt || null, occurrences: [1, 2, 3].map((step) => new Date(new Date(nextRunAt).getTime() + (step - 1) * 86_400_000).toISOString()) }, nextRunAt, nextRunSource: job.authoritativeNextRunAt ? "reported" : "calculated", health: { state: "on_schedule", reason: "No expected execution has been missed." } }; })),
-    openSetup: async () => true,
-    openResource: async () => true,
-    onStatus: () => () => {},
-  },
   slashCommands: {
     list: async () => mockSlashCommands.map((item) => ({ ...item })),
     create: async (input = {}) => {
-      const item = {
-        id: crypto.randomUUID(),
-        name: input.name || "",
-        command: input.command || "",
-        body: input.body || "",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
+      const item = { id: crypto.randomUUID(), name: input.name || "", command: input.command || "", body: input.body || "", created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       mockSlashCommands.unshift(item);
       return { ...item };
     },
@@ -178,32 +124,6 @@ const mockApi = {
       const index = mockSlashCommands.findIndex((item) => item.id === id);
       if (index >= 0) mockSlashCommands.splice(index, 1);
     },
-  },
-  projects: {
-    list: async () => { const state = new URLSearchParams(location.search).get("projects"); if (state === "error") throw new Error("Project storage is unavailable in this preview."); if (state === "loading") return new Promise(() => {}); return mockProjects.map(cloneProject); },
-    create: async (input) => { const timestamp = new Date().toISOString(); const item = { id: crypto.randomUUID(), name: input.name, description: input.description || "", status: input.status || "active", priority: input.priority || "none", manual_rank: mockProjects.length, local_path: input.localPath || null, git_root: input.gitRoot || null, github_url: input.githubUrl || null, primary_language: input.primaryLanguage || "", tags: input.tags || [], next_action: input.nextAction || "", notes: input.notes || "", push_after_commit: false, created_at: timestamp, updated_at: timestamp, last_worked_at: timestamp, skill_ids: [], slash_command_ids: [], tasks: [], activity: [{ id: crypto.randomUUID(), kind: "created", summary: "Project added", detail: "", created_at: timestamp }] }; mockProjects.push(item); return cloneProject(item); },
-    update: async (id, input) => { const item = mockProjects.find((project) => project.id === id); const map = { manualRank: "manual_rank", localPath: "local_path", gitRoot: "git_root", githubUrl: "github_url", primaryLanguage: "primary_language", nextAction: "next_action", pushAfterCommit: "push_after_commit", lastWorkedAt: "last_worked_at" }; Object.entries(input).forEach(([key, value]) => { item[map[key] || key] = value; }); item.updated_at = new Date().toISOString(); return cloneProject(item); },
-    reorder: async (ids) => { ids.forEach((id, rank) => { const item = mockProjects.find((project) => project.id === id); if (item) item.manual_rank = rank; }); return mockProjects.map(cloneProject); },
-    remove: async (id) => { const index = mockProjects.findIndex((project) => project.id === id); if (index >= 0) mockProjects.splice(index, 1); },
-    chooseFolder: async () => ({ canceled: false, project: { name: "New local project", description: "", localPath: "C:\\code\\new-project", gitRoot: "C:\\code\\new-project", isGit: true, branch: "main", githubUrl: null, primaryLanguage: "TypeScript", hasAgents: false, hasReadme: true } }),
-    chooseParent: async () => ({ canceled: false, projects: [{ name: "Discovered app", description: "", localPath: "C:\\code\\discovered-app", gitRoot: "C:\\code\\discovered-app", isGit: true, branch: "main", githubUrl: null, primaryLanguage: "JavaScript" }] }),
-    inspect: async () => null,
-    status: async (root) => mockProjectStatus(mockProjects.find((project) => project.git_root === root) || mockProjects[0]),
-    diff: async ({ path }) => ({ path, binary: false, truncated: false, text: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old line\n+new verified line` }),
-    stage: async ({ root }) => mockProjectStatus(mockProjects.find((project) => project.git_root === root)),
-    unstage: async ({ root }) => mockProjectStatus(mockProjects.find((project) => project.git_root === root)),
-    commit: async ({ root, message, push }) => ({ hash: "f00ba4123456789", shortHash: "f00ba412", message, pushed: push, status: { ...mockProjectStatus(mockProjects.find((project) => project.git_root === root)), clean: true, files: [], counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0 } } }),
-    fetch: async (root) => mockProjectStatus(mockProjects.find((project) => project.git_root === root)),
-    agentsRead: async (root) => ({ exists: true, path: `${root}\\AGENTS.md`, content: "# Project Instructions\n\n## Purpose\n\nBuild a calm, local-first developer workspace.\n\n## Testing and Verification\n\nRun targeted tests and inspect the real app.", version: "preview", modifiedAt: mockProjectNow, newline: "\r\n" }),
-    agentsWrite: async ({ root, content }) => ({ exists: true, path: `${root}\\AGENTS.md`, content, version: crypto.randomUUID(), modifiedAt: new Date().toISOString(), newline: "\r\n" }),
-    readme: async (root) => ({ path: `${root}\\README.md`, content: "# Project\n\nA focused local project with a clear next action." }),
-    open: async () => true,
-    tasks: {
-      create: async (projectId, input) => { const project = mockProjects.find((item) => item.id === projectId); project.tasks.push({ id: crypto.randomUUID(), project_id: projectId, description: "", status: "todo", priority: "medium", manual_order: project.tasks.length, tags: [], related: "", created_at: mockProjectNow, updated_at: mockProjectNow, ...input }); return cloneProject(project); },
-      update: async (id, input) => { const project = mockProjects.find((item) => item.tasks.some((task) => task.id === id)); Object.assign(project.tasks.find((task) => task.id === id), input, { updated_at: new Date().toISOString() }); return cloneProject(project); },
-      remove: async (id) => { const project = mockProjects.find((item) => item.tasks.some((task) => task.id === id)); project.tasks = project.tasks.filter((task) => task.id !== id); return cloneProject(project); },
-    },
-    assign: async (id, input) => { const project = mockProjects.find((item) => item.id === id); if (input.skillIds) project.skill_ids = input.skillIds; if (input.slashCommandIds) project.slash_command_ids = input.slashCommandIds; return cloneProject(project); },
   },
   daily: {
     get: async () => {
@@ -243,10 +163,7 @@ const mockApi = {
     },
   },
   folders: {
-    list: async () => mockFolders.map((folder) => ({
-      ...folder,
-      note_count: mockNotes.filter((note) => !note.deleted_at && note.folder_id === folder.id).length,
-    })),
+    list: async () => mockFolders.map((folder) => ({ ...folder, note_count: mockNotes.filter((note) => !note.deleted_at && note.folder_id === folder.id).length })),
     create: async (name) => {
       const folder = { id: crypto.randomUUID(), name: name.trim(), is_inbox: false, note_count: 0 };
       mockFolders.push(folder);
@@ -262,53 +179,97 @@ const mockApi = {
       mockNotes.forEach((note) => { if (note.folder_id === id) note.folder_id = "inbox"; });
     },
   },
-  compressor: {
-    status: async () => new URLSearchParams(location.search).get("demo") === "success",
-    start: async () => ({
-      ready: new URLSearchParams(location.search).get("demo") === "success",
-      error: "Local service is only available in the desktop app.",
-    }),
-    compress: async () => ({
-      compressed_prompt: "Concise project update. Feature complete, tests passed, ready for review.",
-      origin_tokens: 24,
-      compressed_tokens: 14,
-      ratio: "1.7x",
-    }),
-  },
-  compressions: { create: async (value) => value },
   backups: {
     list: async () => [],
     create: async () => ({ name: "notebook-backup-preview.json", createdAt: new Date().toISOString(), size: 1024 }),
     restore: async () => mockNotes.map((note) => ({ ...note })),
   },
+  githubSync: {
+    status: async () => ({ available: true, authenticated: true, login: "preview-user", repository: "preview-user/notebook-cloud", visibility: "private", autoUpload: false, remoteExists: true, lastPushedAt: null, lastPulledAt: null, url: "https://github.com/preview-user/notebook-cloud" }),
+    signIn: async () => ({ available: true, authenticated: true, login: "preview-user" }),
+    configure: async (input) => ({ available: true, authenticated: true, login: "preview-user", repository: input.repository, visibility: input.visibility || "private", remoteExists: false }),
+    push: async (input) => ({ available: true, authenticated: true, login: "preview-user", repository: input.repository, visibility: input.visibility || "private", remoteExists: true, changed: true, lastPushedAt: new Date().toISOString() }),
+    pull: async (input) => ({ sync: { available: true, authenticated: true, login: "preview-user", repository: input.repository, lastPulledAt: new Date().toISOString() }, restored: { notes: mockNotes } }),
+    open: async () => true,
+  },
   settings: {
-    version: async () => "0.7.8",
+    get: async () => ({ ...mockSettings }),
+    set: async (patch) => { mockSettings = { ...mockSettings, ...patch }; return { ...mockSettings }; },
+    version: async () => "0.8.0",
     export: async () => ({ filePath: "C:\\Temp\\notebook-backup.json" }),
     dataLocation: async () => "C:\\Notebook data",
   },
-  clipboard: { writeText: async (text) => navigator.clipboard.writeText(text) },
-  mail: {
-    show: async () => {
-      const state = new URLSearchParams(location.search).get("mail");
-      if (state === "error") return { status: "error", message: "Google blocked the embedded sign-in in this preview." };
-      if (state === "loading") return { status: "loading", message: "" };
-      return { status: "ready", message: "" };
+  bots: {
+    list: async () => structuredClone(mockBots),
+    get: async (id) => structuredClone(mockBots.find((bot) => bot.id === id) || null),
+    create: async (input) => { const bot = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), archivedAt: null, jobs: [], connections: [], commands: [], runtime: null, derivedState: { state: "manual", reason: "No automatic monitoring is configured.", source: "Manual", observedAt: null, isStale: false }, ...structuredClone(input) }; mockBots.unshift(bot); return structuredClone(bot); },
+    update: async (id, input) => { const index = mockBots.findIndex((bot) => bot.id === id); mockBots[index] = { ...mockBots[index], ...structuredClone(input), updatedAt: new Date().toISOString() }; return structuredClone(mockBots[index]); },
+    archive: async (id) => { const bot = mockBots.find((item) => item.id === id); bot.archivedAt = new Date().toISOString(); return structuredClone(bot); },
+    restore: async (id) => { const bot = mockBots.find((item) => item.id === id); bot.archivedAt = null; return structuredClone(bot); },
+    check: async () => ({ ok: true, skipped: true }),
+    checkAll: async () => ({ checked: 0, succeeded: 0, failed: 0, results: [] }),
+    testMonitoring: async () => ({ ok: true, skipped: true, source: "Manual", message: "Manual monitoring performs no check." }),
+    verifyConnection: async (botId, connectionId) => { const bot = mockBots.find((item) => item.id === botId); return structuredClone(bot.connections.find((item) => item.id === connectionId)); },
+    activity: async () => [],
+    runs: async () => [],
+    upcoming: async () => [],
+    openSetup: async () => true,
+    openResource: async () => true,
+    onStatus: () => () => {},
+  },
+  mcpServers: {
+    list: async () => structuredClone(mockMcpServers),
+    create: async (input) => { const server = { id: input.id || String(input.name || "server").toLowerCase().replace(/[^a-z0-9]+/g, "-"), description: "", transport: "stdio", command: "", url: "", body: "", ...input, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; mockMcpServers.push(server); return structuredClone(server); },
+    update: async (id, input) => { const server = mockMcpServers.find((item) => item.id === id); Object.assign(server, input, { updatedAt: new Date().toISOString() }); return structuredClone(server); },
+    remove: async (id) => { const index = mockMcpServers.findIndex((item) => item.id === id); if (index >= 0) mockMcpServers.splice(index, 1); },
+    relatedBots: async () => [],
+  },
+  projects: {
+    list: async () => { const state = new URLSearchParams(location.search).get("projects"); if (state === "error") throw new Error("Project storage is unavailable in this preview."); if (state === "loading") return new Promise(() => {}); return structuredClone(mockProjects); },
+    create: async (input) => { const timestamp = new Date().toISOString(); const item = { id: crypto.randomUUID(), name: input.name, description: input.description || "", status: input.status || "active", priority: input.priority || "none", manual_rank: mockProjects.length, local_path: input.localPath || null, git_root: input.gitRoot || null, github_url: input.githubUrl || null, primary_language: input.primaryLanguage || "", tags: input.tags || [], next_action: input.nextAction || "", notes: input.notes || "", push_after_commit: false, created_at: timestamp, updated_at: timestamp, last_worked_at: timestamp, skill_ids: [], slash_command_ids: [], tasks: [], activity: [] }; mockProjects.push(item); return structuredClone(item); },
+    update: async (id, input) => { const item = mockProjects.find((project) => project.id === id); Object.assign(item, input, { updated_at: new Date().toISOString() }); return structuredClone(item); },
+    reorder: async () => structuredClone(mockProjects),
+    remove: async (id) => { const index = mockProjects.findIndex((project) => project.id === id); if (index >= 0) mockProjects.splice(index, 1); },
+    chooseFolder: async () => ({ canceled: true }),
+    chooseParent: async () => ({ canceled: true, projects: [] }),
+    inspect: async () => null,
+    status: async () => ({ available: true, isGit: true, clean: true, branch: "main", upstream: "origin/main", ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0 }, files: [], lastCommit: { shortHash: "a1234567", message: "Update project", committedAt: new Date().toISOString() } }),
+    diff: async (input) => ({ path: input.path, binary: false, truncated: false, text: "" }),
+    stage: async () => ({ files: [] }),
+    unstage: async () => ({ files: [] }),
+    commit: async (input) => ({ shortHash: "f00ba412", message: input.message, pushed: false }),
+    fetch: async () => ({ ahead: 0, behind: 0 }),
+    agentsRead: async () => ({ exists: false, path: "AGENTS.md", content: "", version: null, modifiedAt: null, newline: "\r\n" }),
+    agentsWrite: async (input) => ({ exists: true, path: "AGENTS.md", content: input.content, version: crypto.randomUUID(), modifiedAt: new Date().toISOString(), newline: "\r\n" }),
+    readme: async () => ({ path: "README.md", content: "" }),
+    open: async () => true,
+    tasks: {
+      create: async (projectId, input) => { const project = mockProjects.find((item) => item.id === projectId); project.tasks.push({ id: crypto.randomUUID(), project_id: projectId, description: "", status: "todo", priority: "medium", manual_order: project.tasks.length, tags: [], related: "", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...input }); return structuredClone(project); },
+      update: async (id, input) => { const project = mockProjects.find((item) => item.tasks.some((task) => task.id === id)); Object.assign(project.tasks.find((task) => task.id === id), input); return structuredClone(project); },
+      remove: async (id) => { const project = mockProjects.find((item) => item.tasks.some((task) => task.id === id)); project.tasks = project.tasks.filter((task) => task.id !== id); return structuredClone(project); },
     },
-    hide: async () => ({ status: "ready" }),
-    reload: async () => ({ status: "loading" }),
-    openExternal: async () => true,
+    assign: async (id, input) => { const project = mockProjects.find((item) => item.id === id); if (input.skillIds) project.skill_ids = input.skillIds; if (input.slashCommandIds) project.slash_command_ids = input.slashCommandIds; return structuredClone(project); },
+  },
+  compressor: {
+    status: async () => new URLSearchParams(location.search).get("demo") === "success",
+    start: async () => ({ ready: new URLSearchParams(location.search).get("demo") === "success", error: "The local compressor only runs in the desktop app." }),
+    compress: async () => ({ compressed_prompt: "Concise project update. Feature complete, tests passed, ready for review.", origin_tokens: 24, compressed_tokens: 14, ratio: "1.7x" }),
+  },
+  compressions: { create: async (value) => value },
+  mail: {
+    show: async () => { const state = new URLSearchParams(location.search).get("mail"); if (state === "error") return { status: "error", message: "This service is unavailable in the preview." }; if (state === "loading") return { status: "loading", message: "" }; return { status: "ready", message: "" }; },
+    hide: async () => ({ status: "ready" }), reload: async () => ({ status: "loading" }), openExternal: async () => true,
   },
   notion: {
-    show: async () => {
-      const state = new URLSearchParams(location.search).get("notion");
-      if (state === "error") return { status: "error", message: "Notion is unavailable in this preview." };
-      if (state === "loading") return { status: "loading", message: "" };
-      return { status: "ready", message: "" };
-    },
-    hide: async () => ({ status: "ready" }),
-    reload: async () => ({ status: "loading" }),
-    openExternal: async () => true,
+    show: async () => { const state = new URLSearchParams(location.search).get("notion"); if (state === "error") return { status: "error", message: "This service is unavailable in the preview." }; if (state === "loading") return { status: "loading", message: "" }; return { status: "ready", message: "" }; },
+    hide: async () => ({ status: "ready" }), reload: async () => ({ status: "loading" }), openExternal: async () => true,
   },
+  twitter: {
+    show: async () => { const state = new URLSearchParams(location.search).get("twitter"); if (state === "error") return { status: "error", message: "This service is unavailable in the preview." }; if (state === "loading") return { status: "loading", message: "" }; return { status: "ready", message: "" }; },
+    hide: async () => ({ status: "ready" }), reload: async () => ({ status: "loading" }), openExternal: async () => true,
+  },
+  clipboard: { writeText: async (text) => navigator.clipboard.writeText(text), writeRich: async ({ text }) => navigator.clipboard.writeText(text) },
+  googleDocs: { create: async () => true },
   window: { hide: async () => {} },
   onNewInboxNote: () => {},
   onFocusEditor: () => {},
@@ -319,196 +280,256 @@ const mockApi = {
   onMailStatus: () => () => {},
   onOpenNotion: () => () => {},
   onNotionStatus: () => () => {},
+  onOpenTwitter: () => () => {},
+  onTwitterStatus: () => () => {},
 };
 const api = window.hushnote || mockApi;
 
-function BrandIcon({ icon }) {
-  return <svg className="brand-icon" role="img" aria-hidden="true" viewBox="0 0 24 24"><path d={icon.path} /></svg>;
-}
+const VIEWS = [
+  { id: "daily", label: "Today", route: "today", Icon: CalendarCheck2 },
+  { id: "notes", label: "Notes", route: "notes", Icon: FileText },
+  { id: "skills", label: "Skills", route: "skills", Icon: Layers3 },
+  { id: "commands", label: "Commands", route: "commands", Icon: SquareTerminal },
+  { id: "projects", label: "Projects", route: "projects", Icon: FolderGit2, group: "Workspace" },
+  { id: "bots", label: "Bots", route: "bots", Icon: Bot, group: "Workspace" },
+  { id: "mcp-servers", label: "MCP", route: "mcp-servers", Icon: ServerCog, group: "Workspace" },
+];
+// Full-window embedded services. These are windows, not pages, so they sit under their own heading.
+// Brand marks ship with the app (simple-icons), so they render offline and never depend on a
+// service being reachable. Each keeps its own signed-in session and stays loaded once opened.
+const SERVICES = [
+  { id: "mail", label: "Gmail", brand: siGmail, tone: "gmail", hotkey: "Ctrl+Alt+Shift+M" },
+  { id: "notion", label: "Notion", brand: siNotion, tone: "notion", hotkey: "Ctrl+Alt+Shift+O" },
+  { id: "twitter", label: "Twitter", brand: siX, tone: "twitter", hotkey: "Ctrl+Alt+Shift+X" },
+];
+const SERVICE_IDS = new Set(SERVICES.map((service) => service.id));
+const LIBRARY_VIEWS = new Set(["notes", "skills", "commands"]);
+const NEW_LABEL = { notes: "New note", skills: "New skill", commands: "New command" };
 
+// List previews read as prose, not as raw Markdown syntax.
 function preview(note) {
-  const text = (note.body || "").trim().replace(/\s+/g, " ");
+  const text = (note.body || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .split("\n")
+    .map((line) => line
+      .replace(/^\s{0,3}#{1,6}\s+/, "")
+      .replace(/^\s*[-*+]\s+\[[ xX]]\s+/, "")
+      .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
+      .replace(/^\s*>\s?/, ""))
+    .join(" ")
+    .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, "$1")
+    .replace(/\*\*|__|~~|`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   return text || "Empty note";
 }
-
 function noteName(note) {
   return note.title?.trim() || preview(note).slice(0, 42) || "Untitled";
 }
-
 function skillName(skill) {
   return displaySkillName(skill);
 }
-
 function skillPreview(skill) {
   const text = (skill.body || "").split("\n").map((line) => line.replace(/^#{1,6}\s+/, "").trim()).filter(Boolean).join(" ");
   return text || "No instructions yet";
 }
-
 function slashCommandName(item) {
   return item.name?.trim() || item.command?.trim() || preview({ body: item.body }).slice(0, 42) || "Untitled command";
 }
-
-function SlashCommandList({ items, currentId, onSelect, onRemove }) {
-  if (!items.length) return <div className="notes"><p className="empty-list">No slash items found.<br />Use + to save one.</p></div>;
-  const groups = [
-    { label: "Commands", items: items.filter((item) => item.command?.trim()) },
-    { label: "Reference", items: items.filter((item) => !item.command?.trim()) },
-  ];
-  return <div className="notes slash-list" aria-live="polite">
-    {groups.filter((group) => group.items.length).map((group) => <section className="slash-group" key={group.label}>
-      <div className="slash-group-label"><span>{group.label}</span><small>{group.items.length}</small></div>
-      {group.items.map((item) => <div className={`note-row ${currentId === item.id ? "selected" : ""}`} key={item.id}>
-        <button className="note-open" onClick={() => onSelect(item)}><strong>{slashCommandName(item)}</strong><span className={item.command?.trim() ? "slash-invocation" : "slash-reference"}>{item.command?.trim() || "Guide"}</span><small>{shortTime(item.updated_at)}</small></button>
-        <button className="note-delete" aria-label={`Delete ${slashCommandName(item)}`} onClick={() => onRemove(item)}>×</button>
-      </div>)}
-    </section>)}
-  </div>;
-}
-
-function SkillList({ items, currentId, onSelect, onRemove, grouped }) {
-  if (!items.length) return <div className="notes"><p className="empty-list">No skills found.<br />Use + to save one.</p></div>;
-  const ordered = [...items].sort(sortSkillsByStack);
-  const groups = grouped
-    ? [...new Set(ordered.map((skill) => skill.category?.trim() || "Unsorted"))].sort((left, right) => left.localeCompare(right)).map((category) => ({ label: category, items: ordered.filter((skill) => (skill.category?.trim() || "Unsorted") === category) }))
-    : [{ label: "", items: ordered }];
-  return <div className="notes skill-list" aria-live="polite">
-    {groups.map((group) => <section className="slash-group" key={group.label || "all"}>
-      {group.label ? <div className="slash-group-label"><span>{cleanSkillCategory(group.label)}</span><small>{group.items.length}</small></div> : null}
-      {group.items.map((skill) => <div className={`note-row ${currentId === skill.id ? "selected" : ""}${isArchivedSkill(skill) ? " is-archived" : ""}`} key={skill.id}>
-        <button className="note-open" onClick={() => onSelect(skill)}><strong>{skillName(skill)}</strong><span>{skillPreview(skill)}</span><small>{shortTime(skill.updated_at)}</small></button>
-        <button className="note-delete" aria-label={`Delete ${skillName(skill)}`} onClick={() => onRemove(skill)}>×</button>
-      </div>)}
-    </section>)}
-  </div>;
-}
-
-function CategoryFilters({ categories, active, onSelect }) {
-  const scroller = useRef(null);
-  const [overflow, setOverflow] = useState({ left: false, right: false });
-
-  const refresh = () => {
-    const element = scroller.current;
-    if (!element) return;
-    setOverflow({ left: element.scrollLeft > 1, right: element.scrollLeft + element.clientWidth < element.scrollWidth - 1 });
-  };
-
-  useEffect(() => {
-    refresh();
-    const element = scroller.current;
-    if (!element) return;
-    element.addEventListener("scroll", refresh, { passive: true });
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(refresh) : null;
-    observer?.observe(element);
-    window.addEventListener("resize", refresh);
-    return () => { element.removeEventListener("scroll", refresh); observer?.disconnect(); window.removeEventListener("resize", refresh); };
-  }, [categories]);
-
-  const nudge = (direction) => scroller.current?.scrollBy({ left: direction * 140, behavior: "smooth" });
-
-  return (
-    <div className="category-filters" aria-label="Skill categories">
-      {overflow.left && <button type="button" className="category-arrow" onClick={() => nudge(-1)} aria-label="Scroll categories back">‹</button>}
-      <div className="category-scroller" ref={scroller} onWheel={(event) => { if (event.deltaY) scroller.current.scrollLeft += event.deltaY; }}>
-        {categories.map((category) => <button key={category} className={active === category ? "active" : ""} onClick={() => onSelect(category)}>{category}</button>)}
-      </div>
-      {overflow.right && <button type="button" className="category-arrow" onClick={() => nudge(1)} aria-label="Scroll categories forward">›</button>}
-    </div>
-  );
-}
-
-function SkillStackHome({ skills, onOpen, onHide }) {
-  const byName = new Map(skills.map((skill) => [displaySkillName(skill).toLocaleLowerCase(), skill]));
-  const activeSkills = skills.filter((skill) => !isArchivedSkill(skill));
-  const archivedSkills = skills.filter(isArchivedSkill);
-  const activeRank = new Map(SKILL_STACK_GROUPS.filter((group) => group.status === "active").flatMap((group) => group.items).map(([name], index) => [name.toLocaleLowerCase(), index + 1]));
-  const unranked = skills.filter((skill) => !skillStackReference(skill)).sort(sortSkillsByStack);
-
-  const rows = (group) => group.items.map(([name, summary]) => {
-    const skill = byName.get(name.toLocaleLowerCase());
-    const rank = activeRank.get(name.toLocaleLowerCase());
-    return <button type="button" className="skill-stack-row" key={name} disabled={!skill} onClick={() => skill && onOpen(skill)}>
-      <span className={`skill-stack-rank ${group.status}`}>{rank || <Archive size={12} strokeWidth={1.8} />}</span>
-      <span><strong>{name}</strong><small>{summary}</small></span>
-      <span className="skill-stack-open">{skill ? "Open" : "Missing"}</span>
-    </button>;
-  });
-
-  return <section className="editor skill-stack-home">
-    <header className="editor-bar"><span className="save-state">Ranked quick reference</span><div><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></div></header>
-    <div className="skill-stack-scroll">
-      <header className="skill-stack-hero">
-        <span className="skill-stack-hero-icon"><Layers3 size={25} strokeWidth={1.7} /></span>
-        <div><span className="daily-kicker">Main skill page</span><h1>Skill Stack</h1><p>Daily skills first. Archived skills stay searchable and ready when a matching project appears.</p></div>
-        <div className="skill-stack-counts"><span><strong>{activeSkills.length}</strong> active</span><span><strong>{archivedSkills.length}</strong> archived</span></div>
-      </header>
-      <div className="skill-stack-rule"><Sparkles size={16} /><span><strong>Routing rule</strong> Start at the top of the matching group. Archive reduces noise; it never deletes a skill.</span></div>
-      <section className="skill-stack-section">
-        <header><div><span>Daily stack</span><h2>Active Skills</h2></div><strong>{activeSkills.length}</strong></header>
-        <div className="skill-stack-groups">{SKILL_STACK_GROUPS.filter((group) => group.status === "active").map((group) => <section className="skill-stack-group" key={group.label}><header><span>{group.label}</span><small>{group.items.length}</small></header>{rows(group)}</section>)}</div>
-      </section>
-      <section className="skill-stack-section archived">
-        <header><div><span>Search when needed</span><h2>Archived Skills</h2></div><strong>{archivedSkills.length}</strong></header>
-        <p>Out of the daily stack, not deleted. Open any group to see why each skill is archived.</p>
-        <div className="skill-stack-archive-groups">{SKILL_STACK_GROUPS.filter((group) => group.status === "archived").map((group, index) => <details key={group.label} open={index === 0}><summary><span>{group.label}</span><small>{group.items.length}</small></summary>{rows(group)}</details>)}</div>
-      </section>
-      {unranked.length > 0 && <section className="skill-stack-section unranked"><header><div><span>Needs placement</span><h2>Unranked Skills</h2></div><strong>{unranked.length}</strong></header>{unranked.map((skill) => <button type="button" className="skill-stack-row" key={skill.id} onClick={() => onOpen(skill)}><span className="skill-stack-rank">?</span><span><strong>{skillName(skill)}</strong><small>{cleanSkillCategory(skill.category)}</small></span><span className="skill-stack-open">Open</span></button>)}</section>}
-    </div>
-  </section>;
-}
-
 function shortTime(value) {
   return new Date(value).toLocaleDateString([], { month: "short", day: "numeric" });
 }
-
 function fullTime(value) {
   return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
-
 function bytes(value) {
   return value < 1024 ? `${value} B` : `${Math.max(1, Math.round(value / 1024))} KB`;
 }
-
 function markdownFor(note) {
   if (!note) return "";
   const title = note.title?.trim();
   const body = note.body?.trimEnd();
   return [title ? `# ${title}` : "", body || ""].filter(Boolean).join("\n\n");
 }
-
 function todoItems(body = "") {
   return body.split("\n").map((line, lineIndex) => {
     const match = line.match(/^\s*[-*]\s+\[([ xX])]\s+(.*)$/);
     return match ? { lineIndex, checked: match[1].toLowerCase() === "x", text: match[2] } : null;
   }).filter(Boolean);
 }
-
+function countWords(body = "") {
+  const words = body.trim().match(/[^\s]+/g);
+  return words ? words.length : 0;
+}
 function dailyDate(value, options = {}) {
   return new Date(`${value}T12:00:00`).toLocaleDateString([], { weekday: options.short ? "short" : "long", month: options.short ? undefined : "long", day: "numeric" });
 }
 
+const TOOLBAR = [
+  [["bold", "Bold", "Ctrl+B", Bold], ["italic", "Italic", "Ctrl+I", Italic], ["strike", "Strikethrough", "", Strikethrough], ["code", "Inline code", "", Code]],
+  [["h1", "Heading 1", "", Heading1], ["h2", "Heading 2", "", Heading2], ["h3", "Heading 3", "", Heading3]],
+  [["bullet", "Bulleted list", "", List], ["number", "Numbered list", "", ListOrdered], ["todo", "Checklist", "", ListTodo]],
+  [["quote", "Quote", "", Quote], ["codeblock", "Code block", "", Code], ["link", "Link", "Ctrl+K", Link2]],
+];
+
+function FormatToolbar({ onFormat, disabled }) {
+  return <div className="format-bar" role="toolbar" aria-label="Formatting">
+    {TOOLBAR.map((group, index) => <div className="format-group" key={index}>
+      {group.map(([action, label, shortcut, Icon]) => <button
+        type="button"
+        key={action}
+        className="format-button"
+        disabled={disabled}
+        aria-label={label}
+        title={shortcut ? `${label} (${shortcut})` : label}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => onFormat(action)}
+      ><Icon size={15} strokeWidth={1.9} /></button>)}
+    </div>)}
+  </div>;
+}
+
+function IconButton({ label, onClick, children, className = "", ...rest }) {
+  return <button type="button" className={`icon-button ${className}`} onClick={onClick} aria-label={label} title={label} {...rest}>{children}</button>;
+}
+
+function ListRow({ selected, title, detail, meta, badge, onOpen, onRemove, removeLabel, className = "" }) {
+  return <div className={`row ${selected ? "is-selected" : ""} ${className}`}>
+    <button type="button" className="row-open" onClick={onOpen}>
+      <span className="row-title">{badge}<strong>{title}</strong></span>
+      <span className="row-detail">{detail}</span>
+      <span className="row-meta">{meta}</span>
+    </button>
+    {onRemove && <IconButton className="row-remove" label={removeLabel} onClick={onRemove}><Trash2 size={14} strokeWidth={1.8} /></IconButton>}
+  </div>;
+}
+
+function EmptyState({ title, body, action }) {
+  return <div className="empty-state"><strong>{title}</strong><p>{body}</p>{action}</div>;
+}
+
+function SearchResults({ query, notes, skills, slashCommands, daily, onOpenNote, onOpenSkill, onOpenCommand, onOpenTask }) {
+  const needle = query.trim().toLowerCase();
+  const matches = (value) => String(value || "").toLowerCase().includes(needle);
+  const taskResults = daily ? [
+    ...daily.today.map((task) => ({ ...task, location: "Today" })),
+    ...daily.tomorrow.map((task) => ({ ...task, location: "Tomorrow" })),
+    ...daily.done.map((task) => ({ ...task, location: "Done today" })),
+  ].filter((task) => matches(task.text)) : [];
+  const groups = [
+    { label: "Tasks", items: taskResults, render: (task) => <button type="button" key={task.id} onClick={onOpenTask}><span className="result-mark task"><ListTodo size={13} strokeWidth={1.8} /></span><span><strong>{task.text}</strong><small>{task.location} · P{task.priority || 2} · {task.owner === "agent" ? "Agent" : "Me"}</small></span></button> },
+    { label: "Notes", items: notes.filter((note) => !note.deleted_at && matches(`${noteName(note)} ${note.body || ""}`)), render: (note) => <button type="button" key={note.id} onClick={() => onOpenNote(note)}><span className="result-mark note"><FileText size={13} strokeWidth={1.8} /></span><span><strong>{noteName(note)}</strong><small>{preview(note)}</small></span></button> },
+    { label: "Skills", items: skills.filter((skill) => matches(`${skillName(skill)} ${skill.category || ""} ${skill.body || ""}`)), render: (skill) => <button type="button" key={skill.id} onClick={() => onOpenSkill(skill)}><span className="result-mark skill"><Layers3 size={13} strokeWidth={1.8} /></span><span><strong>{skillName(skill)}</strong><small>{cleanSkillCategory(skill.category)}</small></span></button> },
+    { label: "Commands", items: slashCommands.filter((item) => matches(`${slashCommandName(item)} ${item.command || ""} ${item.body || ""}`)), render: (item) => <button type="button" key={item.id} onClick={() => onOpenCommand(item)}><span className="result-mark command"><SquareTerminal size={13} strokeWidth={1.8} /></span><span><strong>{slashCommandName(item)}</strong><small>{item.command || "Reference"}</small></span></button> },
+  ].filter((group) => group.items.length);
+  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  return <div className="results" aria-live="polite">
+    <p className="results-summary">{total} {total === 1 ? "match" : "matches"} for “{query.trim()}”</p>
+    {groups.map((group) => <section key={group.label}>
+      <h2>{group.label}<span>{group.items.length}</span></h2>
+      {group.items.slice(0, 8).map(group.render)}
+    </section>)}
+    {!groups.length && <EmptyState title="No match" body="Search covers note titles and text, tasks, skills, and commands." />}
+  </div>;
+}
+
+function NotesList({ notes, currentId, onSelect, onRemove, onCreate }) {
+  if (!notes.length) return <EmptyState title="No notes here" body="Start one and it saves as you type." action={<button type="button" className="button" onClick={onCreate}><Plus size={15} strokeWidth={2} />New note</button>} />;
+  return <div className="list" aria-live="polite">
+    {notes.map((note) => <ListRow
+      key={note.id}
+      selected={currentId === note.id}
+      title={noteName(note)}
+      badge={note.pinned ? <Pin className="row-pin" size={12} strokeWidth={2} aria-label="Pinned" /> : null}
+      detail={preview(note)}
+      meta={shortTime(note.updated_at)}
+      onOpen={() => onSelect(note)}
+      onRemove={() => onRemove(note)}
+      removeLabel={`Delete ${noteName(note)}`}
+    />)}
+  </div>;
+}
+
+function SkillList({ items, currentId, onSelect, onRemove, onCreate }) {
+  if (!items.length) return <EmptyState title="No skills yet" body="Save a prompt, workflow, or instruction set to reuse it." action={<button type="button" className="button" onClick={onCreate}><Plus size={15} strokeWidth={2} />New skill</button>} />;
+  const ordered = [...items].sort(sortSkillsByStack);
+  const groups = [...new Set(ordered.map((skill) => cleanSkillCategory(skill.category)))].map((category) => ({ label: category, items: ordered.filter((skill) => cleanSkillCategory(skill.category) === category) }));
+  return <div className="list" aria-live="polite">
+    {groups.map((group) => <section className="list-group" key={group.label}>
+      <h2>{group.label}<span>{group.items.length}</span></h2>
+      {group.items.map((skill) => <ListRow
+        key={skill.id}
+        className={isArchivedSkill(skill) ? "is-muted" : ""}
+        selected={currentId === skill.id}
+        title={skillName(skill)}
+        detail={skillPreview(skill)}
+        meta={shortTime(skill.updated_at)}
+        onOpen={() => onSelect(skill)}
+        onRemove={() => onRemove(skill)}
+        removeLabel={`Delete ${skillName(skill)}`}
+      />)}
+    </section>)}
+  </div>;
+}
+
+function SlashCommandList({ items, currentId, onSelect, onRemove, onCreate }) {
+  if (!items.length) return <EmptyState title="No commands saved" body="Keep the invocation and what it does in one place." action={<button type="button" className="button" onClick={onCreate}><Plus size={15} strokeWidth={2} />New command</button>} />;
+  const groups = [
+    { label: "Commands", items: items.filter((item) => item.command?.trim()) },
+    { label: "Reference", items: items.filter((item) => !item.command?.trim()) },
+  ].filter((group) => group.items.length);
+  return <div className="list" aria-live="polite">
+    {groups.map((group) => <section className="list-group" key={group.label}>
+      <h2>{group.label}<span>{group.items.length}</span></h2>
+      {group.items.map((item) => <ListRow
+        key={item.id}
+        selected={currentId === item.id}
+        title={slashCommandName(item)}
+        detail={item.command?.trim() || "Reference page"}
+        meta={shortTime(item.updated_at)}
+        onOpen={() => onSelect(item)}
+        onRemove={() => onRemove(item)}
+        removeLabel={`Delete ${slashCommandName(item)}`}
+        className={item.command?.trim() ? "has-invocation" : ""}
+      />)}
+    </section>)}
+  </div>;
+}
+
+function CategoryFilters({ categories, active, onSelect }) {
+  return <div className="chips" role="group" aria-label="Skill categories">
+    {categories.map((category) => <button type="button" key={category} className={active === category ? "is-active" : ""} aria-pressed={active === category} onClick={() => onSelect(category)}>{category}</button>)}
+  </div>;
+}
+
+function EditorBar({ status, context, children, onHide }) {
+  return <header className="editor-bar">
+    <div className="editor-status"><span className={`save-state ${status === "Save failed" ? "is-failed" : ""}`}>{status}</span>{context && <span className="editor-context">{context}</span>}</div>
+    <div className="editor-actions">{children}<IconButton className="close" label="Hide Notebook" onClick={onHide}><X size={18} strokeWidth={1.8} /></IconButton></div>
+  </header>;
+}
+
 function DailySidebar({ daily, status }) {
-  if (!daily) return <div className="daily-sidebar"><p className="empty-list">{status}</p></div>;
+  if (!daily) return <div className="side-panel"><p className="side-note">{status}</p></div>;
   const focusCount = daily.today.filter((task) => task.priority === 1 && task.owner !== "agent").length;
   const agentCount = daily.today.filter((task) => task.owner === "agent").length;
   const maxDone = Math.max(1, ...daily.history.map((day) => day.completed));
-  return <div className="daily-sidebar">
-    <section className="daily-routine-card">
-      <span className="daily-kicker">Control</span>
-      <strong>{daily.today.length ? `${daily.today.length} open today` : "Day is clear"}</strong>
-      <p>P1 is focus. P2 is next. P3 can wait. Assign work to Agent when it can run without you.</p>
-      <div className="routine-step"><span>My focus</span><b>{focusCount}</b></div>
-      <div className="routine-step"><span>Agent queue</span><b>{agentCount}</b></div>
-      <div className="routine-step"><span>Carried</span><b>{daily.carriedCount}</b></div>
+  return <div className="side-panel">
+    <section className="stat-card">
+      <strong>{daily.today.length ? `${daily.today.length} open today` : "Today is clear"}</strong>
+      <dl>
+        <div><dt>My focus</dt><dd>{focusCount}</dd></div>
+        <div><dt>Agent queue</dt><dd>{agentCount}</dd></div>
+        <div><dt>Carried over</dt><dd>{daily.carriedCount}</dd></div>
+      </dl>
     </section>
-    <section className="daily-history" aria-label="Seven day completion history">
-      <span className="daily-kicker">Last 7 days</span>
-      {daily.history.map((day) => <div key={day.date}><span>{day.date === daily.date ? "Today" : dailyDate(day.date, { short: true })}</span><i aria-hidden="true"><b style={{ width: `${Math.max(8, (day.completed / maxDone) * 100)}%` }} /></i><strong>{day.completed}</strong></div>)}
-    </section>
-    <section className="daily-rules">
-      <span className="daily-kicker">Daily reset</span>
-      <p><b>1</b> Choose up to three P1 tasks.</p>
-      <p><b>2</b> Delegate clear work to Agent.</p>
-      <p><b>3</b> Set tomorrow before stopping.</p>
+    <section className="history" aria-label="Completed tasks over the last seven days">
+      <h2>Last 7 days</h2>
+      {daily.history.map((day) => <div key={day.date}>
+        <span>{day.date === daily.date ? "Today" : dailyDate(day.date, { short: true })}</span>
+        <i aria-hidden="true"><b style={{ width: `${Math.max(6, (day.completed / maxDone) * 100)}%` }} /></i>
+        <strong>{day.completed}</strong>
+      </div>)}
     </section>
   </div>;
 }
@@ -524,9 +545,9 @@ function DailyAddForm({ label, placeholder, onAdd, buttonLabel }) {
     if (saved) setValue("");
     setBusy(false);
   }
-  return <form className="daily-add" onSubmit={submit}>
+  return <form className="inline-add" onSubmit={submit}>
     <input value={value} onChange={(event) => setValue(event.target.value)} placeholder={placeholder} aria-label={label} maxLength={500} />
-    <button type="submit" disabled={!value.trim() || busy} aria-label={`Add ${label.toLowerCase()}`}>{buttonLabel || "Add"}</button>
+    <button type="submit" className="button subtle" disabled={!value.trim() || busy} aria-label={`Add ${label.toLowerCase()}`}>{buttonLabel || "Add"}</button>
   </form>;
 }
 
@@ -543,903 +564,300 @@ function TodayCapture({ onAdd }) {
     if (saved) setValue("");
     setBusy(false);
   }
-  return <form className="today-capture" onSubmit={submit}>
-    <label><span>Quick capture</span><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="What needs to move?" aria-label="Today task" maxLength={500} /></label>
+  return <form className="capture" onSubmit={submit}>
+    <label className="capture-text"><span>Add a task</span><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="What needs to move today?" aria-label="Today task" maxLength={500} /></label>
     <label><span>Priority</span><select value={priority} onChange={(event) => setPriority(Number(event.target.value))} aria-label="New task priority"><option value="1">P1 · Focus</option><option value="2">P2 · Next</option><option value="3">P3 · Later</option></select></label>
     <label><span>Owner</span><select value={owner} onChange={(event) => setOwner(event.target.value)} aria-label="New task owner"><option value="me">Me</option><option value="agent">Agent</option></select></label>
-    <button type="submit" disabled={!value.trim() || busy} aria-label="Add today task">{busy ? "Adding…" : "Add task"}</button>
+    <button type="submit" className="button primary" disabled={!value.trim() || busy} aria-label="Add today task">{busy ? "Adding…" : "Add"}</button>
   </form>;
 }
 
 function DailyTaskRow({ task, completed = false, bucket = "today", onToggle, onLocalEdit, onSave, onUpdate, onRemove }) {
-  return <div className={`daily-task ${completed ? "is-done" : ""}`}>
+  return <div className={`task ${completed ? "is-done" : ""}`}>
     <input type="checkbox" checked={completed} onChange={(event) => onToggle(task.id, event.target.checked)} aria-label={`${completed ? "Reopen" : "Complete"} ${task.text}`} />
-    <div className="daily-task-copy">
+    <div className="task-body">
       <textarea rows="1" value={task.text} onChange={(event) => onLocalEdit(task.id, event.target.value)} onBlur={() => onSave(task)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} aria-label={`Edit task: ${task.text}`} maxLength={500} />
       <div className="task-meta">
-        {completed ? <><span>P{task.priority || 2}</span><span>{task.owner === "agent" ? "Agent" : "Me"}</span></> : <>
+        {completed ? <><span className="tag">P{task.priority || 2}</span><span className="tag">{task.owner === "agent" ? "Agent" : "Me"}</span></> : <>
           <select value={task.priority || 2} onChange={(event) => onUpdate(task.id, { priority: Number(event.target.value) })} aria-label={`Priority for ${task.text}`}><option value="1">P1</option><option value="2">P2</option><option value="3">P3</option></select>
           <select value={task.owner || "me"} onChange={(event) => onUpdate(task.id, { owner: event.target.value })} aria-label={`Owner for ${task.text}`}><option value="me">Me</option><option value="agent">Agent</option></select>
-          {task.carried ? <span>Carried</span> : null}
-          <button type="button" onClick={() => onUpdate(task.id, { bucket: bucket === "today" ? "tomorrow" : "today" })}>{bucket === "today" ? "Tomorrow" : "Move to today"}</button>
+          {task.carried ? <span className="tag">Carried</span> : null}
+          <button type="button" className="task-move" onClick={() => onUpdate(task.id, { bucket: bucket === "today" ? "tomorrow" : "today" })}>{bucket === "today" ? "Move to tomorrow" : "Move to today"}</button>
         </>}
       </div>
     </div>
-    <button className="daily-task-remove" onClick={() => onRemove(task.id)} aria-label={`Delete ${task.text}`}>×</button>
+    <IconButton className="task-remove" label={`Delete ${task.text}`} onClick={() => onRemove(task.id)}><Trash2 size={14} strokeWidth={1.8} /></IconButton>
   </div>;
 }
 
-function TaskSection({ title, label, tasks, empty, tone = "", bucket = "today", taskProps }) {
-  return <section className={`daily-section ${tone}`}><header><div><span>{label}</span><h2>{title}</h2></div><strong>{tasks.length}</strong></header>
-    <div className="daily-tasks">{tasks.map((task) => <DailyTaskRow key={task.id} task={task} bucket={bucket} {...taskProps} />)}{!tasks.length && <p className="daily-empty">{empty}</p>}</div>
+function TaskSection({ title, label, tasks, empty, tone = "", bucket = "today", taskProps, footer }) {
+  return <section className={`card ${tone}`}>
+    <header><div><span className="kicker">{label}</span><h2>{title}</h2></div><strong className="count">{tasks.length}</strong></header>
+    <div className="tasks">{tasks.map((task) => <DailyTaskRow key={task.id} task={task} bucket={bucket} completed={bucket === "done"} {...taskProps} />)}{!tasks.length && <p className="card-empty">{empty}</p>}</div>
+    {footer}
   </section>;
 }
 
-function DailyPlanner({ daily, status, onAdd, onToggle, onLocalEdit, onSave, onUpdate, onRemove, onHide, onRetry }) {
+function TodayPage({ daily, status, onAdd, onToggle, onLocalEdit, onSave, onUpdate, onRemove, onHide, onRetry }) {
   const failed = status.startsWith("Could not");
-  if (!daily) return <section className="editor daily-editor"><header className="editor-bar"><div className="editor-context"><span className={`save-state ${failed ? "failed" : ""}`}>{status}</span></div><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></header><div className="daily-loading"><strong>{failed ? "Daily plan unavailable" : "Opening today…"}</strong><span>{failed ? "Your notes are safe. Try loading the daily plan again." : "Checking yesterday and preparing today."}</span>{failed && <button className="plain-button" onClick={onRetry}>Try again</button>}</div></section>;
+  if (!daily) return <section className="pane">
+    <EditorBar status={status} onHide={onHide} />
+    <div className="pane-scroll"><EmptyState title={failed ? "Daily plan unavailable" : "Opening today…"} body={failed ? "Your notes are safe. Try loading the daily plan again." : "Checking yesterday and preparing today."} action={failed ? <button type="button" className="button" onClick={onRetry}><RotateCcw size={15} strokeWidth={1.8} />Try again</button> : null} /></div>
+  </section>;
   const planned = daily.today.length + daily.done.length;
   const percent = planned ? Math.round((daily.done.length / planned) * 100) : 0;
   const myFocus = daily.today.filter((task) => task.owner !== "agent" && task.priority === 1);
   const myNext = daily.today.filter((task) => task.owner !== "agent" && task.priority !== 1);
   const agentQueue = daily.today.filter((task) => task.owner === "agent");
   const taskProps = { onToggle, onLocalEdit, onSave, onUpdate, onRemove };
-  return <section className="editor daily-editor">
-    <header className="editor-bar"><div className="editor-context"><span className={`save-state ${failed ? "failed" : ""}`}>{status}</span><span className="notebook-name">Today</span></div><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></header>
-    <div className="daily-scroll">
-      <header className="daily-heading"><div><span className="daily-kicker">Today</span><h1>{dailyDate(daily.date)}</h1><p>One trusted place for what matters, what moved, and what runs next.</p></div><div className="daily-progress"><strong>{daily.done.length}/{planned}</strong><span>done</span><div><i style={{ width: `${percent}%` }} /></div></div></header>
-      <TodayCapture onAdd={onAdd} />
-      {daily.carriedCount > 0 && <div className="daily-rollover" role="status"><span>↻</span><div><strong>{daily.carriedCount} carried forward</strong><p>Still open, still visible. Re-rank it or move it to tomorrow.</p></div></div>}
-      <div className="priority-board">
-        <div className="priority-main">
-          <TaskSection label="P1 · Limit 3" title="My focus" tasks={myFocus} empty="Choose the one thing that makes today count." tone="daily-focus" taskProps={taskProps} />
-          <TaskSection label="P2–P3" title="Next up" tasks={myNext} empty="Everything else can wait here without being lost." taskProps={taskProps} />
-          <section className="daily-section daily-done"><header><div><span>Record</span><h2>Done today</h2></div><strong>{daily.done.length}</strong></header>
-            <div className="daily-tasks">{daily.done.map((task) => <DailyTaskRow key={task.id} task={task} completed {...taskProps} />)}{!daily.done.length && <p className="daily-empty">Finished work becomes today’s proof.</p>}</div>
-            <DailyAddForm label="Completed task" placeholder="Log something already finished…" buttonLabel="Log" onAdd={(text) => onAdd(text, "today", true, { priority: 2, owner: "me" })} />
-          </section>
+  return <section className="pane">
+    <EditorBar status={status} context="Today" onHide={onHide} />
+    <div className="pane-scroll">
+      <div className="pane-body">
+        <header className="page-head">
+          <div><h1>{dailyDate(daily.date)}</h1><p>One place for what matters today, what moved, and what runs next.</p></div>
+          <div className="progress" role="group" aria-label="Completed tasks today">
+            <strong>{daily.done.length}<span>/{planned}</span></strong>
+            <div><i style={{ width: `${percent}%` }} /></div>
+          </div>
+        </header>
+        <TodayCapture onAdd={onAdd} />
+        {daily.carriedCount > 0 && <p className="banner" role="status"><RotateCcw size={15} strokeWidth={1.8} /><span><strong>{daily.carriedCount} carried forward.</strong> Still open from earlier days — re-rank it or move it to tomorrow.</span></p>}
+        <div className="board">
+          <div className="board-column">
+            <TaskSection label="P1 · Limit 3" title="My focus" tasks={myFocus} empty="Choose the one thing that makes today count." tone="is-focus" taskProps={taskProps} />
+            <TaskSection label="P2–P3" title="Next up" tasks={myNext} empty="Everything else can wait here without being lost." taskProps={taskProps} />
+          </div>
+          <div className="board-column">
+            <TaskSection label="Delegated" title="Agent queue" tasks={agentQueue} empty="Assign clear, independent work here." tone="is-agent" taskProps={taskProps} />
+            <TaskSection label="Next day" title="Tomorrow" tasks={daily.tomorrow} bucket="tomorrow" empty="Leave tomorrow a clear first move." taskProps={taskProps} footer={<DailyAddForm label="Tomorrow task" placeholder="Set up tomorrow…" onAdd={(text) => onAdd(text, "tomorrow", false, { priority: 2, owner: "me" })} />} />
+          </div>
         </div>
-        <div className="priority-rail">
-          <TaskSection label="Delegated" title="Agent queue" tasks={agentQueue} empty="Assign clear, independent work here." tone="daily-agent" taskProps={taskProps} />
-          <section className="daily-section daily-tomorrow"><header><div><span>Next day</span><h2>Tomorrow</h2></div><strong>{daily.tomorrow.length}</strong></header>
-            <div className="daily-tasks">{daily.tomorrow.map((task) => <DailyTaskRow key={task.id} task={task} bucket="tomorrow" {...taskProps} />)}{!daily.tomorrow.length && <p className="daily-empty">Leave tomorrow a clear first move.</p>}</div>
-            <DailyAddForm label="Tomorrow task" placeholder="Set up tomorrow…" onAdd={(text) => onAdd(text, "tomorrow", false, { priority: 2, owner: "me" })} />
-          </section>
-          <aside className="daily-loop-note"><span>Rule</span><p>Unfinished work rolls forward automatically. Nothing disappears; you only re-rank it.</p></aside>
-        </div>
+        <TaskSection label="Record" title="Done today" tasks={daily.done} bucket="done" empty="Finished work shows up here." tone="is-done" taskProps={taskProps} footer={<DailyAddForm label="Completed task" placeholder="Log something already finished…" buttonLabel="Log" onAdd={(text) => onAdd(text, "today", true, { priority: 2, owner: "me" })} />} />
       </div>
     </div>
   </section>;
 }
 
-function UniversalSearchResults({ query, notes, skills, slashCommands, bots, mcpServers, daily, onOpenNote, onOpenSkill, onOpenCommand, onOpenBot, onOpenMcp, onOpenTask }) {
-  const needle = query.trim().toLowerCase();
-  const matches = (value) => String(value || "").toLowerCase().includes(needle);
-  const noteResults = notes.filter((note) => !note.deleted_at && matches(`${noteName(note)} ${note.body || ""}`));
-  const skillResults = skills.filter((skill) => matches(`${skillName(skill)} ${skill.category || ""} ${skill.body || ""}`));
-  const commandResults = slashCommands.filter((item) => matches(`${slashCommandName(item)} ${item.command || ""} ${item.body || ""}`));
-  const botResults = bots.filter((bot) => {
-    const documentation = notes.find((note) => note.id === bot.documentationNoteId);
-    const relatedMcp = (bot.mcpServerIds || []).map((id) => mcpServers.find((server) => server.id === id)?.name || id).join(" ");
-    const relatedSkills = (bot.skillIds || []).map((id) => skills.find((skill) => skill.id === id)?.name || id).join(" ");
-    return matches(`${bot.name} ${bot.description || ""} ${(bot.tags || []).join(" ")} ${(bot.connections || []).map((connection) => `${connection.username || ""} ${connection.displayName || ""}`).join(" ")} ${(bot.jobs || []).map((job) => job.name).join(" ")} ${(bot.commands || []).map((command) => `${command.command} ${command.description || ""}`).join(" ")} ${relatedMcp} ${relatedSkills} ${documentation?.title || ""} ${documentation?.body || ""}`);
-  });
-  const mcpResults = mcpServers.filter((server) => matches(`${server.name} ${server.description || ""} ${server.transport || ""} ${server.body || ""}`));
-  const taskResults = daily ? [
-    ...daily.today.map((task) => ({ ...task, location: "Today" })),
-    ...daily.tomorrow.map((task) => ({ ...task, location: "Tomorrow" })),
-    ...daily.done.map((task) => ({ ...task, location: "Done today" })),
-  ].filter((task) => matches(task.text)) : [];
-  const groups = [
-    { label: "Tasks", items: taskResults, render: (task) => <button key={task.id} onClick={() => onOpenTask(task)}><span className="result-mark task">✓</span><div><strong>{task.text}</strong><small>{task.location} · P{task.priority || 2} · {task.owner === "agent" ? "Agent" : "Me"}</small></div></button> },
-    { label: "Notes", items: noteResults, render: (note) => <button key={note.id} onClick={() => onOpenNote(note)}><span className="result-mark note">N</span><div><strong>{noteName(note)}</strong><small>{preview(note)}</small></div></button> },
-    { label: "Bots", items: botResults, render: (bot) => <button key={bot.id} onClick={() => onOpenBot(bot)}><span className="result-mark bot"><Bot size={12} /></span><div><strong>{bot.name}</strong><small>{bot.derivedState?.state || "unknown"} · {bot.executionMode}</small></div></button> },
-    { label: "MCP Servers", items: mcpResults, render: (server) => <button key={server.id} onClick={() => onOpenMcp(server)}><span className="result-mark mcp"><ServerCog size={12} /></span><div><strong>{server.name}</strong><small>{server.transport || "stdio"}</small></div></button> },
-    { label: "Skills", items: skillResults, render: (skill) => <button key={skill.id} onClick={() => onOpenSkill(skill)}><span className="result-mark skill">S</span><div><strong>{skillName(skill)}</strong><small>{skill.category || "Unsorted"}</small></div></button> },
-    { label: "Commands", items: commandResults, render: (item) => <button key={item.id} onClick={() => onOpenCommand(item)}><span className="result-mark command">/</span><div><strong>{slashCommandName(item)}</strong><small>{item.command || "Reference"}</small></div></button> },
-  ].filter((group) => group.items.length);
-  return <div className="global-results" aria-live="polite">
-    <div className="search-summary"><span>Results for “{query.trim()}”</span><small>{groups.reduce((total, group) => total + group.items.length, 0)}</small></div>
-    {groups.map((group) => <section key={group.label}><header><span>{group.label}</span><small>{group.items.length}</small></header>{group.items.slice(0, 8).map(group.render)}</section>)}
-    {!groups.length && <div className="search-empty"><strong>No match</strong><span>Search checks notes, tasks, bots, jobs, commands, MCP servers, skills, and categories.</span></div>}
-  </div>;
-}
-
-class ErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
-  render() {
-    if (this.state.error) return <main className="app-error"><strong>Notebook hit a screen error.</strong><span>Your notes are still saved locally.</span><button onClick={() => location.reload()}>Reload Notebook</button></main>;
-    return this.props.children;
-  }
-}
-
-function hashRoute() {
-  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  const routes = { today: "daily", notes: "notes", projects: "projects", bots: "bots", "mcp-servers": "mcp-servers", skills: "skills", commands: "slash-commands" };
-  return { view: routes[parts[0]] || "daily", id: parts[1] || null };
-}
-
-function App() {
-  const [view, setView] = useState(() => hashRoute().view);
-  const [notes, setNotes] = useState([]);
-  const [notebooks, setNotebooks] = useState([]);
-  const [activeNotebookId, setActiveNotebookId] = useState("inbox");
-  const [current, setCurrent] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [skills, setSkills] = useState([]);
-  const [currentSkill, setCurrentSkill] = useState(null);
-  const [skillCategory, setSkillCategory] = useState("Active");
-  const [skillHome, setSkillHome] = useState(true);
-  const [slashCommands, setSlashCommands] = useState([]);
-  const [currentSlashCommand, setCurrentSlashCommand] = useState(null);
-  const [bots, setBots] = useState([]);
-  const [mcpServers, setMcpServers] = useState([]);
-  const [currentBotId, setCurrentBotId] = useState(() => hashRoute().view === "bots" ? hashRoute().id : null);
-  const [currentMcpId, setCurrentMcpId] = useState(() => hashRoute().view === "mcp-servers" ? hashRoute().id : null);
-  const [daily, setDaily] = useState(null);
-  const [dailyStatus, setDailyStatus] = useState("Loading…");
-  const [saveState, setSaveState] = useState("Loading…");
-  const [compressOpen, setCompressOpen] = useState(false);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [backups, setBackups] = useState([]);
-  const [dataLocation, setDataLocation] = useState("");
-  const [recoveryMessage, setRecoveryMessage] = useState("");
-  const [closing, setClosing] = useState(false);
-  const [opening, setOpening] = useState(false);
-  const [showTick, setShowTick] = useState(0);
-  const [editorMode, setEditorMode] = useState("write");
-  const [notebookEditor, setNotebookEditor] = useState(null);
-  const [appVersion, setAppVersion] = useState("");
-  const [mailStatus, setMailStatus] = useState({ status: "idle", message: "" });
-  const [notionStatus, setNotionStatus] = useState({ status: "idle", message: "" });
-  const saveTimer = useRef();
-  const skillSaveTimer = useRef();
-  const slashCommandSaveTimer = useRef();
-  const noticeTimer = useRef();
-  const editorRef = useRef();
-  const searchRef = useRef();
-  const surfaceRef = useRef(null);
-  const currentRef = useRef(null);
-  const currentSkillRef = useRef(null);
-  const currentSlashCommandRef = useRef(null);
-  const viewRef = useRef("daily");
-  const previousViewRef = useRef("daily");
-
-  const load = async () => {
-    const [list, savedSkills, savedSlashCommands, savedNotebooks, savedBots, savedMcpServers, version] = await Promise.all([api.notes.list(), api.skills.list(), api.slashCommands.list(), api.folders.list(), api.bots.list({ includeArchived: true }), api.mcpServers.list(), api.settings.version()]);
-    const inboxId = savedNotebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
-    setNotes(list);
-    setSkills(savedSkills);
-    setSlashCommands(savedSlashCommands);
-    setBots(savedBots);
-    setMcpServers(savedMcpServers);
-    setNotebooks(savedNotebooks);
-    setAppVersion(version);
-    setActiveNotebookId(inboxId);
-    const inboxNote = list.find((note) => !note.deleted_at && note.folder_id === inboxId);
-    if (inboxNote) setCurrent(inboxNote);
-    else if (list.some((note) => !note.deleted_at)) { setActiveNotebookId("all"); setCurrent(list.find((note) => !note.deleted_at)); }
-    else {
-      const note = await api.notes.create({ title: "", body: "", folderId: inboxId });
-      setNotes([note]); setCurrent(note);
-    }
-    if (savedSkills.length) setCurrentSkill(savedSkills[0]);
-    if (savedSlashCommands.length) setCurrentSlashCommand(savedSlashCommands[0]);
-    setSaveState("Saved");
-    await loadDaily();
-  };
-
-  async function loadDaily() {
-    setDailyStatus("Loading…");
-    try { setDaily(await api.daily.get()); setDailyStatus("Saved"); }
-    catch { setDailyStatus("Could not load daily plan"); }
-  }
-  async function reloadBots() { const saved = await api.bots.list({ includeArchived: true }); setBots(saved); return saved; }
-  async function reloadNotes() { const saved = await api.notes.list(); setNotes(saved); return saved; }
-  async function reloadMcpServers() { const saved = await api.mcpServers.list(); setMcpServers(saved); return saved; }
-
+function NotePage({ note, notebooks, status, mode, onMode, onEdit, onSave, onCopy, onCopyPath, onCompress, onFormat, onGoogleDoc, onDrag, onDragEnd, onTogglePin, onMove, onRemove, onAddTodo, onToggleTodo, onCreate, onHide, editorRef, notebookName }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
   useEffect(() => {
-    load().catch(() => setSaveState("Could not load notes"));
-    api.onNewInboxNote(() => createNote("inbox"));
-    api.onFocusEditor(() => setTimeout(() => editorRef.current?.focus(), 0));
-    api.onFlushEditor(() => { if (currentRef.current) saveNow(currentRef.current); if (currentSkillRef.current) saveSkillNow(currentSkillRef.current); if (currentSlashCommandRef.current) saveSlashCommandNow(currentSlashCommandRef.current); });
-    api.onOverlayHiding(() => {
-      setClosing(true);
-      if (["mail", "notion"].includes(viewRef.current)) {
-        api[viewRef.current].hide().catch(() => {});
-        setView(previousViewRef.current);
-      }
-    });
-    api.onOverlayShown(() => { setClosing(false); setShowTick((tick) => tick + 1); loadDaily(); });
-    const stopBotStatus = api.bots.onStatus?.((update) => { if (update?.bot?.id) setBots((items) => items.map((item) => item.id === update.bot.id ? update.bot : item)); });
-    const onHashChange = () => { const route = hashRoute(); setView(route.view); if (route.view === "bots") setCurrentBotId(route.id); if (route.view === "mcp-servers") setCurrentMcpId(route.id); };
-    addEventListener("hashchange", onHashChange);
-    return () => { stopBotStatus?.(); removeEventListener("hashchange", onHashChange); clearTimeout(saveTimer.current); clearTimeout(skillSaveTimer.current); clearTimeout(slashCommandSaveTimer.current); clearTimeout(noticeTimer.current); };
-  }, []);
-
-  useEffect(() => {
-    setOpening(true);
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      const timer = setTimeout(() => setOpening(false), 360);
-      return () => clearTimeout(timer);
-    }
-    const surface = surfaceRef.current;
-    if (!surface?.animate) { setOpening(false); return; }
-    const animation = surface.animate(
-      [
-        { opacity: 0, transform: "translateY(34px) scale(0.96)" },
-        { opacity: 1, offset: 0.7 },
-        { opacity: 1, transform: "translateY(0) scale(1)" },
-      ],
-      { duration: 360, easing: "cubic-bezier(0.22, 1.32, 0.36, 1)" }
-    );
-    animation.onfinish = () => setOpening(false);
-    const timer = setTimeout(() => setOpening(false), 380);
-    return () => { clearTimeout(timer); animation.cancel(); };
-  }, [showTick]);
-
-  useEffect(() => { currentRef.current = current; }, [current]);
-  useEffect(() => { currentSkillRef.current = currentSkill; }, [currentSkill]);
-  useEffect(() => { currentSlashCommandRef.current = currentSlashCommand; }, [currentSlashCommand]);
-  useEffect(() => { viewRef.current = view; if (!["mail", "notion"].includes(view)) previousViewRef.current = view; }, [view]);
-  useEffect(() => {
-    const stopOpen = api.onOpenMail?.(() => openMail());
-    const stopStatus = api.onMailStatus?.((next) => setMailStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Gmail returned an invalid status." }));
-    const stopNotionOpen = api.onOpenNotion?.(() => openNotion());
-    const stopNotionStatus = api.onNotionStatus?.((next) => setNotionStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Notion returned an invalid status." }));
-    return () => { stopOpen?.(); stopStatus?.(); stopNotionOpen?.(); stopNotionStatus?.(); };
-  }, []);
-  useEffect(() => {
-    const closeMenus = (event) => document.querySelectorAll("details[open]").forEach((details) => { if (!details.contains(event.target)) details.open = false; });
-    const handleKeys = (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); }
-      if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) { event.preventDefault(); searchRef.current?.focus(); }
-      if (event.key === "Escape") {
-        document.querySelectorAll("details[open]").forEach((details) => { details.open = false; });
-        if (searchQuery) { setSearchQuery(""); searchRef.current?.blur(); }
-      }
-    };
-    document.addEventListener("pointerdown", closeMenus);
-    document.addEventListener("keydown", handleKeys);
-    return () => { document.removeEventListener("pointerdown", closeMenus); document.removeEventListener("keydown", handleKeys); };
-  }, [searchQuery]);
-
-  async function createNote(folderId) {
-    const inboxId = notebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
-    const destination = folderId || (activeNotebookId === "all" ? inboxId : activeNotebookId);
-    try {
-      const note = await api.notes.create({ title: "", body: "", folderId: destination });
-      setNotes((items) => [note, ...items]);
-      setActiveNotebookId(destination);
-      setCurrent(note);
-      setView("notes");
-      setSearchQuery("");
-      setEditorMode("write");
-      setCompressOpen(false);
-      setSaveState("Saved");
-      setTimeout(() => editorRef.current?.focus(), 0);
-    } catch { setSaveState("Could not create note"); }
-  }
-
-  async function createSkill() {
-    const skill = await api.skills.create({ name: "", category: "Unsorted", body: "" });
-    setSkills((items) => [skill, ...items]);
-    setCurrentSkill(skill);
-    setSkillHome(false);
-    setSaveState("Saved");
-  }
-
-  async function createSlashCommand() {
-    try {
-      const item = await api.slashCommands.create({ name: "", command: "", body: "" });
-      setSlashCommands((items) => [item, ...items]);
-      setCurrentSlashCommand(item);
-      setSaveState("Saved");
-    } catch { setSaveState("Could not create command"); }
-  }
-
-  async function runDailyAction(action) {
-    setDailyStatus("Saving…");
-    try {
-      setDaily(await action());
-      setDailyStatus("Saved");
-      return true;
-    } catch {
-      try { setDaily(await api.daily.get()); } catch { /* Keep the last visible state. */ }
-      setDailyStatus("Could not save daily plan");
-      return false;
-    }
-  }
-
-  function addDailyTask(text, bucket, completed, details = {}) {
-    return runDailyAction(() => api.daily.create({ text, bucket, completed, ...details }));
-  }
-
-  function toggleDailyTask(id, completed) {
-    return runDailyAction(() => api.daily.complete(id, completed));
-  }
-
-  function editDailyTaskLocal(id, text) {
-    setDaily((value) => value ? {
-      ...value,
-      today: value.today.map((task) => task.id === id ? { ...task, text } : task),
-      done: value.done.map((task) => task.id === id ? { ...task, text } : task),
-      tomorrow: value.tomorrow.map((task) => task.id === id ? { ...task, text } : task),
-    } : value);
-  }
-
-  function saveDailyTask(task) {
-    return runDailyAction(() => api.daily.update(task.id, { text: task.text, priority: task.priority || 2, owner: task.owner || "me" }));
-  }
-
-  function updateDailyTask(id, patch) {
-    return runDailyAction(() => api.daily.update(id, patch));
-  }
-
-  function removeDailyTask(id) {
-    return runDailyAction(() => api.daily.remove(id));
-  }
-
-  async function saveNow(note) {
-    clearTimeout(saveTimer.current);
-    setSaveState("Saving…");
-    try {
-      const saved = await api.notes.update(note.id, { title: note.title, body: note.body, folderId: note.folder_id });
-      setNotes((items) => items.map((item) => item.id === saved.id ? saved : item));
-      setCurrent((item) => item?.id === saved.id ? saved : item);
-      setSaveState("Saved");
-    } catch { setSaveState("Save failed"); }
-  }
-
-  function save(note) {
-    clearTimeout(saveTimer.current);
-    setSaveState("Saving…");
-    saveTimer.current = setTimeout(() => saveNow(note), 280);
-  }
-
-  function edit(patch) {
-    if (!current) return;
-    const next = { ...current, ...patch, updated_at: new Date().toISOString() };
-    setCurrent(next);
-    setNotes((items) => items.map((item) => item.id === next.id ? next : item));
-    save(next);
-  }
-
-  async function saveSkillNow(skill) {
-    clearTimeout(skillSaveTimer.current);
-    setSaveState("Saving…");
-    try {
-      const saved = await api.skills.update(skill.id, { name: skill.name, category: skill.category?.trim() || "Unsorted", body: skill.body });
-      setSkills((items) => items.map((item) => item.id === saved.id ? saved : item));
-      setCurrentSkill((item) => item?.id === saved.id ? saved : item);
-      setSaveState("Saved");
-    } catch { setSaveState("Save failed"); }
-  }
-
-  function saveSkill(skill) {
-    clearTimeout(skillSaveTimer.current);
-    setSaveState("Saving…");
-    skillSaveTimer.current = setTimeout(() => saveSkillNow(skill), 280);
-  }
-
-  function editSkill(patch) {
-    if (!currentSkill) return;
-    const next = { ...currentSkill, ...patch, updated_at: new Date().toISOString() };
-    setCurrentSkill(next);
-    setSkills((items) => items.map((item) => item.id === next.id ? next : item));
-    saveSkill(next);
-  }
-
-  async function saveSlashCommandNow(item) {
-    clearTimeout(slashCommandSaveTimer.current);
-    setSaveState("Saving…");
-    try {
-      const saved = await api.slashCommands.update(item.id, { name: item.name, command: item.command, body: item.body });
-      setSlashCommands((items) => items.map((entry) => entry.id === saved.id ? saved : entry));
-      setCurrentSlashCommand((entry) => entry?.id === saved.id ? saved : entry);
-      setSaveState("Saved");
-    } catch { setSaveState("Save failed"); }
-  }
-
-  function saveSlashCommand(item) {
-    clearTimeout(slashCommandSaveTimer.current);
-    setSaveState("Saving…");
-    slashCommandSaveTimer.current = setTimeout(() => saveSlashCommandNow(item), 280);
-  }
-
-  function editSlashCommand(patch) {
-    if (!currentSlashCommand) return;
-    const next = { ...currentSlashCommand, ...patch, updated_at: new Date().toISOString() };
-    setCurrentSlashCommand(next);
-    setSlashCommands((items) => items.map((item) => item.id === next.id ? next : item));
-    saveSlashCommand(next);
-  }
-
-  async function remove(note) {
-    if (!window.confirm(`Move “${noteName(note)}” to Trash?`)) return;
-    await api.notes.trash(note.id);
-    const remaining = notes.filter((item) => item.id !== note.id);
-    setNotes(remaining);
-    const next = remaining.find((item) => activeNotebookId === "all" || item.folder_id === activeNotebookId);
-    setCurrent(next || null);
-    if (!remaining.length) await createNote();
-  }
-
-  function openNotebook(id) {
-    setActiveNotebookId(id);
-    setCurrent(notes.find((note) => !note.deleted_at && (id === "all" || note.folder_id === id)) || null);
-    setEditorMode("write");
-    setCompressOpen(false);
-  }
-
-  async function submitNotebook(event) {
-    event.preventDefault();
-    const name = notebookEditor?.value?.trim();
-    if (!name) return;
-    try {
-      if (notebookEditor.mode === "create") {
-        const notebook = await api.folders.create(name);
-        setNotebooks(await api.folders.list());
-        setNotebookEditor(null);
-        await createNote(notebook.id);
-      } else {
-        await api.folders.rename(notebookEditor.id, name);
-        setNotebooks(await api.folders.list());
-        setNotebookEditor(null);
-      }
-    } catch { setSaveState(`Could not ${notebookEditor.mode} notebook`); }
-  }
-
-  function renameNotebook() {
-    const notebook = notebooks.find((item) => item.id === activeNotebookId);
-    if (!notebook || notebook.is_inbox) return;
-    setNotebookEditor({ mode: "rename", id: notebook.id, value: notebook.name });
-  }
-
-  async function deleteNotebook() {
-    const notebook = notebooks.find((item) => item.id === activeNotebookId);
-    if (!notebook || notebook.is_inbox) return;
-    if (!window.confirm(`Delete notebook “${notebook.name}”? Its notes will move to Inbox.`)) return;
-    try {
-      await api.folders.remove(notebook.id);
-      const [savedNotes, savedNotebooks] = await Promise.all([api.notes.list(), api.folders.list()]);
-      const inboxId = savedNotebooks.find((item) => item.is_inbox)?.id || "inbox";
-      setNotes(savedNotes); setNotebooks(savedNotebooks); setActiveNotebookId(inboxId);
-      setCurrent(savedNotes.find((note) => !note.deleted_at && note.folder_id === inboxId) || null);
-      setSaveState("Saved");
-    } catch { setSaveState("Could not delete notebook"); }
-  }
-
-  async function moveCurrentTo(folderId) {
-    if (!current || folderId === current.folder_id) return;
-    const next = { ...current, folder_id: folderId, updated_at: new Date().toISOString() };
-    setCurrent(next);
-    setNotes((items) => items.map((item) => item.id === next.id ? next : item));
-    setActiveNotebookId(folderId);
-    await saveNow(next);
-  }
-
-  async function removeSkill(skill) {
-    if (!window.confirm(`Delete “${skillName(skill)}”?`)) return;
-    await api.skills.remove(skill.id);
-    const remaining = skills.filter((item) => item.id !== skill.id);
-    setSkills(remaining); setCurrentSkill(remaining[0] || null); if (!remaining.length) setSkillHome(true);
-  }
-
-  async function removeSlashCommand(item) {
-    if (!window.confirm(`Delete “${slashCommandName(item)}”?`)) return;
-    await api.slashCommands.remove(item.id);
-    const remaining = slashCommands.filter((entry) => entry.id !== item.id);
-    setSlashCommands(remaining); setCurrentSlashCommand(remaining[0] || null);
-  }
-
-  async function openRecovery() {
-    setRecoveryOpen(true); setCompressOpen(false); setRecoveryMessage("");
-    try {
-      const [savedBackups, location] = await Promise.all([api.backups.list(), api.settings.dataLocation()]);
-      setBackups(savedBackups); setDataLocation(location);
-    } catch { setRecoveryMessage("Could not load recovery information."); }
-  }
-
-  async function makeBackup() {
-    setRecoveryMessage("Creating backup…");
-    try {
-      const backup = await api.backups.create();
-      setBackups((items) => [backup, ...items]); setRecoveryMessage("Backup created.");
-    } catch { setRecoveryMessage("Could not create backup."); }
-  }
-
-  async function restoreBackup(backup) {
-    if (!window.confirm(`Replace your current notes with the backup from ${fullTime(backup.createdAt)}? A safety backup will be made first.`)) return;
-    setRecoveryMessage("Restoring…");
-    try {
-      // Desktop returns { notes, skills, slashCommands }; the browser mock returns a notes array.
-      const restored = await api.backups.restore(backup.name);
-      const restoredNotes = Array.isArray(restored) ? restored : restored.notes;
-      const restoredSkills = Array.isArray(restored) ? null : restored.skills;
-      const restoredSlashCommands = Array.isArray(restored) ? null : restored.slashCommands;
-      const restoredNotebooks = await api.folders.list();
-      const inboxId = restoredNotebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
-      setNotebooks(restoredNotebooks); setActiveNotebookId(inboxId);
-      setNotes(restoredNotes.filter((note) => !note.deleted_at)); setCurrent(restoredNotes.find((note) => !note.deleted_at && note.folder_id === inboxId) || restoredNotes.find((note) => !note.deleted_at) || null);
-      if (restoredSkills) { setSkills(restoredSkills); setCurrentSkill(restoredSkills[0] || null); }
-      if (restoredSlashCommands) { setSlashCommands(restoredSlashCommands); setCurrentSlashCommand(restoredSlashCommands[0] || null); }
-      await loadDaily();
-      setRecoveryMessage("Backup restored.");
-    } catch { setRecoveryMessage("Could not restore that backup."); }
-  }
-
-  async function exportNotes(format) {
-    try { const result = await api.settings.export(format); setRecoveryMessage(result?.canceled ? "Export cancelled." : "Export saved."); }
-    catch { setRecoveryMessage("Could not export notes."); }
-  }
-
-  async function copyCurrent() {
-    if (!current) return;
-    const text = markdownFor(current);
-    if (!text) return setSaveState("Nothing to copy");
-    try { await api.clipboard.writeText(text); showSaveNotice("Copied"); }
-    catch { setSaveState("Copy failed"); }
-  }
-
-  async function copySkill() {
-    if (!currentSkill) return;
-    const text = [currentSkill.name?.trim(), currentSkill.body?.trim()].filter(Boolean).join("\n\n");
-    if (!text) return setSaveState("Nothing to copy");
-    try { await api.clipboard.writeText(text); showSaveNotice("Copied"); }
-    catch { setSaveState("Copy failed"); }
-  }
-
-  async function copySlashCommand() {
-    if (!currentSlashCommand) return;
-    const text = [currentSlashCommand.command?.trim(), currentSlashCommand.body?.trim()].filter(Boolean).join("\n\n");
-    if (!text) return setSaveState("Nothing to copy");
-    try { await api.clipboard.writeText(text); showSaveNotice("Copied"); }
-    catch { setSaveState("Copy failed"); }
-  }
-
-  function showSaveNotice(message, duration = 1100) {
-    clearTimeout(noticeTimer.current);
-    setSaveState(message);
-    noticeTimer.current = setTimeout(() => setSaveState("Saved"), duration);
-  }
-
-  function dragCurrent(event) {
-    if (!current) return;
-    if (!(current.body?.trim() || current.title?.trim())) return setSaveState("Nothing to drag");
-    try {
-      if (typeof api.notes.dragCleanName === "function") {
-        event.preventDefault();
-        api.notes.dragCleanName({ id: current.id, title: current.title, body: current.body });
-        setSaveState("Dragging clean filename");
-      } else {
-        const drag = addBrowserFileDragData(event, current);
-        if (!drag) return setSaveState("Drag not supported");
-        setSaveState(`Dragging ${drag.fileName}`);
-      }
-    }
-    catch { setSaveState("Drag failed"); }
-  }
-
-  async function copyDragName() {
-    if (!current || !(current.body?.trim() || current.title?.trim())) return setSaveState("Nothing to share");
-    try {
-      const filePath = await api.notes.dragFile({ id: current.id, title: current.title, body: current.body });
-      const fileName = filePath.split(/[\\/]/).pop();
-      await api.clipboard.writeText(fileName);
-      showSaveNotice("Filename copied", 1400);
-    } catch { setSaveState("Could not create .md"); }
-  }
-
-  async function copyDragPath() {
-    if (!current || !(current.body?.trim() || current.title?.trim())) return setSaveState("Nothing to share");
-    try {
-      const filePath = await api.notes.dragFile({ id: current.id, title: current.title, body: current.body });
-      await api.clipboard.writeText(`"${filePath}"`);
-      showSaveNotice("Path copied", 1400);
-    } catch { setSaveState("Could not create .md"); }
-  }
-
-  function addTodo() {
-    if (!current) return;
-    const body = current.body || "";
-    const editor = editorRef.current;
-    const start = editorMode === "write" && editor ? editor.selectionStart : body.length;
-    const end = editorMode === "write" && editor ? editor.selectionEnd : body.length;
-    const selected = body.slice(start, end);
-    let insertion;
-    if (selected) insertion = selected.split("\n").map((line) => /^\s*[-*]\s+\[[ xX]]/.test(line) ? line : `- [ ] ${line}`).join("\n");
-    else insertion = `${start > 0 && body[start - 1] !== "\n" ? "\n" : ""}- [ ] `;
-    const nextBody = `${body.slice(0, start)}${insertion}${body.slice(end)}`;
-    const caret = start + insertion.length;
-    setEditorMode("write");
-    edit({ body: nextBody });
-    requestAnimationFrame(() => { editorRef.current?.focus(); editorRef.current?.setSelectionRange(caret, caret); });
-  }
-
-  function toggleTodo(lineIndex, checked) {
-    if (!current) return;
-    const lines = (current.body || "").split("\n");
-    lines[lineIndex] = lines[lineIndex].replace(/^(\s*[-*]\s+\[)[ xX](])/, `$1${checked ? "x" : " "}$2`);
-    edit({ body: lines.join("\n") });
-  }
-
-  function flushOpenEditors() {
-    if (currentRef.current) saveNow(currentRef.current);
-    if (currentSkillRef.current) saveSkillNow(currentSkillRef.current);
-    if (currentSlashCommandRef.current) saveSlashCommandNow(currentSlashCommandRef.current);
-  }
-
-  async function openMail() {
-    flushOpenEditors();
-    if (!["mail", "notion"].includes(viewRef.current)) previousViewRef.current = viewRef.current;
-    setCompressOpen(false);
-    setRecoveryOpen(false);
-    setSearchQuery("");
-    setMailStatus({ status: "loading", message: "" });
-    setView("mail");
-    try {
-      const next = await api.mail.show();
-      if (next?.status) setMailStatus(next);
-    } catch {
-      setMailStatus({ status: "error", message: "Gmail could not open." });
-    }
-  }
-
-  async function openNotion() {
-    flushOpenEditors();
-    if (!["mail", "notion"].includes(viewRef.current)) previousViewRef.current = viewRef.current;
-    setCompressOpen(false);
-    setRecoveryOpen(false);
-    setSearchQuery("");
-    setNotionStatus({ status: "loading", message: "" });
-    setView("notion");
-    try {
-      const next = await api.notion.show();
-      if (next?.status) setNotionStatus(next);
-    } catch {
-      setNotionStatus({ status: "error", message: "Notion could not open." });
-    }
-  }
-
-  function selectNotebookView(nextView) {
-    setView(nextView);
-    const routes = { daily: "today", notes: "notes", projects: "projects", bots: "bots", "mcp-servers": "mcp-servers", skills: "skills", "slash-commands": "commands" };
-    const route = routes[nextView];
-    if (route) {
-      const existingDetail = location.hash.startsWith(`#/${route}/`);
-      if (!existingDetail) location.hash = `/${route}`;
-    }
-    setSearchQuery("");
-    setCompressOpen(false);
-    if (nextView === "daily") loadDaily();
-  }
-
-  function openSearchNote(note) {
-    setCurrent(note);
-    setActiveNotebookId(note.folder_id);
-    selectNotebookView("notes");
-  }
-
-  function openSearchSkill(skill) {
-    setCurrentSkill(skill);
-    setSkillCategory("All");
-    setSkillHome(false);
-    selectNotebookView("skills");
-  }
-
-  function openSearchCommand(item) {
-    setCurrentSlashCommand(item);
-    selectNotebookView("slash-commands");
-  }
-
-  function openBot(id) {
-    setCurrentBotId(id || null);
-    setView("bots"); setSearchQuery(""); setCompressOpen(false);
-    location.hash = id ? `/bots/${id}` : "/bots";
-  }
-
-  function openMcp(serverOrId) {
-    const id = typeof serverOrId === "string" ? serverOrId : serverOrId?.id;
-    setCurrentMcpId(id || null);
-    setView("mcp-servers"); setSearchQuery(""); setCompressOpen(false);
-    location.hash = id ? `/mcp-servers/${id}` : "/mcp-servers";
-  }
-
-  async function closeMail() {
-    await api.mail.hide().catch(() => {});
-    setView(previousViewRef.current);
-  }
-
-  async function reloadMail() {
-    setMailStatus({ status: "loading", message: "" });
-    try { await api.mail.reload(); }
-    catch { setMailStatus({ status: "error", message: "Gmail could not reload." }); }
-  }
-
-  async function closeNotion() {
-    await api.notion.hide().catch(() => {});
-    setView(previousViewRef.current);
-  }
-
-  async function reloadNotion() {
-    setNotionStatus({ status: "loading", message: "" });
-    try { await api.notion.reload(); }
-    catch { setNotionStatus({ status: "error", message: "Notion could not reload." }); }
-  }
-
-  const visible = notes.filter((note) => !note.deleted_at && (activeNotebookId === "all" || note.folder_id === activeNotebookId));
-  const activeNotebook = notebooks.find((notebook) => notebook.id === activeNotebookId);
-  const tasks = todoItems(current?.body);
-  const skillEditorCategories = [...new Set(skills.map((skill) => skill.category?.trim() || "Unsorted"))].sort((left, right) => left.localeCompare(right));
-  const customSkillCategories = skillEditorCategories.filter((category) => !/^\d+\s*·/.test(category) && !/^99\s*·/.test(category));
-  const categories = ["Active", "Archived", "All", ...customSkillCategories];
-  const visibleSkills = skills.filter((skill) => skillCategory === "All" || (skillCategory === "Active" && !isArchivedSkill(skill)) || (skillCategory === "Archived" && isArchivedSkill(skill)) || (skill.category?.trim() || "Unsorted") === skillCategory).sort(sortSkillsByStack);
-  const visibleSlashCommands = slashCommands;
-  if (view === "mail") return <div className={`window-surface ${closing ? "is-closing" : ""}${opening ? " is-opening" : ""}`} ref={surfaceRef}><EmbeddedAppScreen appName="Gmail" status={mailStatus} preview={!window.hushnote} Preview={MailPreview} errorHint="Check your connection. Google may also block sign-in inside embedded apps." onBack={closeMail} onReload={reloadMail} onExternal={() => api.mail.openExternal()} onHide={() => api.window.hide()} /></div>;
-  if (view === "notion") return <div className={`window-surface ${closing ? "is-closing" : ""}${opening ? " is-opening" : ""}`} ref={surfaceRef}><EmbeddedAppScreen appName="Notion" status={notionStatus} preview={!window.hushnote} Preview={NotionPreview} errorHint="Check your connection, then try the external browser if sign-in is blocked." onBack={closeNotion} onReload={reloadNotion} onExternal={() => api.notion.openExternal()} onHide={() => api.window.hide()} /></div>;
-  return <div className={`window-surface ${closing ? "is-closing" : ""}${opening ? " is-opening" : ""}`} ref={surfaceRef}><main className="notebook">
-    <aside className="note-list" aria-label={view === "notes" ? "Notes" : view === "daily" ? "Today" : view === "skills" ? "Skills" : view === "projects" ? "Projects" : view === "bots" ? "Bots" : view === "mcp-servers" ? "MCP Servers" : "Slash commands"}>
-      <div className="list-top"><div className="wordmark"><span><BookOpenCheck size={15} strokeWidth={2} /></span><strong>Notebook</strong></div><div><button className="utility" onClick={openRecovery} aria-label="Backups and settings" title="Backups and settings">···</button>{["notes", "skills", "slash-commands"].includes(view) && <button className="new-note" onClick={view === "notes" ? () => createNote() : view === "skills" ? createSkill : createSlashCommand} aria-label={view === "notes" ? "New note" : view === "skills" ? "New skill" : "New slash command"}>+</button>}</div></div>
-      <nav className="page-nav" aria-label="Notebook pages">
-        <button aria-label="Today" className={view === "daily" ? "active" : ""} onClick={() => selectNotebookView("daily")}><span className="nav-mark today"><CalendarCheck2 /></span><strong>Today</strong><small>{daily?.today.length || 0}</small></button>
-        <button aria-label="Notes" className={view === "notes" ? "active" : ""} onClick={() => selectNotebookView("notes")}><span className="nav-mark note"><NotebookPen /></span><strong>Notes</strong><small>{notes.filter((note) => !note.deleted_at).length}</small></button>
-        <button aria-label="Projects" className={view === "projects" ? "active" : ""} onClick={() => selectNotebookView("projects")}><span className="nav-mark project"><FolderGit2 /></span><strong>Projects</strong><small>›</small></button>
-        <button aria-label="Mail" onClick={openMail}><span className="nav-mark mail"><BrandIcon icon={siGmail} /></span><strong>Mail</strong><small>↗</small></button>
-        <button aria-label="Notion" onClick={openNotion}><span className="nav-mark notion"><BrandIcon icon={siNotion} /></span><strong>Notion</strong><small>↗</small></button>
-        <span className="nav-label">Automation</span>
-        <button aria-label="Bots" className={view === "bots" ? "active" : ""} onClick={() => openBot(null)}><span className="nav-mark bot"><Bot /></span><strong>Bots</strong><small>{bots.filter((bot) => !bot.archivedAt).length}</small></button>
-        <button aria-label="MCP Servers" className={view === "mcp-servers" ? "active" : ""} onClick={() => openMcp(null)}><span className="nav-mark mcp"><ServerCog /></span><strong>MCP Servers</strong><small>{mcpServers.length}</small></button>
-        <button aria-label="Skills" className={view === "skills" ? "active" : ""} onClick={() => { setSkillHome(true); selectNotebookView("skills"); }}><span className="nav-mark skill"><Layers3 /></span><strong>Skills</strong><small>{skills.length}</small></button>
-        <span className="nav-label">Library</span>
-        <button aria-label="Slash commands" className={view === "slash-commands" ? "active" : ""} onClick={() => selectNotebookView("slash-commands")}><span className="nav-mark command"><SquareTerminal /></span><strong>Commands</strong><small>{slashCommands.length}</small></button>
-      </nav>
-      <label className="search global-search"><span>⌕</span><input ref={searchRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search everything" aria-label="Search everything" /><kbd>Ctrl K</kbd></label>
-      {searchQuery.trim() ? <UniversalSearchResults query={searchQuery} notes={notes} skills={skills} slashCommands={slashCommands} bots={bots} mcpServers={mcpServers} daily={daily} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenCommand={openSearchCommand} onOpenBot={(bot) => openBot(bot.id)} onOpenMcp={openMcp} onOpenTask={() => selectNotebookView("daily")} /> : view === "notes" ? <>
-        <div className="notebook-picker">
-          <select value={activeNotebookId} onChange={(event) => openNotebook(event.target.value)} aria-label="Current notebook">
-            <option value="all">All notes</option>
-            {notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name} ({notes.filter((note) => !note.deleted_at && note.folder_id === notebook.id).length})</option>)}
-          </select>
-          <button onClick={() => setNotebookEditor({ mode: "create", value: "" })} aria-label="New notebook" title="New notebook">+</button>
-          {activeNotebook && !activeNotebook.is_inbox && <details className="action-menu notebook-actions"><summary role="button" aria-label="Notebook actions" title="Notebook actions">···</summary><div className="menu-popover"><button onClick={(event) => { event.currentTarget.closest("details").open = false; renameNotebook(); }}>Rename</button><button className="danger" onClick={(event) => { event.currentTarget.closest("details").open = false; deleteNotebook(); }}>Delete</button></div></details>}
-        </div>
-        {notebookEditor && <form className="notebook-editor" onSubmit={submitNotebook}><input autoFocus value={notebookEditor.value} onChange={(event) => setNotebookEditor({ ...notebookEditor, value: event.target.value })} placeholder="Notebook name" aria-label="Notebook name" /><button type="submit">{notebookEditor.mode === "create" ? "Create" : "Save"}</button><button type="button" onClick={() => setNotebookEditor(null)} aria-label="Cancel notebook edit">×</button></form>}
-        <div className="notes" aria-live="polite">
-          {visible.map((note) => <div className={`note-row ${current?.id === note.id ? "selected" : ""}`} key={note.id}>
-            <button className="note-open" onClick={() => { setCurrent(note); setCompressOpen(false); }}><strong>{noteName(note)}</strong><span>{preview(note)}</span><small>{shortTime(note.updated_at)}</small></button>
-            <button className="note-delete" aria-label={`Delete ${noteName(note)}`} onClick={() => remove(note)}>×</button>
-          </div>)}
-          {!visible.length && <p className="empty-list">No notes here.<br />Use + to create one.</p>}
-        </div>
-      </> : view === "daily" ? <DailySidebar daily={daily} status={dailyStatus} /> : view === "projects" ? <div className="projects-sidebar"><strong>Project workspace</strong><span>Repositories, next actions, tasks, changes, instructions, skills, and commands.</span></div> : view === "bots" ? <BotSidebar bots={bots} currentId={currentBotId} onSelect={openBot} /> : view === "mcp-servers" ? <McpSidebar servers={mcpServers} currentId={currentMcpId} onSelect={openMcp} /> : view === "skills" ? <>
-        <button type="button" className={`skill-stack-nav ${skillHome ? "active" : ""}`} onClick={() => setSkillHome(true)}><LayoutDashboard size={14} /><span><strong>Skill Stack</strong><small>{skills.filter((skill) => !isArchivedSkill(skill)).length} active · {skills.filter(isArchivedSkill).length} archived</small></span></button>
-        <CategoryFilters categories={categories} active={skillCategory} onSelect={setSkillCategory} />
-        <SkillList items={visibleSkills} currentId={skillHome ? null : currentSkill?.id} onSelect={(skill) => { setCurrentSkill(skill); setSkillHome(false); }} onRemove={removeSkill} grouped={["All", "Active", "Archived"].includes(skillCategory)} />
-      </> : <>
-        <SlashCommandList items={visibleSlashCommands} currentId={currentSlashCommand?.id} onSelect={setCurrentSlashCommand} onRemove={removeSlashCommand} />
-      </>}
-    </aside>
-    {view === "notes" ? <section className="editor">
-      <header className="editor-bar">
-        <div className="editor-context"><span className={`save-state ${saveState === "Save failed" ? "failed" : ""}`}>{saveState}</span>{current && <span className="notebook-name">{notebooks.find((notebook) => notebook.id === current.folder_id)?.name}</span>}</div>
-        <div className="editor-actions">
-          <button type="button" className={`drag-action ${current && (current.body?.trim() || current.title?.trim()) ? "" : "is-disabled"}`} draggable={Boolean(current && (current.body?.trim() || current.title?.trim()))} disabled={Boolean(!current || !(current.body?.trim() || current.title?.trim()))} aria-disabled={Boolean(!current || !(current.body?.trim() || current.title?.trim()))} onDragStart={dragCurrent} onDragEnd={() => showSaveNotice("Drag finished", 900)} onClick={copyDragName} title={current && (current.body?.trim() || current.title?.trim()) ? "Drag a clean Markdown filename, or click to copy it" : "Write something before dragging a Markdown file"}>⠿ Drag .md</button>
-          <details className="action-menu"><summary role="button" aria-label="More note actions" title="More note actions">···</summary><div className="menu-popover editor-menu"><button onClick={(event) => { event.currentTarget.closest("details").open = false; copyCurrent(); }}>Copy Markdown</button><button onClick={(event) => { event.currentTarget.closest("details").open = false; copyDragPath(); }}>Copy .md path</button><button onClick={(event) => { event.currentTarget.closest("details").open = false; setCompressOpen((value) => !value); }}>Compress</button>{current && <label><span>Move to</span><select value={current.folder_id} onChange={(event) => { event.currentTarget.closest("details").open = false; moveCurrentTo(event.target.value); }} aria-label="Move note to notebook">{notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name}</option>)}</select></label>}</div></details>
-          <button className="hide" onClick={() => api.window.hide()} aria-label="Hide notebook">×</button>
-        </div>
-      </header>
-      {current ? <div className="note-canvas" key={current.id}>
-        <input className="title" value={current.title || ""} onChange={(event) => edit({ title: event.target.value })} placeholder="Untitled" aria-label="Note title" autoFocus />
-        <div className="note-tools"><button onClick={addTodo}>+ To-do</button><button className={editorMode === "checklist" ? "active" : ""} onClick={() => setEditorMode((mode) => mode === "write" ? "checklist" : "write")}>{editorMode === "write" ? `Checklist${tasks.length ? ` ${tasks.filter((task) => task.checked).length}/${tasks.length}` : ""}` : "Back to note"}</button></div>
-        {editorMode === "write" ? <textarea ref={editorRef} className="writing" value={current.body || ""} onChange={(event) => edit({ body: event.target.value })} onBlur={() => saveNow(current)} placeholder="Write Markdown. It saves automatically." aria-label="Note content" /> : <div className="checklist" aria-label="To-do checklist">
-          {tasks.map((task) => <label className={task.checked ? "done" : ""} key={task.lineIndex}><input type="checkbox" checked={task.checked} onChange={(event) => toggleTodo(task.lineIndex, event.target.checked)} /><span>{task.text}</span></label>)}
-          {!tasks.length && <div className="checklist-empty"><strong>No to-dos yet</strong><span>Add one and it will be stored as <code>- [ ]</code> in this Markdown note.</span><button className="plain-button" onClick={addTodo}>Add to-do</button></div>}
+    if (!menuOpen) return undefined;
+    const close = (event) => { if (!menuRef.current?.contains(event.target)) setMenuOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [menuOpen]);
+  if (!note) return <section className="pane">
+    <EditorBar status={status} onHide={onHide} />
+    <div className="pane-scroll"><EmptyState title={`${notebookName || "This notebook"} is empty`} body="Create a Markdown note. It saves itself as you type." action={<button type="button" className="button primary" onClick={onCreate}><Plus size={15} strokeWidth={2} />New note</button>} /></div>
+  </section>;
+  const hasContent = Boolean(note.body?.trim() || note.title?.trim());
+  const tasks = todoItems(note.body);
+  const words = countWords(note.body);
+  return <section className="pane">
+    <EditorBar status={status} context={notebookName} onHide={onHide}>
+      <IconButton label={note.pinned ? "Unpin note" : "Pin note"} className={note.pinned ? "is-active" : ""} aria-pressed={Boolean(note.pinned)} onClick={onTogglePin}><Pin size={16} strokeWidth={1.8} /></IconButton>
+      <button type="button" className="button subtle" onClick={() => onMode(mode === "write" ? "read" : "write")} aria-pressed={mode === "read"} title="Toggle Markdown preview (Ctrl+E)">
+        {mode === "write" ? <><Eye size={15} strokeWidth={1.8} />Preview</> : <><Pencil size={15} strokeWidth={1.8} />Edit</>}
+      </button>
+      <button type="button" className={`button subtle drag-action ${hasContent ? "" : "is-disabled"}`} draggable={hasContent} disabled={!hasContent} aria-disabled={!hasContent} onDragStart={onDrag} onDragEnd={onDragEnd} onClick={onCopy && (() => onCopyPath("name"))} title={hasContent ? "Drag a clean Markdown file out, or click to copy its filename" : "Write something before dragging a Markdown file"}>
+        <GripVertical size={15} strokeWidth={1.8} />Drag .md
+      </button>
+      <div className="menu" ref={menuRef}>
+        <IconButton label="More note actions" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><Ellipsis size={18} strokeWidth={1.8} /></IconButton>
+        {menuOpen && <div className="menu-popover" role="menu">
+          <button type="button" onClick={() => { setMenuOpen(false); onCopy(); }}><Copy size={14} strokeWidth={1.8} />Copy Markdown</button>
+          <button type="button" onClick={() => { setMenuOpen(false); onCopyPath("path"); }}><Copy size={14} strokeWidth={1.8} />Copy .md path</button>
+          <button type="button" onClick={() => { setMenuOpen(false); onGoogleDoc(); }}><ExternalLink size={14} strokeWidth={1.8} />Open in Google Docs</button>
+          <button type="button" onClick={() => { setMenuOpen(false); onCompress(); }}><Shrink size={14} strokeWidth={1.8} />Compress note</button>
+          <label><span>Move to notebook</span><select value={note.folder_id} onChange={(event) => { setMenuOpen(false); onMove(event.target.value); }} aria-label="Move note to notebook">{notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name}</option>)}</select></label>
+          <button type="button" className="is-danger" onClick={() => { setMenuOpen(false); onRemove(note); }}><Trash2 size={14} strokeWidth={1.8} />Delete note</button>
         </div>}
-      </div> : <div className="empty-editor"><strong>{activeNotebook?.name || "This notebook"} is empty</strong><span>Create a Markdown note to get started.</span><button className="plain-button" onClick={() => createNote()}>New note</button></div>}
-    </section> : view === "daily" ? <DailyPlanner daily={daily} status={dailyStatus} onAdd={addDailyTask} onToggle={toggleDailyTask} onLocalEdit={editDailyTaskLocal} onSave={saveDailyTask} onUpdate={updateDailyTask} onRemove={removeDailyTask} onHide={() => api.window.hide()} onRetry={loadDaily} /> : view === "projects" ? <ProjectsPage api={api.projects} skills={skills} commands={slashCommands} onHide={() => api.window.hide()} /> : view === "bots" ? <BotsWorkspace api={api} bots={bots} mcpServers={mcpServers} skills={skills} notes={notes} currentId={currentBotId} onCurrent={openBot} onBotsChange={reloadBots} onNotesChange={reloadNotes} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenMcp={openMcp} onHide={() => api.window.hide()} /> : view === "mcp-servers" ? <McpServersWorkspace api={api} servers={mcpServers} bots={bots} currentId={currentMcpId} onCurrent={openMcp} onServersChange={reloadMcpServers} onOpenBot={openBot} onHide={() => api.window.hide()} /> : view === "skills" ? skillHome ? <SkillStackHome skills={skills} onOpen={(skill) => { setCurrentSkill(skill); setSkillHome(false); }} onHide={() => api.window.hide()} /> : <SkillsEditor skill={currentSkill} categories={skillEditorCategories} saveState={saveState} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onHide={() => api.window.hide()} relatedBots={bots.filter((bot) => bot.skillIds?.includes(currentSkill?.id))} onOpenBot={openBot} /> : <SlashCommandEditor item={currentSlashCommand} saveState={saveState} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onHide={() => api.window.hide()} />}
-    {view === "notes" && compressOpen && <Compressor note={current} onClose={() => setCompressOpen(false)} />}
-    {recoveryOpen && <Recovery backups={backups} message={recoveryMessage} dataLocation={dataLocation} appVersion={appVersion} onClose={() => setRecoveryOpen(false)} onBackup={makeBackup} onRestore={restoreBackup} onExport={exportNotes} />}
-  </main></div>;
+      </div>
+    </EditorBar>
+    <div className="note-canvas" key={note.id}>
+      <input className="note-title" value={note.title || ""} onChange={(event) => onEdit({ title: event.target.value })} placeholder="Untitled" aria-label="Note title" autoFocus />
+      {mode === "write" && <FormatToolbar onFormat={onFormat} disabled={!note} />}
+      <div className="note-meta">
+        <span>{words} {words === 1 ? "word" : "words"}</span>
+        {tasks.length > 0 && <span><Check size={13} strokeWidth={2} />{tasks.filter((task) => task.checked).length}/{tasks.length} done</span>}
+        <span>Edited {fullTime(note.updated_at)}</span>
+        <button type="button" className="link-button" onClick={onAddTodo}><ListTodo size={14} strokeWidth={1.8} />Add to-do</button>
+      </div>
+      {mode === "write"
+        ? <textarea ref={editorRef} className="note-writing" value={note.body || ""} onChange={(event) => onEdit({ body: event.target.value })} onBlur={() => onSave(note)} placeholder="Write Markdown. It saves automatically." aria-label="Note content" />
+        : <div className="note-reading" aria-label="Rendered note">
+          {note.body?.trim()
+            ? <Markdown source={note.body} onToggleTask={onToggleTodo} />
+            : <EmptyState title="Nothing to preview" body="Switch back to editing and write something first." action={<button type="button" className="button" onClick={() => onMode("write")}><Pencil size={15} strokeWidth={1.8} />Edit note</button>} />}
+        </div>}
+    </div>
+  </section>;
 }
 
-function EmbeddedAppScreen({ appName, status, preview, Preview, errorHint, onBack, onReload, onExternal, onHide }) {
+function SkillPage({ skill, categories, status, onEdit, onSave, onCopy, onRemove, onCreate, onHide }) {
+  if (!skill) return <section className="pane">
+    <EditorBar status={status} onHide={onHide} />
+    <div className="pane-scroll"><EmptyState title="No skill selected" body="Skills hold a reusable prompt, workflow, or instruction set." action={<button type="button" className="button primary" onClick={onCreate}><Plus size={15} strokeWidth={2} />New skill</button>} /></div>
+  </section>;
+  return <section className="pane">
+    <EditorBar status={status} context={cleanSkillCategory(skill.category)} onHide={onHide}>
+      <button type="button" className="button subtle" onClick={onCopy}><Copy size={15} strokeWidth={1.8} />Copy</button>
+      <IconButton className="is-danger" label={`Delete ${skillName(skill)}`} onClick={() => onRemove(skill)}><Trash2 size={16} strokeWidth={1.8} /></IconButton>
+    </EditorBar>
+    <div className="note-canvas">
+      <input className="note-title" value={skill.name || ""} onChange={(event) => onEdit({ name: event.target.value })} placeholder="Skill name" aria-label="Skill name" autoFocus />
+      <label className="field inline"><span>Category</span><input value={skill.category || ""} onChange={(event) => onEdit({ category: event.target.value })} onBlur={() => onSave(skill)} list="skill-categories" placeholder="Unsorted" aria-label="Skill category" /><datalist id="skill-categories">{categories.map((category) => <option key={category} value={category} />)}</datalist></label>
+      <div className="field-heading"><span>Instructions</span><small>Markdown supported</small></div>
+      <textarea className="note-writing" value={skill.body || ""} onChange={(event) => onEdit({ body: event.target.value })} onBlur={() => onSave(skill)} placeholder="Paste the prompt, workflow, or instructions here." aria-label="Skill notes" />
+    </div>
+  </section>;
+}
+
+function CommandPage({ item, status, onEdit, onSave, onCopy, onRemove, onCreate, onHide }) {
+  if (!item) return <section className="pane">
+    <EditorBar status={status} onHide={onHide} />
+    <div className="pane-scroll"><EmptyState title="No command selected" body="Save an invocation with a short note on what it does." action={<button type="button" className="button primary" onClick={onCreate}><Plus size={15} strokeWidth={2} />New command</button>} /></div>
+  </section>;
+  return <section className="pane">
+    <EditorBar status={status} context={item.command?.trim() || "Reference"} onHide={onHide}>
+      <button type="button" className="button subtle" onClick={onCopy}><Copy size={15} strokeWidth={1.8} />Copy</button>
+      <IconButton className="is-danger" label={`Delete ${slashCommandName(item)}`} onClick={() => onRemove(item)}><Trash2 size={16} strokeWidth={1.8} /></IconButton>
+    </EditorBar>
+    <div className="note-canvas">
+      <input className="note-title" value={item.name || ""} onChange={(event) => onEdit({ name: event.target.value })} placeholder="Command name" aria-label="Slash command name" autoFocus />
+      <label className="field inline"><span>Invocation</span><input className="mono" value={item.command || ""} onChange={(event) => onEdit({ command: event.target.value })} onBlur={() => onSave(item)} placeholder="/prompts:name" aria-label="Slash command invocation" spellCheck="false" /><small>Leave empty for a reference page</small></label>
+      <div className="field-heading"><span>Notes</span><small>Markdown supported</small></div>
+      <textarea className="note-writing" value={item.body || ""} onChange={(event) => onEdit({ body: event.target.value })} onBlur={() => onSave(item)} placeholder="Explain what it does, where it lives, and how to use it." aria-label="Slash command notes" />
+    </div>
+  </section>;
+}
+
+const SHORTCUTS = [
+  ["Ctrl + Alt + Shift + N", "Show or hide Notebook anywhere in Windows"],
+  ["Ctrl + K", "Search everything"],
+  ["Ctrl + N", "New note, skill, or command"],
+  ["Ctrl + E", "Switch between writing and Markdown preview"],
+  ["Ctrl + 1 – 4", "Jump to Today, Notes, Skills, Commands"],
+  ["Esc", "Clear search, close a panel, or hide the window"],
+];
+
+function SettingsPanel({ backups, message, dataLocation, appVersion, settings, github, githubBusy, onTheme, onStartAtLogin, onGithubConnect, onGithubConfigure, onGithubPush, onGithubPull, onGithubOpen, onClose, onBackup, onRestore, onExport }) {
+  const [repository, setRepository] = useState(github?.repository || "");
+  const [visibility, setVisibility] = useState(github?.visibility || "private");
+  const [autoUpload, setAutoUpload] = useState(Boolean(github?.autoUpload));
+  useEffect(() => {
+    if (github?.repository) setRepository(github.repository);
+    else if (github?.login) setRepository(`${github.login}/notebook-cloud`);
+    if (github?.visibility) setVisibility(github.visibility);
+    setAutoUpload(Boolean(github?.autoUpload));
+  }, [github?.repository, github?.visibility, github?.login, github?.autoUpload]);
+  const cloudInput = { repository, visibility, autoUpload };
+  const themes = [["system", "System", Monitor], ["light", "Light", Sun], ["dark", "Dark", Moon]];
+  return <aside className="settings" aria-label="Settings">
+    <header><h2>Settings</h2><IconButton className="close" label="Close settings" onClick={onClose}><X size={18} strokeWidth={1.8} /></IconButton></header>
+    <div className="settings-scroll">
+      <section>
+        <h3>Appearance</h3>
+        <div className="segmented" role="group" aria-label="Theme">
+          {themes.map(([value, label, Icon]) => <button type="button" key={value} className={settings.theme === value ? "is-active" : ""} aria-pressed={settings.theme === value} onClick={() => onTheme(value)}><Icon size={15} strokeWidth={1.8} />{label}</button>)}
+        </div>
+        <label className="switch"><input type="checkbox" checked={Boolean(settings.startAtLogin)} onChange={(event) => onStartAtLogin(event.target.checked)} /><span>Start Notebook when Windows starts</span></label>
+      </section>
+
+      <section>
+        <h3><Keyboard size={15} strokeWidth={1.8} />Keyboard</h3>
+        <dl className="shortcuts">{SHORTCUTS.map(([keys, description]) => <div key={keys}><dt><kbd>{keys}</kbd></dt><dd>{description}</dd></div>)}</dl>
+      </section>
+
+      <section>
+        <h3>Backups</h3>
+        <p className="settings-copy">Notebook keeps one local backup per day and holds the newest 21. Everything stays on this computer.</p>
+        <div className="button-row">
+          <button type="button" className="button" onClick={onBackup}>Back up now</button>
+          <button type="button" className="button subtle" onClick={() => onExport("json")}>Export JSON</button>
+          <button type="button" className="button subtle" onClick={() => onExport("markdown")}>Export Markdown</button>
+        </div>
+        <div className="backup-list">
+          {backups.map((backup) => <div className="backup-row" key={backup.name}>
+            <div><strong>{fullTime(backup.createdAt)}</strong><span>{bytes(backup.size)}</span></div>
+            <button type="button" className="button subtle" onClick={() => onRestore(backup)}>Restore</button>
+          </div>)}
+          {!backups.length && <p className="settings-copy">No backups yet.</p>}
+        </div>
+      </section>
+
+      <section>
+        <h3><Cloud size={15} strokeWidth={1.8} />GitHub backup</h3>
+        <p className="settings-copy">Optional. Copies this Notebook into a private GitHub repository so another computer can download it.</p>
+        <div className="cloud-account">
+          <span className={github?.authenticated ? "is-connected" : ""}>{github?.authenticated ? `Signed in as @${github.login}` : github?.available === false ? "GitHub CLI required" : "Not connected"}</span>
+          <button type="button" className="button subtle" onClick={onGithubConnect} disabled={githubBusy === "connect" || github?.available === false}>{githubBusy === "connect" ? "Signing in…" : github?.authenticated ? "Reconnect" : "Sign in"}</button>
+        </div>
+        <label className="field"><span>Repository</span><input value={repository} onChange={(event) => setRepository(event.target.value)} placeholder={github?.login ? `${github.login}/notebook-cloud` : "owner/notebook-cloud"} /></label>
+        <label className="field"><span>Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value)}><option value="private">Private (recommended)</option><option value="public">Public</option></select></label>
+        <label className="switch"><input type="checkbox" checked={autoUpload} onChange={(event) => setAutoUpload(event.target.checked)} /><span>Upload automatically every 5 minutes</span></label>
+        <div className="button-row">
+          <button type="button" className="button" onClick={() => onGithubConfigure(cloudInput)} disabled={!github?.authenticated || !repository || Boolean(githubBusy)}>Save</button>
+          <button type="button" className="button subtle" onClick={() => onGithubPush(cloudInput)} disabled={!github?.authenticated || !repository || Boolean(githubBusy)}>{githubBusy === "push" ? "Uploading…" : "Upload"}</button>
+          <button type="button" className="button subtle" onClick={() => onGithubPull(cloudInput)} disabled={!github?.authenticated || !repository || Boolean(githubBusy)}>{githubBusy === "pull" ? "Downloading…" : "Download"}</button>
+          {github?.url && <button type="button" className="link-button" onClick={onGithubOpen}>Open repository</button>}
+        </div>
+        <p className="settings-copy">{github?.lastPushedAt ? `Last upload ${fullTime(github.lastPushedAt)}` : "Never uploaded"}{github?.lastPulledAt ? ` · Last download ${fullTime(github.lastPulledAt)}` : ""}</p>
+      </section>
+
+      {message && <p className="settings-message" role="status">{message}</p>}
+      <footer>
+        {dataLocation && <p title={dataLocation}>Data: {dataLocation}</p>}
+        {appVersion && <p>Notebook v{appVersion} · local-first</p>}
+      </footer>
+    </div>
+  </aside>;
+}
+
+function BrandIcon({ icon, size = 16, className = "" }) {
+  return <svg className={`brand-icon ${className}`} role="img" aria-hidden="true" viewBox="0 0 24 24" width={size} height={size}><path d={icon.path} /></svg>;
+}
+
+function ServiceScreen({ appName, activeId, loadedServices, status, preview, Preview, errorHint, onBack, onSwitch, onReload, onExternal, onHide }) {
   const loading = status.status === "loading" || status.status === "idle";
   const failed = status.status === "error";
-  return <main className="mail-screen">
-    <header className="mail-toolbar">
-      <button className="mail-back" onClick={onBack} aria-label="Back to Notebook">← <span>Notebook</span></button>
-      <span className={`mail-state ${failed ? "failed" : ""}`}>{loading ? `Loading ${appName}…` : failed ? `${appName} unavailable` : appName}</span>
-      <div className="mail-toolbar-actions"><button onClick={onReload} aria-label={`Reload ${appName}`}>Reload</button><button onClick={onExternal} aria-label={`Open ${appName} externally`}>Open external</button><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></div>
+  return <main className="service-screen">
+    <header className="service-bar">
+      <button type="button" className="button subtle" onClick={onBack}><ArrowLeft size={15} strokeWidth={1.8} />Notebook</button>
+      <div className="service-switch" role="group" aria-label="Switch app">
+        {SERVICES.map(({ id, label, brand, tone }) => <button
+          type="button"
+          key={id}
+          className={`${id === activeId ? "is-active" : ""} brand-${tone}`}
+          aria-pressed={id === activeId}
+          title={loadedServices.has(id) && id !== activeId ? `${label} · already loaded` : label}
+          onClick={() => id !== activeId && onSwitch(id)}
+        ><BrandIcon icon={brand} size={15} /><span>{label}</span></button>)}
+      </div>
+      <span className={`save-state ${failed ? "is-failed" : ""}`}>{loading ? `Loading ${appName}…` : failed ? `${appName} unavailable` : ""}</span>
+      <div className="editor-actions">
+        <button type="button" className="button subtle" onClick={onReload}><RefreshCw size={15} strokeWidth={1.8} />Reload</button>
+        <button type="button" className="button subtle" onClick={onExternal}><ExternalLink size={15} strokeWidth={1.8} />Open in browser</button>
+        <IconButton className="close" label="Hide Notebook" onClick={onHide}><X size={18} strokeWidth={1.8} /></IconButton>
+      </div>
     </header>
-    {failed ? <section className="mail-error"><strong>{appName} couldn’t load</strong><span>{status.message || errorHint}</span><div><button className="plain-button" onClick={onReload}>Try again</button><button className="text-action" onClick={onExternal}>Open {appName} externally</button></div></section> : preview && !loading ? <Preview /> : <section className="mail-underlay" aria-live="polite"><span>{loading ? `Connecting to ${appName}…` : `${appName} is open.`}</span></section>}
+    {failed
+      ? <div className="service-body"><EmptyState title={`${appName} could not load`} body={status.message || errorHint} action={<div className="button-row"><button type="button" className="button" onClick={onReload}><RotateCcw size={15} strokeWidth={1.8} />Try again</button><button type="button" className="button subtle" onClick={onExternal}>Open {appName} in your browser</button></div>} /></div>
+      : preview && !loading
+        ? <Preview />
+        : <div className="service-body" aria-live="polite"><EmptyState title={loading ? `Connecting to ${appName}…` : `${appName} is open`} body={loading ? "The service is loading in this window." : "This window is showing the live service."} /></div>}
   </main>;
 }
 
-function MailPreview() {
-  return <section className="mail-preview" aria-label="Gmail preview">
-    <div className="mail-preview-top"><strong>Gmail</strong><label><span>⌕</span><input readOnly placeholder="Search mail" aria-label="Search mail preview" /></label><span className="mail-avatar">K</span></div>
-    <div className="mail-preview-body">
-      <aside><button>＋ Compose</button><strong>Inbox <span>3</span></strong><span>Starred</span><span>Sent</span><span>Drafts</span></aside>
-      <div className="mail-inbox"><header><span>☐</span><span>↻</span><small>1–3 of 3</small></header>{[
-        ["Project Team", "Launch notes are ready", "The final review is complete and everything is ready to share.", "10:42 AM"],
-        ["Google Calendar", "Reminder: Weekly planning", "Your event starts in 30 minutes.", "9:30 AM"],
-        ["Design Updates", "New feedback on Notebook", "Two comments were added to the latest mockup.", "Yesterday"],
-      ].map(([sender, subject, excerpt, time]) => <article key={subject}><strong>{sender}</strong><div><b>{subject}</b><span> — {excerpt}</span></div><small>{time}</small></article>)}</div>
-    </div>
-  </section>;
+// Browser-preview stand-ins. In Electron the real service renders in a sandboxed view above this.
+function ServicePreview({ name }) {
+  return <div className="service-body"><EmptyState title={`${name} preview`} body={`The real ${name} window only exists in the desktop app. This placeholder keeps the browser preview honest.`} /></div>;
 }
-
-function NotionPreview() {
-  return <section className="notion-preview" aria-label="Notion preview">
-    <aside>
-      <header><span>K</span><strong>Kai’s Notion</strong><small>⌄</small></header>
-      <button className="active"><span>⌂</span> Home</button>
-      <button><span>⌕</span> Search</button>
-      <button><span>◫</span> Inbox</button>
-      <p>Private</p>
-      <button><span>▤</span> Project HQ</button>
-      <button><span>✓</span> Tasks</button>
-      <button><span>＋</span> New page</button>
-    </aside>
-    <div className="notion-page">
-      <header><span>Project HQ</span><div><button>Share</button><button>☆</button><button>···</button></div></header>
-      <article>
-        <div className="notion-page-icon">◎</div>
-        <h1>Project HQ</h1>
-        <p>One place for active work, notes, and decisions.</p>
-        <section className="notion-callout"><span>→</span><div><strong>This week</strong><p>Review launch notes and clear the final blockers.</p></div></section>
-        <h2>Active work</h2>
-        <div className="notion-table"><header><span>Name</span><span>Status</span></header><div><strong>Notebook launch</strong><span>In progress</span></div><div><strong>Website refresh</strong><span>Planning</span></div><div><strong>Customer notes</strong><span>Ready</span></div></div>
-      </article>
-    </div>
-  </section>;
-}
-
-function SkillsEditor({ skill, categories, saveState, onEdit, onSave, onCopy, onRemove, onHide, relatedBots = [], onOpenBot }) {
-  if (!skill) return <section className="editor skill-empty"><strong>No skill selected</strong><span>Create one with + to save a prompt, workflow, or command.</span></section>;
-  return <section className="editor">
-    <header className="editor-bar">
-      <span className={`save-state ${saveState === "Save failed" ? "failed" : ""}`}>{saveState}</span>
-      <div><button className="text-action" onClick={onCopy}>Copy</button><button className="text-action danger" onClick={() => onRemove(skill)}>Delete</button><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></div>
-    </header>
-    <input className="title" value={skill.name || ""} onChange={(event) => onEdit({ name: event.target.value })} placeholder="Skill name" aria-label="Skill name" autoFocus />
-    <label className="skill-category"><span>Category</span><input value={skill.category || ""} onChange={(event) => onEdit({ category: event.target.value })} onBlur={() => onSave(skill)} list="skill-categories" placeholder="Unsorted" aria-label="Skill category" /><datalist id="skill-categories">{categories.map((category) => <option key={category} value={category} />)}</datalist></label>
-    <div className="slash-notes-heading"><span>Instructions</span><small>Markdown supported</small></div>
-    <textarea className="writing skill-writing" value={skill.body || ""} onChange={(event) => onEdit({ body: event.target.value })} onBlur={() => onSave(skill)} placeholder="Paste the prompt, workflow, command, or instructions here." aria-label="Skill notes" />
-    <div className="skill-related-bots"><strong>Used by bots</strong>{relatedBots.map((bot) => <button key={bot.id} onClick={() => onOpenBot(bot.id)}>{bot.name}</button>)}{!relatedBots.length && <span>No linked bots</span>}</div>
-  </section>;
-}
-
-function SlashCommandEditor({ item, saveState, onEdit, onSave, onCopy, onRemove, onHide }) {
-  if (!item) return <section className="editor skill-empty"><strong>No slash command selected</strong><span>Create one with + to save its invocation and instructions.</span></section>;
-  return <section className="editor slash-editor">
-    <header className="editor-bar">
-      <span className={`save-state ${saveState === "Save failed" ? "failed" : ""}`}>{saveState}</span>
-      <div><button className="text-action" onClick={onCopy}>Copy</button><button className="text-action danger" onClick={() => onRemove(item)}>Delete</button><button className="hide" onClick={onHide} aria-label="Hide notebook">×</button></div>
-    </header>
-    <input className="title" value={item.name || ""} onChange={(event) => onEdit({ name: event.target.value })} placeholder="Slash item name" aria-label="Slash command name" autoFocus />
-    <div className="slash-fields"><label className="slash-field"><span>Invocation <small>optional for reference pages</small></span><input value={item.command || ""} onChange={(event) => onEdit({ command: event.target.value })} onBlur={() => onSave(item)} placeholder="/prompts:name" aria-label="Slash command invocation" spellCheck="false" /></label></div>
-    <div className="slash-notes-heading"><span>Notes</span><small>Markdown supported</small></div>
-    <textarea className="writing slash-writing" value={item.body || ""} onChange={(event) => onEdit({ body: event.target.value })} onBlur={() => onSave(item)} placeholder="Explain what it does, where it lives, and how to use it." aria-label="Slash command notes" />
-  </section>;
-}
-
-function Recovery({ backups, message, dataLocation, appVersion, onClose, onBackup, onRestore, onExport }) {
-  return <aside className="recovery" aria-label="Backups and settings">
-    <header><div><strong>Backups</strong><span>Stored only on this computer</span></div><button className="hide" onClick={onClose} aria-label="Close backups">×</button></header>
-    <p className="recovery-copy">Notebook makes one rotating backup per day and keeps the latest 21.</p>
-    <div className="recovery-actions"><button className="plain-button" onClick={onBackup}>Back up now</button><button className="text-action" onClick={() => onExport("json")}>Export JSON</button><button className="text-action" onClick={() => onExport("markdown")}>Export Markdown</button></div>
-    {message && <p className="message">{message}</p>}
-    <div className="backup-list">
-      {backups.map((backup) => <div className="backup-row" key={backup.name}><div><strong>{fullTime(backup.createdAt)}</strong><span>{bytes(backup.size)}</span></div><button className="text-action" onClick={() => onRestore(backup)}>Restore</button></div>)}
-      {!backups.length && <p className="empty-list">No backups yet.</p>}
-    </div>
-    {dataLocation && <p className="data-location" title={dataLocation}>Data: {dataLocation}</p>}
-    {appVersion && <p className="data-location">Notebook v{appVersion} · local only</p>}
-  </aside>;
-}
+const MailPreview = () => <ServicePreview name="Gmail" />;
+const NotionPreview = () => <ServicePreview name="Notion" />;
+const TwitterPreview = () => <ServicePreview name="Twitter" />;
 
 function Compressor({ note, onClose }) {
   const [status, setStatus] = useState("checking");
@@ -1464,13 +882,771 @@ function Compressor({ note, onClose }) {
       catch { setMessage("Compressed successfully, but its local history could not be saved."); }
     } catch (error) { setStatus("ready"); setMessage(error.message || "Compression failed."); }
   }
-  return <aside className="compressor" aria-label="Local compressor">
-    <header><div><strong>Local compressor</strong><span>{status === "ready" ? "Ready" : status === "working" ? "Compressing…" : status === "checking" ? "Checking…" : "Offline"}</span></div><button className="hide" onClick={onClose} aria-label="Close compressor">×</button></header>
-    <p>Compresses the open note locally. Your original stays as-is.</p>
-    {message && <p className="message">{message}</p>}
-    {status === "offline" ? <button className="plain-button" onClick={start}>Start compressor</button> : <button className="plain-button" onClick={compress} disabled={status === "working" || status === "starting"}>Compress note</button>}
-    {result && <><div className="result-meta">{result.origin_tokens} → {result.compressed_tokens} tokens · {result.ratio}</div><textarea className="result" value={result.compressed_prompt} readOnly aria-label="Compressed note" /><button className="copy" onClick={async () => { try { await api.clipboard.writeText(result.compressed_prompt); } catch { setMessage("Could not copy. Select the text and copy it normally."); } }}>Copy</button></>}
+  return <aside className="settings" aria-label="Local compressor">
+    <header><h2>Compressor</h2><IconButton className="close" label="Close compressor" onClick={onClose}><X size={18} strokeWidth={1.8} /></IconButton></header>
+    <div className="settings-scroll">
+      <section>
+        <h3><Shrink size={15} strokeWidth={1.8} />{status === "ready" ? "Ready" : status === "working" ? "Compressing…" : status === "checking" ? "Checking…" : "Offline"}</h3>
+        <p className="settings-copy">Shortens the open note using the local LLMLingua service. Your original note is never changed.</p>
+        {message && <p className="settings-message" role="status">{message}</p>}
+        {status === "offline"
+          ? <button type="button" className="button" onClick={start}>Start compressor</button>
+          : <button type="button" className="button primary" onClick={compress} disabled={status === "working" || status === "starting"}>Compress this note</button>}
+      </section>
+      {result && <section>
+        <h3>Result</h3>
+        <p className="settings-copy">{result.origin_tokens} → {result.compressed_tokens} tokens · {result.ratio}</p>
+        <textarea className="compressor-result" value={result.compressed_prompt} readOnly aria-label="Compressed note" />
+        <button type="button" className="button" onClick={async () => { try { await api.clipboard.writeText(result.compressed_prompt); } catch { setMessage("Could not copy. Select the text and copy it normally."); } }}><Copy size={15} strokeWidth={1.8} />Copy</button>
+      </section>}
+    </div>
   </aside>;
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) return <main className="app-error"><strong>Notebook hit a screen error.</strong><span>Your notes are still saved locally.</span><button type="button" className="button primary" onClick={() => location.reload()}>Reload Notebook</button></main>;
+    return this.props.children;
+  }
+}
+
+function hashRoute() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  return { view: VIEWS.find((entry) => entry.route === parts[0])?.id || "daily", id: parts[1] || null };
+}
+function hashView() { return hashRoute().view; }
+
+function App() {
+  const [view, setView] = useState(hashView);
+  const [notes, setNotes] = useState([]);
+  const [notebooks, setNotebooks] = useState([]);
+  const [activeNotebookId, setActiveNotebookId] = useState("inbox");
+  const [current, setCurrent] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [skills, setSkills] = useState([]);
+  const [currentSkill, setCurrentSkill] = useState(null);
+  const [skillCategory, setSkillCategory] = useState("Active");
+  const [slashCommands, setSlashCommands] = useState([]);
+  const [currentSlashCommand, setCurrentSlashCommand] = useState(null);
+  const [bots, setBots] = useState([]);
+  const [mcpServers, setMcpServers] = useState([]);
+  const [currentBotId, setCurrentBotId] = useState(null);
+  const [currentMcpId, setCurrentMcpId] = useState(null);
+  const [mailStatus, setMailStatus] = useState({ status: "idle", message: "" });
+  const [notionStatus, setNotionStatus] = useState({ status: "idle", message: "" });
+  const [twitterStatus, setTwitterStatus] = useState({ status: "idle", message: "" });
+  const [compressOpen, setCompressOpen] = useState(false);
+  // Services stay loaded and signed in for the session once opened; the view is only detached.
+  const [loadedServices, setLoadedServices] = useState(() => new Set());
+  const [daily, setDaily] = useState(null);
+  const [dailyStatus, setDailyStatus] = useState("Loading…");
+  const [saveState, setSaveState] = useState("Loading…");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [backups, setBackups] = useState([]);
+  const [dataLocation, setDataLocation] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState("");
+  const [appSettings, setAppSettings] = useState({ theme: "system", startAtLogin: true, hotkey: "Control+Alt+Shift+N" });
+  const [githubCloud, setGithubCloud] = useState(null);
+  const [githubCloudBusy, setGithubCloudBusy] = useState("");
+  const [closing, setClosing] = useState(false);
+  const [showTick, setShowTick] = useState(0);
+  const [editorMode, setEditorMode] = useState("write");
+  const [notebookEditor, setNotebookEditor] = useState(null);
+  const [appVersion, setAppVersion] = useState("");
+  const saveTimer = useRef();
+  const skillSaveTimer = useRef();
+  const slashCommandSaveTimer = useRef();
+  const noticeTimer = useRef();
+  const editorRef = useRef();
+  const searchRef = useRef();
+  const surfaceRef = useRef(null);
+  const currentRef = useRef(null);
+  const currentSkillRef = useRef(null);
+  const currentSlashCommandRef = useRef(null);
+  const viewRef = useRef("daily");
+  const previousViewRef = useRef("daily");
+
+  const load = async () => {
+    const [list, savedSkills, savedSlashCommands, savedNotebooks, savedBots, savedMcpServers, version, saved] = await Promise.all([api.notes.list(), api.skills.list(), api.slashCommands.list(), api.folders.list(), api.bots.list({ includeArchived: true }), api.mcpServers.list(), api.settings.version(), api.settings.get()]);
+    setBots(savedBots);
+    setMcpServers(savedMcpServers);
+    const inboxId = savedNotebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
+    setNotes(list);
+    setSkills(savedSkills);
+    setSlashCommands(savedSlashCommands);
+    setNotebooks(savedNotebooks);
+    setAppVersion(version);
+    if (saved) setAppSettings((value) => ({ ...value, ...saved }));
+    setActiveNotebookId(inboxId);
+    const inboxNote = list.find((note) => !note.deleted_at && note.folder_id === inboxId);
+    if (inboxNote) setCurrent(inboxNote);
+    else if (list.some((note) => !note.deleted_at)) { setActiveNotebookId("all"); setCurrent(list.find((note) => !note.deleted_at)); }
+    else {
+      const note = await api.notes.create({ title: "", body: "", folderId: inboxId });
+      setNotes([note]); setCurrent(note);
+    }
+    if (savedSkills.length) setCurrentSkill(savedSkills[0]);
+    if (savedSlashCommands.length) setCurrentSlashCommand(savedSlashCommands[0]);
+    setSaveState("Saved");
+    await loadDaily();
+  };
+
+  async function loadDaily() {
+    setDailyStatus("Loading…");
+    try { setDaily(await api.daily.get()); setDailyStatus("Saved"); }
+    catch { setDailyStatus("Could not load daily plan"); }
+  }
+
+  useEffect(() => {
+    load().catch(() => setSaveState("Could not load notes"));
+    api.onNewInboxNote(() => createNote("inbox"));
+    api.onFocusEditor(() => setTimeout(() => editorRef.current?.focus(), 0));
+    api.onFlushEditor(flushOpenEditors);
+    api.onOverlayHiding(() => {
+      setClosing(true);
+      if (SERVICE_IDS.has(viewRef.current)) { api[viewRef.current].hide().catch(() => {}); setView(previousViewRef.current); }
+    });
+    api.onOverlayShown(() => { setClosing(false); setShowTick((tick) => tick + 1); loadDaily(); });
+    const onHashChange = () => { const route = hashRoute(); setView(route.view); if (route.view === "bots") setCurrentBotId(route.id); if (route.view === "mcp-servers") setCurrentMcpId(route.id); };
+    addEventListener("hashchange", onHashChange);
+    const stopBotStatus = api.bots.onStatus?.((update) => { if (update?.bot?.id) setBots((items) => items.map((item) => item.id === update.bot.id ? update.bot : item)); });
+    const stopServiceEvents = [
+      api.onOpenMail?.(() => openService("mail")),
+      api.onMailStatus?.((next) => setMailStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Gmail returned an invalid status." })),
+      api.onOpenNotion?.(() => openService("notion")),
+      api.onNotionStatus?.((next) => setNotionStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Notion returned an invalid status." })),
+      api.onOpenTwitter?.(() => openService("twitter")),
+      api.onTwitterStatus?.((next) => setTwitterStatus(next && typeof next.status === "string" ? next : { status: "error", message: "Twitter returned an invalid status." })),
+    ];
+    return () => { stopBotStatus?.(); stopServiceEvents.forEach((stop) => stop?.()); removeEventListener("hashchange", onHashChange); clearTimeout(saveTimer.current); clearTimeout(skillSaveTimer.current); clearTimeout(slashCommandSaveTimer.current); clearTimeout(noticeTimer.current); };
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = appSettings.theme === "dark" || (appSettings.theme === "system" && media?.matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    };
+    apply();
+    media?.addEventListener?.("change", apply);
+    return () => media?.removeEventListener?.("change", apply);
+  }, [appSettings.theme]);
+
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return undefined;
+    const surface = surfaceRef.current;
+    if (!surface?.animate) return undefined;
+    const animation = surface.animate(
+      [
+        { opacity: 0, transform: "translateY(24px) scale(0.975)" },
+        { opacity: 1, offset: 0.7 },
+        { opacity: 1, transform: "translateY(0) scale(1)" },
+      ],
+      { duration: 280, easing: "cubic-bezier(0.22, 1.15, 0.36, 1)" }
+    );
+    return () => animation.cancel();
+  }, [showTick]);
+
+  useEffect(() => { currentRef.current = current; }, [current]);
+  useEffect(() => { currentSkillRef.current = currentSkill; }, [currentSkill]);
+  useEffect(() => { currentSlashCommandRef.current = currentSlashCommand; }, [currentSlashCommand]);
+  useEffect(() => { viewRef.current = view; if (!SERVICE_IDS.has(view)) previousViewRef.current = view; }, [view]);
+
+  useEffect(() => {
+    const handleKeys = (event) => {
+      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName);
+      const inEditor = event.target === editorRef.current;
+      if ((event.ctrlKey || event.metaKey) && inEditor && ["b", "i", "k"].includes(event.key.toLowerCase())) {
+        event.preventDefault();
+        formatSelection({ b: "bold", i: "italic", k: "link" }[event.key.toLowerCase()]);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") { event.preventDefault(); createForView(); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "e" && viewRef.current === "notes") { event.preventDefault(); setEditorMode((mode) => mode === "write" ? "read" : "write"); return; }
+      if ((event.ctrlKey || event.metaKey) && /^[1-4]$/.test(event.key)) { event.preventDefault(); selectView(VIEWS[Number(event.key) - 1].id); return; }
+      if (event.key === "/" && !typing) { event.preventDefault(); searchRef.current?.focus(); return; }
+      if (event.key === "Escape") {
+        if (settingsOpen) { setSettingsOpen(false); return; }
+        if (searchQuery) { setSearchQuery(""); searchRef.current?.blur(); return; }
+        if (!typing) api.window.hide();
+      }
+    };
+    document.addEventListener("keydown", handleKeys);
+    return () => document.removeEventListener("keydown", handleKeys);
+  }, [searchQuery, settingsOpen, activeNotebookId, notebooks, skillCategory]);
+
+  const serviceStatus = { mail: mailStatus, notion: notionStatus, twitter: twitterStatus };
+  const setServiceStatus = { mail: setMailStatus, notion: setNotionStatus, twitter: setTwitterStatus };
+  async function openService(id) {
+    flushOpenEditors();
+    if (!SERVICE_IDS.has(viewRef.current)) previousViewRef.current = viewRef.current;
+    setCompressOpen(false); setSettingsOpen(false); setSearchQuery("");
+    setServiceStatus[id]({ status: loadedServices.has(id) ? "ready" : "loading", message: "" });
+    setView(id);
+    try {
+      const next = await api[id].show();
+      if (next?.status) setServiceStatus[id](next);
+      setLoadedServices((current) => current.has(id) ? current : new Set(current).add(id));
+    }
+    catch { setServiceStatus[id]({ status: "error", message: "This service could not open." }); }
+  }
+  async function closeService(id) { await api[id].hide().catch(() => {}); setView(previousViewRef.current); }
+  async function reloadService(id) {
+    setServiceStatus[id]({ status: "loading", message: "" });
+    try { await api[id].reload(); }
+    catch { setServiceStatus[id]({ status: "error", message: "This service could not reload." }); }
+  }
+  async function reloadBots() { const saved = await api.bots.list({ includeArchived: true }); setBots(saved); return saved; }
+  async function reloadNotes() { const saved = await api.notes.list(); setNotes(saved); return saved; }
+  async function reloadMcpServers() { const saved = await api.mcpServers.list(); setMcpServers(saved); return saved; }
+  function openBot(id) { setCurrentBotId(id || null); setView("bots"); setSearchQuery(""); setCompressOpen(false); location.hash = id ? `/bots/${id}` : "/bots"; }
+  function openMcp(serverOrId) {
+    const id = typeof serverOrId === "string" ? serverOrId : serverOrId?.id;
+    setCurrentMcpId(id || null); setView("mcp-servers"); setSearchQuery(""); setCompressOpen(false);
+    location.hash = id ? `/mcp-servers/${id}` : "/mcp-servers";
+  }
+
+  function flushOpenEditors() {
+    if (currentRef.current) saveNow(currentRef.current);
+    if (currentSkillRef.current) saveSkillNow(currentSkillRef.current);
+    if (currentSlashCommandRef.current) saveSlashCommandNow(currentSlashCommandRef.current);
+  }
+
+  async function createNote(folderId) {
+    const inboxId = notebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
+    const destination = folderId || (activeNotebookId === "all" ? inboxId : activeNotebookId);
+    try {
+      const note = await api.notes.create({ title: "", body: "", folderId: destination });
+      setNotes((items) => [note, ...items]);
+      setActiveNotebookId(destination);
+      setCurrent(note);
+      selectView("notes");
+      setEditorMode("write");
+      setSaveState("Saved");
+      setTimeout(() => editorRef.current?.focus(), 0);
+    } catch { setSaveState("Could not create note"); }
+  }
+
+  async function createSkill() {
+    try {
+      const skill = await api.skills.create({ name: "", category: "Unsorted", body: "" });
+      setSkills((items) => [skill, ...items]);
+      setCurrentSkill(skill);
+      setSkillCategory("All");
+      selectView("skills");
+      setSaveState("Saved");
+    } catch { setSaveState("Could not create skill"); }
+  }
+
+  async function createSlashCommand() {
+    try {
+      const item = await api.slashCommands.create({ name: "", command: "", body: "" });
+      setSlashCommands((items) => [item, ...items]);
+      setCurrentSlashCommand(item);
+      selectView("commands");
+      setSaveState("Saved");
+    } catch { setSaveState("Could not create command"); }
+  }
+
+  function createForView() {
+    if (viewRef.current === "skills") return createSkill();
+    if (viewRef.current === "commands") return createSlashCommand();
+    return createNote();
+  }
+
+  async function runDailyAction(action) {
+    setDailyStatus("Saving…");
+    try {
+      setDaily(await action());
+      setDailyStatus("Saved");
+      return true;
+    } catch {
+      try { setDaily(await api.daily.get()); } catch { /* Keep the last visible state. */ }
+      setDailyStatus("Could not save daily plan");
+      return false;
+    }
+  }
+  const addDailyTask = (text, bucket, completed, details = {}) => runDailyAction(() => api.daily.create({ text, bucket, completed, ...details }));
+  const toggleDailyTask = (id, completed) => runDailyAction(() => api.daily.complete(id, completed));
+  const saveDailyTask = (task) => runDailyAction(() => api.daily.update(task.id, { text: task.text, priority: task.priority || 2, owner: task.owner || "me" }));
+  const updateDailyTask = (id, patch) => runDailyAction(() => api.daily.update(id, patch));
+  const removeDailyTask = (id) => runDailyAction(() => api.daily.remove(id));
+  function editDailyTaskLocal(id, text) {
+    setDaily((value) => value ? {
+      ...value,
+      today: value.today.map((task) => task.id === id ? { ...task, text } : task),
+      done: value.done.map((task) => task.id === id ? { ...task, text } : task),
+      tomorrow: value.tomorrow.map((task) => task.id === id ? { ...task, text } : task),
+    } : value);
+  }
+
+  async function saveNow(note) {
+    clearTimeout(saveTimer.current);
+    setSaveState("Saving…");
+    try {
+      const saved = await api.notes.update(note.id, { title: note.title, body: note.body, folderId: note.folder_id, pinned: Boolean(note.pinned) });
+      setNotes((items) => items.map((item) => item.id === saved.id ? saved : item));
+      setCurrent((item) => item?.id === saved.id ? saved : item);
+      setSaveState("Saved");
+    } catch { setSaveState("Save failed"); }
+  }
+  function save(note) {
+    clearTimeout(saveTimer.current);
+    setSaveState("Saving…");
+    saveTimer.current = setTimeout(() => saveNow(note), 280);
+  }
+  function edit(patch) {
+    if (!current) return;
+    const next = { ...current, ...patch, updated_at: new Date().toISOString() };
+    setCurrent(next);
+    setNotes((items) => items.map((item) => item.id === next.id ? next : item));
+    save(next);
+  }
+  function togglePin() {
+    if (!current) return;
+    const next = { ...current, pinned: !current.pinned, updated_at: new Date().toISOString() };
+    setCurrent(next);
+    setNotes((items) => items.map((item) => item.id === next.id ? next : item));
+    saveNow(next);
+    showSaveNotice(next.pinned ? "Pinned" : "Unpinned");
+  }
+
+  async function saveSkillNow(skill) {
+    clearTimeout(skillSaveTimer.current);
+    setSaveState("Saving…");
+    try {
+      const saved = await api.skills.update(skill.id, { name: skill.name, category: skill.category?.trim() || "Unsorted", body: skill.body });
+      setSkills((items) => items.map((item) => item.id === saved.id ? saved : item));
+      setCurrentSkill((item) => item?.id === saved.id ? saved : item);
+      setSaveState("Saved");
+    } catch { setSaveState("Save failed"); }
+  }
+  function editSkill(patch) {
+    if (!currentSkill) return;
+    const next = { ...currentSkill, ...patch, updated_at: new Date().toISOString() };
+    setCurrentSkill(next);
+    setSkills((items) => items.map((item) => item.id === next.id ? next : item));
+    clearTimeout(skillSaveTimer.current);
+    setSaveState("Saving…");
+    skillSaveTimer.current = setTimeout(() => saveSkillNow(next), 280);
+  }
+
+  async function saveSlashCommandNow(item) {
+    clearTimeout(slashCommandSaveTimer.current);
+    setSaveState("Saving…");
+    try {
+      const saved = await api.slashCommands.update(item.id, { name: item.name, command: item.command, body: item.body });
+      setSlashCommands((items) => items.map((entry) => entry.id === saved.id ? saved : entry));
+      setCurrentSlashCommand((entry) => entry?.id === saved.id ? saved : entry);
+      setSaveState("Saved");
+    } catch { setSaveState("Save failed"); }
+  }
+  function editSlashCommand(patch) {
+    if (!currentSlashCommand) return;
+    const next = { ...currentSlashCommand, ...patch, updated_at: new Date().toISOString() };
+    setCurrentSlashCommand(next);
+    setSlashCommands((items) => items.map((item) => item.id === next.id ? next : item));
+    clearTimeout(slashCommandSaveTimer.current);
+    setSaveState("Saving…");
+    slashCommandSaveTimer.current = setTimeout(() => saveSlashCommandNow(next), 280);
+  }
+
+  async function remove(note) {
+    if (!window.confirm(`Move “${noteName(note)}” to Trash?`)) return;
+    await api.notes.trash(note.id);
+    const remaining = notes.filter((item) => item.id !== note.id);
+    setNotes(remaining);
+    setCurrent(remaining.find((item) => activeNotebookId === "all" || item.folder_id === activeNotebookId) || null);
+    if (!remaining.length) await createNote();
+  }
+  async function removeSkill(skill) {
+    if (!window.confirm(`Delete “${skillName(skill)}”?`)) return;
+    await api.skills.remove(skill.id);
+    const remaining = skills.filter((item) => item.id !== skill.id);
+    setSkills(remaining); setCurrentSkill(remaining[0] || null);
+  }
+  async function removeSlashCommand(item) {
+    if (!window.confirm(`Delete “${slashCommandName(item)}”?`)) return;
+    await api.slashCommands.remove(item.id);
+    const remaining = slashCommands.filter((entry) => entry.id !== item.id);
+    setSlashCommands(remaining); setCurrentSlashCommand(remaining[0] || null);
+  }
+
+  function openNotebook(id) {
+    setActiveNotebookId(id);
+    setCurrent(notes.find((note) => !note.deleted_at && (id === "all" || note.folder_id === id)) || null);
+    setEditorMode("write");
+  }
+  async function submitNotebook(event) {
+    event.preventDefault();
+    const name = notebookEditor?.value?.trim();
+    if (!name) return;
+    try {
+      if (notebookEditor.mode === "create") {
+        const notebook = await api.folders.create(name);
+        setNotebooks(await api.folders.list());
+        setNotebookEditor(null);
+        await createNote(notebook.id);
+      } else {
+        await api.folders.rename(notebookEditor.id, name);
+        setNotebooks(await api.folders.list());
+        setNotebookEditor(null);
+      }
+    } catch { setSaveState(`Could not ${notebookEditor.mode} notebook`); }
+  }
+  async function deleteNotebook() {
+    const notebook = notebooks.find((item) => item.id === activeNotebookId);
+    if (!notebook || notebook.is_inbox) return;
+    if (!window.confirm(`Delete notebook “${notebook.name}”? Its notes move to Inbox.`)) return;
+    try {
+      await api.folders.remove(notebook.id);
+      const [savedNotes, savedNotebooks] = await Promise.all([api.notes.list(), api.folders.list()]);
+      const inboxId = savedNotebooks.find((item) => item.is_inbox)?.id || "inbox";
+      setNotes(savedNotes); setNotebooks(savedNotebooks); setActiveNotebookId(inboxId);
+      setCurrent(savedNotes.find((note) => !note.deleted_at && note.folder_id === inboxId) || null);
+      setSaveState("Saved");
+    } catch { setSaveState("Could not delete notebook"); }
+  }
+  async function moveCurrentTo(folderId) {
+    if (!current || folderId === current.folder_id) return;
+    const next = { ...current, folder_id: folderId, updated_at: new Date().toISOString() };
+    setCurrent(next);
+    setNotes((items) => items.map((item) => item.id === next.id ? next : item));
+    setActiveNotebookId(folderId);
+    await saveNow(next);
+  }
+
+  async function openSettings() {
+    setSettingsOpen(true); setSettingsMessage("");
+    try {
+      const [savedBackups, location, cloud, saved] = await Promise.all([api.backups.list(), api.settings.dataLocation(), api.githubSync.status(), api.settings.get()]);
+      setBackups(savedBackups); setDataLocation(location); setGithubCloud(cloud);
+      if (saved) setAppSettings((value) => ({ ...value, ...saved }));
+    } catch { setSettingsMessage("Could not load settings information."); }
+  }
+  async function updateSettings(patch) {
+    const previous = appSettings;
+    setAppSettings((value) => ({ ...value, ...patch }));
+    try { const next = await api.settings.set(patch); if (next) setAppSettings((value) => ({ ...value, ...next })); }
+    catch (error) { setAppSettings(previous); setSettingsMessage(error.message || "Could not save that setting."); }
+  }
+  async function connectGithubCloud() {
+    setGithubCloudBusy("connect"); setSettingsMessage("Opening secure GitHub sign-in…");
+    try { await api.githubSync.signIn(); const cloud = await api.githubSync.status(); setGithubCloud(cloud); setSettingsMessage(`Connected as @${cloud.login}.`); }
+    catch (error) { setSettingsMessage(error.message || "GitHub sign-in failed."); }
+    finally { setGithubCloudBusy(""); }
+  }
+  async function configureGithubCloud(input) {
+    setGithubCloudBusy("configure"); setSettingsMessage("Saving cloud repository…");
+    try { const cloud = await api.githubSync.configure(input); setGithubCloud(cloud); setSettingsMessage("Cloud repository saved."); }
+    catch (error) { setSettingsMessage(error.message || "Could not configure cloud backup."); }
+    finally { setGithubCloudBusy(""); }
+  }
+  async function pushGithubCloud(input) {
+    setGithubCloudBusy("push"); setSettingsMessage("Uploading to GitHub…");
+    try { const cloud = await api.githubSync.push(input); setGithubCloud(cloud); setSettingsMessage(cloud.changed ? "Uploaded this Notebook to GitHub." : "GitHub already has the current data."); }
+    catch (error) { setSettingsMessage(error.message || "GitHub upload failed."); }
+    finally { setGithubCloudBusy(""); }
+  }
+  async function pullGithubCloud(input) {
+    if (!window.confirm("Replace this computer’s Notebook data with the GitHub copy? A local safety backup is made first.")) return;
+    setGithubCloudBusy("pull"); setSettingsMessage("Downloading and restoring GitHub data…");
+    try { await api.githubSync.pull(input); setSettingsMessage("Downloaded. Reloading Notebook…"); window.location.reload(); }
+    catch (error) { setSettingsMessage(error.message || "GitHub download failed."); setGithubCloudBusy(""); }
+  }
+  async function makeBackup() {
+    setSettingsMessage("Creating backup…");
+    try { const backup = await api.backups.create(); setBackups((items) => [backup, ...items]); setSettingsMessage("Backup created."); }
+    catch { setSettingsMessage("Could not create backup."); }
+  }
+  async function restoreBackup(backup) {
+    if (!window.confirm(`Replace your current notes with the backup from ${fullTime(backup.createdAt)}? A safety backup is made first.`)) return;
+    setSettingsMessage("Restoring…");
+    try {
+      // Desktop returns { notes, skills, slashCommands }; the browser mock returns a notes array.
+      const restored = await api.backups.restore(backup.name);
+      const restoredNotes = Array.isArray(restored) ? restored : restored.notes;
+      const restoredSkills = Array.isArray(restored) ? null : restored.skills;
+      const restoredSlashCommands = Array.isArray(restored) ? null : restored.slashCommands;
+      const restoredNotebooks = await api.folders.list();
+      const inboxId = restoredNotebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
+      setNotebooks(restoredNotebooks); setActiveNotebookId(inboxId);
+      setNotes(restoredNotes.filter((note) => !note.deleted_at));
+      setCurrent(restoredNotes.find((note) => !note.deleted_at && note.folder_id === inboxId) || restoredNotes.find((note) => !note.deleted_at) || null);
+      if (restoredSkills) { setSkills(restoredSkills); setCurrentSkill(restoredSkills[0] || null); }
+      if (restoredSlashCommands) { setSlashCommands(restoredSlashCommands); setCurrentSlashCommand(restoredSlashCommands[0] || null); }
+      await loadDaily();
+      setSettingsMessage("Backup restored.");
+    } catch { setSettingsMessage("Could not restore that backup."); }
+  }
+  async function exportNotes(format) {
+    try { const result = await api.settings.export(format); setSettingsMessage(result?.canceled ? "Export cancelled." : "Export saved."); }
+    catch { setSettingsMessage("Could not export notes."); }
+  }
+
+  function showSaveNotice(message, duration = 1100) {
+    clearTimeout(noticeTimer.current);
+    setSaveState(message);
+    noticeTimer.current = setTimeout(() => setSaveState("Saved"), duration);
+  }
+  async function copyCurrent() {
+    if (!current) return;
+    const text = markdownFor(current);
+    if (!text) return setSaveState("Nothing to copy");
+    try { await api.clipboard.writeText(text); showSaveNotice("Copied"); }
+    catch { setSaveState("Copy failed"); }
+  }
+  async function copySkill() {
+    if (!currentSkill) return;
+    const text = [currentSkill.name?.trim(), currentSkill.body?.trim()].filter(Boolean).join("\n\n");
+    if (!text) return setSaveState("Nothing to copy");
+    try { await api.clipboard.writeText(text); showSaveNotice("Copied"); }
+    catch { setSaveState("Copy failed"); }
+  }
+  async function copySlashCommand() {
+    if (!currentSlashCommand) return;
+    const text = [currentSlashCommand.command?.trim(), currentSlashCommand.body?.trim()].filter(Boolean).join("\n\n");
+    if (!text) return setSaveState("Nothing to copy");
+    try { await api.clipboard.writeText(text); showSaveNotice("Copied"); }
+    catch { setSaveState("Copy failed"); }
+  }
+  function dragCurrent(event) {
+    if (!current) return;
+    if (!(current.body?.trim() || current.title?.trim())) return setSaveState("Nothing to drag");
+    try {
+      if (typeof api.notes.dragCleanName === "function") {
+        event.preventDefault();
+        api.notes.dragCleanName({ id: current.id, title: current.title, body: current.body });
+        setSaveState("Dragging clean filename");
+      } else {
+        const drag = addBrowserFileDragData(event, current);
+        if (!drag) return setSaveState("Drag not supported");
+        setSaveState(`Dragging ${drag.fileName}`);
+      }
+    }
+    catch { setSaveState("Drag failed"); }
+  }
+  async function copyDragTarget(kind) {
+    if (!current || !(current.body?.trim() || current.title?.trim())) return setSaveState("Nothing to share");
+    try {
+      const filePath = await api.notes.dragFile({ id: current.id, title: current.title, body: current.body });
+      const value = kind === "path" ? `"${filePath}"` : filePath.split(/[\\/]/).pop();
+      await api.clipboard.writeText(value);
+      showSaveNotice(kind === "path" ? "Path copied" : "Filename copied", 1400);
+    } catch { setSaveState("Could not create .md"); }
+  }
+
+  function formatSelection(action) {
+    if (!current) return;
+    const editor = editorRef.current;
+    const body = current.body || "";
+    const from = editor ? editor.selectionStart : body.length;
+    const to = editor ? editor.selectionEnd : body.length;
+    const result = applyMarkdownFormat(body, from, to, action);
+    setEditorMode("write");
+    edit({ body: result.body });
+    requestAnimationFrame(() => { editorRef.current?.focus(); editorRef.current?.setSelectionRange(result.start, result.end); });
+  }
+
+  async function openInGoogleDocs() {
+    if (!current || !(current.body?.trim() || current.title?.trim())) return setSaveState("Nothing to send");
+    try {
+      const html = markdownToHtml(current.body || "", current.title || "");
+      const text = markdownToText(current.body || "", current.title || "");
+      if (api.clipboard.writeRich) await api.clipboard.writeRich({ text, html });
+      else await api.clipboard.writeText(text);
+      if (api.googleDocs?.create) await api.googleDocs.create();
+      showSaveNotice("Copied — paste into the new Google Doc", 3200);
+    } catch { setSaveState("Could not open Google Docs"); }
+  }
+
+  function addTodo() {
+    if (!current) return;
+    const body = current.body || "";
+    const editor = editorRef.current;
+    const start = editorMode === "write" && editor ? editor.selectionStart : body.length;
+    const end = editorMode === "write" && editor ? editor.selectionEnd : body.length;
+    const selected = body.slice(start, end);
+    const insertion = selected
+      ? selected.split("\n").map((line) => /^\s*[-*]\s+\[[ xX]]/.test(line) ? line : `- [ ] ${line}`).join("\n")
+      : `${start > 0 && body[start - 1] !== "\n" ? "\n" : ""}- [ ] `;
+    const nextBody = `${body.slice(0, start)}${insertion}${body.slice(end)}`;
+    const caret = start + insertion.length;
+    setEditorMode("write");
+    edit({ body: nextBody });
+    requestAnimationFrame(() => { editorRef.current?.focus(); editorRef.current?.setSelectionRange(caret, caret); });
+  }
+  function toggleTodo(lineIndex, checked) {
+    if (!current) return;
+    const lines = (current.body || "").split("\n");
+    lines[lineIndex] = lines[lineIndex].replace(/^(\s*[-*]\s+\[)[ xX](])/, `$1${checked ? "x" : " "}$2`);
+    edit({ body: lines.join("\n") });
+  }
+
+  function selectView(nextView) {
+    setView(nextView);
+    const route = VIEWS.find((entry) => entry.id === nextView)?.route;
+    if (route) location.hash = `/${route}`;
+    setSearchQuery("");
+    setCompressOpen(false);
+    if (nextView === "daily") loadDaily();
+  }
+  function openSearchNote(note) { setCurrent(note); setActiveNotebookId(note.folder_id); selectView("notes"); }
+  function openSearchSkill(skill) { setCurrentSkill(skill); setSkillCategory("All"); selectView("skills"); }
+  function openSearchCommand(item) { setCurrentSlashCommand(item); selectView("commands"); }
+
+  const visibleNotes = useMemo(() => notes
+    .filter((note) => !note.deleted_at && (activeNotebookId === "all" || note.folder_id === activeNotebookId))
+    .sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || new Date(right.updated_at) - new Date(left.updated_at)),
+  [notes, activeNotebookId]);
+  const activeNotebook = notebooks.find((notebook) => notebook.id === activeNotebookId);
+  const skillEditorCategories = [...new Set(skills.map((skill) => skill.category?.trim() || "Unsorted"))].sort((left, right) => left.localeCompare(right));
+  const customSkillCategories = [...new Set(skillEditorCategories.map(cleanSkillCategory))].filter(Boolean);
+  const categories = ["Active", "Archived", "All", ...customSkillCategories];
+  const visibleSkills = skills.filter((skill) => skillCategory === "All"
+    || (skillCategory === "Active" && !isArchivedSkill(skill))
+    || (skillCategory === "Archived" && isArchivedSkill(skill))
+    || cleanSkillCategory(skill.category) === skillCategory);
+  const counts = {
+    daily: daily?.today.length || 0,
+    notes: notes.filter((note) => !note.deleted_at).length,
+    skills: skills.length,
+    commands: slashCommands.length,
+    projects: null,
+    bots: bots.filter((bot) => !bot.archivedAt).length,
+    "mcp-servers": mcpServers.length,
+  };
+
+  const service = SERVICES.find((entry) => entry.id === view);
+  if (service) return <div className={`window-surface ${closing ? "is-closing" : ""}`} ref={surfaceRef}>
+    <ServiceScreen
+      appName={service.label}
+      activeId={service.id}
+      loadedServices={loadedServices}
+      onSwitch={openService}
+      status={serviceStatus[service.id]}
+      preview={!window.hushnote}
+      Preview={service.id === "mail" ? MailPreview : service.id === "notion" ? NotionPreview : TwitterPreview}
+      errorHint="Check your connection. The service may also block sign-in inside embedded windows."
+      onBack={() => closeService(service.id)}
+      onReload={() => reloadService(service.id)}
+      onExternal={() => api[service.id].openExternal()}
+      onHide={() => api.window.hide()}
+    />
+  </div>;
+  return <div className={`window-surface ${closing ? "is-closing" : ""}`} ref={surfaceRef}><main className="notebook">
+    <aside className="sidebar" aria-label="Notebook navigation">
+      <div className="sidebar-top">
+        <div className="wordmark"><img src={notebookIconUrl} alt="" /><strong>Notebook</strong></div>
+        <div className="sidebar-top-actions">
+          {LIBRARY_VIEWS.has(view) && <IconButton label={NEW_LABEL[view]} onClick={createForView}><Plus size={18} strokeWidth={2} /></IconButton>}
+          <IconButton label="Settings and backups" onClick={openSettings}><Settings size={17} strokeWidth={1.8} /></IconButton>
+        </div>
+      </div>
+
+      <label className="search"><Search size={15} strokeWidth={1.8} aria-hidden="true" /><input ref={searchRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search everything" aria-label="Search everything" /><kbd>Ctrl K</kbd></label>
+
+      <nav className="nav" aria-label="Pages">
+        {VIEWS.map(({ id, label, Icon, group }, index) => <React.Fragment key={id}>
+          {group && VIEWS[index - 1]?.group !== group && <span className="nav-heading">{group}</span>}
+          <button type="button" className={view === id && !searchQuery ? "is-active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => id === "bots" ? openBot(null) : id === "mcp-servers" ? openMcp(null) : selectView(id)}>
+            <Icon size={16} strokeWidth={1.8} aria-hidden="true" /><strong>{label}</strong><small>{counts[id] ?? ""}</small>
+          </button>
+        </React.Fragment>)}
+        <span className="nav-heading">Apps</span>
+        {SERVICES.map(({ id, label, brand, tone, hotkey }) => <button type="button" key={id} className={view === id ? "is-active" : ""} title={`${label} · ${hotkey}`} onClick={() => openService(id)}>
+          <BrandIcon icon={brand} className={`brand-${tone}`} size={16} />
+          <strong>{label}</strong>
+          {loadedServices.has(id) ? <small className="nav-loaded" title={`${label} is loaded and signed in`}>●</small> : <ExternalLink className="nav-external" size={13} strokeWidth={1.8} aria-hidden="true" />}
+        </button>)}
+      </nav>
+
+      <div className="sidebar-body">
+        {searchQuery.trim() ? <SearchResults query={searchQuery} notes={notes} skills={skills} slashCommands={slashCommands} daily={daily} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenCommand={openSearchCommand} onOpenTask={() => selectView("daily")} />
+          : view === "notes" ? <>
+            <div className="picker">
+              <select value={activeNotebookId} onChange={(event) => openNotebook(event.target.value)} aria-label="Current notebook">
+                <option value="all">All notes</option>
+                {notebooks.map((notebook) => <option key={notebook.id} value={notebook.id}>{notebook.name} ({notes.filter((note) => !note.deleted_at && note.folder_id === notebook.id).length})</option>)}
+              </select>
+              <IconButton label="New notebook" onClick={() => setNotebookEditor({ mode: "create", value: "" })}><Plus size={15} strokeWidth={2} /></IconButton>
+              {activeNotebook && !activeNotebook.is_inbox && <IconButton label={`Delete notebook ${activeNotebook.name}`} onClick={deleteNotebook}><Trash2 size={14} strokeWidth={1.8} /></IconButton>}
+            </div>
+            {notebookEditor && <form className="picker-form" onSubmit={submitNotebook}>
+              <input autoFocus value={notebookEditor.value} onChange={(event) => setNotebookEditor({ ...notebookEditor, value: event.target.value })} placeholder="Notebook name" aria-label="Notebook name" />
+              <button type="submit" className="button subtle">Create</button>
+              <IconButton label="Cancel new notebook" onClick={() => setNotebookEditor(null)}><X size={15} strokeWidth={1.8} /></IconButton>
+            </form>}
+            <NotesList notes={visibleNotes} currentId={current?.id} onSelect={(note) => { setCurrent(note); setEditorMode("write"); }} onRemove={remove} onCreate={() => createNote()} />
+          </>
+            : view === "skills" ? <>
+              <CategoryFilters categories={categories} active={skillCategory} onSelect={setSkillCategory} />
+              <SkillList items={visibleSkills} currentId={currentSkill?.id} onSelect={setCurrentSkill} onRemove={removeSkill} onCreate={createSkill} />
+            </>
+              : view === "commands" ? <SlashCommandList items={slashCommands} currentId={currentSlashCommand?.id} onSelect={setCurrentSlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} />
+                : view === "bots" ? <BotSidebar bots={bots} currentId={currentBotId} onSelect={openBot} />
+                  : view === "mcp-servers" ? <McpSidebar servers={mcpServers} currentId={currentMcpId} onSelect={openMcp} />
+                    : view === "projects" ? null
+                      : <DailySidebar daily={daily} status={dailyStatus} />}
+      </div>
+    </aside>
+
+    {view === "notes" ? <NotePage
+      note={current}
+      notebooks={notebooks}
+      notebookName={notebooks.find((notebook) => notebook.id === current?.folder_id)?.name || activeNotebook?.name}
+      status={saveState}
+      mode={editorMode}
+      onMode={setEditorMode}
+      onEdit={edit}
+      onSave={saveNow}
+      onCopy={copyCurrent}
+      onCopyPath={copyDragTarget}
+      onCompress={() => setCompressOpen(true)}
+      onFormat={formatSelection}
+      onGoogleDoc={openInGoogleDocs}
+      onDrag={dragCurrent}
+      onDragEnd={() => showSaveNotice("Drag finished", 900)}
+      onTogglePin={togglePin}
+      onMove={moveCurrentTo}
+      onRemove={remove}
+      onAddTodo={addTodo}
+      onToggleTodo={toggleTodo}
+      onCreate={() => createNote()}
+      onHide={() => api.window.hide()}
+      editorRef={editorRef}
+    /> : view === "projects" ? <ProjectsPage api={api.projects} skills={skills} commands={slashCommands} onHide={() => api.window.hide()} />
+      : view === "bots" ? <BotsWorkspace api={api} bots={bots} mcpServers={mcpServers} skills={skills} notes={notes} currentId={currentBotId} onCurrent={openBot} onBotsChange={reloadBots} onNotesChange={reloadNotes} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenMcp={openMcp} onHide={() => api.window.hide()} />
+      : view === "mcp-servers" ? <McpServersWorkspace api={api} servers={mcpServers} bots={bots} currentId={currentMcpId} onCurrent={openMcp} onServersChange={reloadMcpServers} onOpenBot={openBot} onHide={() => api.window.hide()} />
+      : view === "skills" ? <SkillPage skill={currentSkill} categories={skillEditorCategories} status={saveState} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onCreate={createSkill} onHide={() => api.window.hide()} />
+      : view === "commands" ? <CommandPage item={currentSlashCommand} status={saveState} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} onHide={() => api.window.hide()} />
+        : <TodayPage daily={daily} status={dailyStatus} onAdd={addDailyTask} onToggle={toggleDailyTask} onLocalEdit={editDailyTaskLocal} onSave={saveDailyTask} onUpdate={updateDailyTask} onRemove={removeDailyTask} onHide={() => api.window.hide()} onRetry={loadDaily} />}
+
+    {view === "notes" && compressOpen && <Compressor note={current} onClose={() => setCompressOpen(false)} />}
+    {settingsOpen && <SettingsPanel
+      backups={backups}
+      message={settingsMessage}
+      dataLocation={dataLocation}
+      appVersion={appVersion}
+      settings={appSettings}
+      github={githubCloud}
+      githubBusy={githubCloudBusy}
+      onTheme={(theme) => updateSettings({ theme })}
+      onStartAtLogin={(startAtLogin) => updateSettings({ startAtLogin })}
+      onGithubConnect={connectGithubCloud}
+      onGithubConfigure={configureGithubCloud}
+      onGithubPush={pushGithubCloud}
+      onGithubPull={pullGithubCloud}
+      onGithubOpen={() => api.githubSync.open()}
+      onClose={() => setSettingsOpen(false)}
+      onBackup={makeBackup}
+      onRestore={restoreBackup}
+      onExport={exportNotes}
+    />}
+  </main></div>;
 }
 
 createRoot(document.getElementById("root")).render(<ErrorBoundary><App /></ErrorBoundary>);

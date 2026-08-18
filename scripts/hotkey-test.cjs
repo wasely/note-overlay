@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { createHotkeyManager } = require("../src/main/hotkey-manager.cjs");
+const { createHotkeyManager, shouldHideOverlay } = require("../src/main/hotkey-manager.cjs");
 
 function fakeGlobalShortcut(blocked = []) {
   const registered = new Set();
@@ -48,6 +48,16 @@ const fallback = "Control+Alt+N";
   manager.start(preferred);
   shortcuts.block(preferred);
   assert.equal(manager.repair(), fallback);
+}
+
+{
+  const window = { isDestroyed: () => false, isVisible: () => true, isFocused: () => false };
+  assert.equal(shouldHideOverlay(window), false, "A visible background window must be brought forward, not hidden.");
+  window.isFocused = () => true;
+  assert.equal(shouldHideOverlay(window), true, "A visible focused window should hide on toggle.");
+  window.isDestroyed = () => true;
+  assert.equal(shouldHideOverlay(window), false, "A destroyed window cannot be hidden.");
+  assert.equal(shouldHideOverlay(null), false);
 }
 
 console.log("Hotkey recovery regression tests passed.");

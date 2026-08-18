@@ -2,29 +2,35 @@
 
 ## Product
 
-Notebook is a Windows-only, local-first Markdown notebook. `Ctrl+Alt+Shift+N` toggles a compact, centered, always-on-top overlay on the monitor under the cursor for fast notes. Notes can be organized into separate notebooks and use standard Markdown task syntax with a clickable checklist view. Its Skills page opens on a ranked Skill Stack dashboard, with active workflow groups first and archived references retained by reason; individual skills keep autosaving name, category, and instructions. It autosaves, supports full-note copy and terminal drag-out as a `.md` file, and has an optional local LLMLingua compressor. No Notebook accounts, telemetry, cloud sync, or background network requests. User-triggered Gmail and Notion views connect directly to those services and keep cookies in separate isolated persistent Electron sessions.
+Notebook is a Windows-only, local-first Markdown notebook. `Ctrl+Alt+Shift+N` toggles a compact, centered, always-on-top window on the monitor under the cursor.
 
-The Daily page keeps dated today/done/tomorrow task lists. Opening the app on a new local calendar day carries every unfinished older task into today once, while preserving completion history. Daily tasks are included in JSON backups and Markdown exports.
+It has exactly four pages and nothing else:
 
-It also has a Slash Commands page for saving command invocations and usage notes. New installs seed a Git push command page and a Markdown/prompts/skills/slash-command explainer.
+- **Today** — dated task plan: quick capture (priority P1–P3, owner me/agent), My focus, Next up, Agent queue, Tomorrow, Done today, plus a seven-day completion history. Opening the app on a new local calendar day carries every unfinished older task into today once, preserving completion history.
+- **Notes** — Markdown notes in notebooks, autosaving, pinnable, with a write/preview toggle. Preview renders headings, lists, quotes, code, inline styles, and task lists; ticking a rendered checkbox rewrites that exact source line.
+- **Skills** — a flat library of reusable instructions with free-text categories and Active/Archived/All filters.
+- **Commands** — saved slash-command invocations and reference pages.
 
-The Mail tab and `Ctrl+Alt+Shift+M` open Gmail in a sandboxed full-window `WebContentsView`. Google may reject embedded sign-in, so the toolbar must always retain the external-browser fallback.
+Search (`Ctrl+K`) spans notes, tasks, skills, and commands. Settings holds theme (system/light/dark), start-at-login, the keyboard reference, local backups, JSON/Markdown export, and optional GitHub repository backup.
 
-The Notion tab and `Ctrl+Alt+Shift+O` open Notion in a separate sandboxed full-window `WebContentsView`. Keep its external-browser fallback available for blocked sign-in flows.
+No accounts, telemetry, or background network requests. The only outbound network path is the GitHub backup, which the user configures and triggers.
 
-Supported target: normal Windows apps and borderless/windowed games. Do not promise support for exclusive-fullscreen games; Windows, GPU presentation, and anti-cheat can block normal desktop overlays.
+Supported target: normal Windows apps and borderless/windowed games. Do not promise support for exclusive-fullscreen games.
 
-Keep the UI intentionally small. User-facing notebooks are backed by the existing folders table. Skills use custom category text and category filters; do not add a separate category-management screen. Do not surface tags/archive functionality unless the user explicitly asks; the storage support remains for compatibility/imports.
+**Keep the UI this small.** The app previously carried embedded Gmail/Notion/Twitter views, a bot operations registry, an MCP server registry, a Projects/Git client, a hard-coded "Skill Stack" dashboard, and a local LLMLingua compressor. All were removed in v0.9.0 because they buried the notebook. Do not reintroduce a feature area without an explicit request. User-facing notebooks are backed by the existing folders table.
 
 ## Architecture
 
-- `src/main/main.cjs`: Electron lifecycle, single-instance lock, global shortcuts, tray, window placement, validated IPC, drag-out, Gmail/Notion view wiring, compressor process/service calls.
-- `src/main/mail-view.cjs`: isolated Gmail `WebContentsView`, bounds, navigation allowlist, persistent session, external fallback, and lifecycle.
-- `src/main/notion-view.cjs`: isolated Notion `WebContentsView`, bounds, navigation allowlist, persistent session, external fallback, and lifecycle.
+- `src/main/main.cjs`: Electron lifecycle, single-instance lock, global shortcut, tray, window placement, validated IPC, drag-out.
 - `src/main/preload.cjs`: the only renderer bridge. Add every native capability here as a narrowly scoped function.
-- `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill operations, JSON export/import, rotating backups and restores.
-- `src/renderer/main.jsx`: React UI. `window.hushnote` is real in Electron and mocked for browser screenshots.
-- `src/renderer/styles.css`: production UI styles. Read `C:\Code\UI-PLAYBOOK.md` before any UI work.
+- `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill/command/daily operations, JSON export/import, rotating backups and restores.
+- `src/main/github-sync.cjs` + `src/main/command-runner.cjs`: optional GitHub repository backup and the sandboxed `gh`/`git` runner it needs.
+- `src/main/hotkey-manager.cjs`, `window-bounds.cjs`, `startup.cjs`: shortcut recovery, multi-monitor placement, start-at-login repair.
+- `src/renderer/main.jsx`: the whole React UI. `window.hushnote` is real in Electron and mocked for the browser preview.
+- `src/renderer/markdown-blocks.js` (pure parser, unit-tested) + `markdown.jsx` (React renderer). Markdown is never turned into HTML strings — no `dangerouslySetInnerHTML`.
+- `src/renderer/styles.css` + `tokens.css`: one spacing/type scale. Minimum rendered text size is 11px and interactive controls are at least 22px tall; `scripts/ui-test.mjs` enforces both.
+
+The `projects`, `project_*`, and `compressions` tables still exist in the schema for older databases; nothing reads or writes them. Bot tables are no longer created.
 
 User data lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus `backups\notebook-backup-*.json`. Never delete, reset, or overwrite this data without explicit user approval. Restore always creates a safety backup first.
 
@@ -34,26 +40,27 @@ User data lives at `%APPDATA%\note-overlay`: `hushnote.sqlite` plus `backups\not
 npm install
 npm run dev
 npm run preview       # browser UI mock at 127.0.0.1:5181
-npm run shot          # narrow + wide screenshots; inspect the PNGs
-npm test              # storage, window bounds, Electron smoke test
+npm run shot          # narrow + wide screenshots, light and dark; inspect the PNGs
+npm test              # storage, bounds, hotkey, startup, Markdown, GitHub sync, drag, Electron, UI
 npm run pack:dir      # portable test build
 npm run pack:release  # signed NSIS release; requires signing credentials
 ```
 
-Before claiming any UI change: run preview/screenshots at narrow and wide widths, inspect them, then confirm in the real Electron build. Test empty/loading/error/success states. The preview mock must be updated whenever a new preload API is added.
+Before claiming any UI change: run `npm run shot`, actually look at the images at both widths and in dark mode, then confirm in the real Electron build. Test empty/loading/error/success states. The preview mock in `main.jsx` must be updated whenever a preload API changes.
+
+`scripts/hotkey-app-test.mjs` drives a real global shortcut with SendKeys and asserts window focus; it fails when another window holds the Windows foreground lock. Re-run it on an idle desktop before treating a failure as a regression.
 
 ## Safety and extension rules
 
-- Preserve context isolation, sandboxing, CSP, permission denial, navigation denial, and Zod validation. Never expose raw IPC, Node, shell, or filesystem access to the renderer.
+- Preserve context isolation, sandboxing, permission denial, navigation denial, and Zod validation. Never expose raw IPC, Node, shell, or filesystem access to the renderer.
 - Any schema change must be backward compatible, use `CREATE ... IF NOT EXISTS`/migration logic, and get a storage regression test. Keep `foreign_keys = ON`.
-- New note-editing behavior must autosave, report failures visibly, and flush on hide. Do not make the overlay block normal work.
-- Compressor failures are normal: service offline, startup timeout, malformed output, and missing local model must give an actionable message without affecting notes.
+- New note-editing behavior must autosave, report failures visibly, and flush on hide. Do not make the window block normal work.
 - The global shortcut may already be owned by another program; preserve fallback/error behavior and do not silently replace user shortcuts.
 
 ## Release
 
-1. Bump `package.json` version and release output folder.
-2. Run `npm test`, `npm run preview` + `npm run shot`, inspect images, then test a clean `pack:dir` build.
-3. Set Windows signing credentials (`CSC_LINK` and `CSC_KEY_PASSWORD`, or the organization certificate configuration) and run `npm run pack:release`.
+1. Bump `package.json` version and the release output folder.
+2. Run `npm test`, `npm run shot`, inspect images, then test a clean `pack:dir` build.
+3. Set Windows signing credentials (`CSC_LINK` and `CSC_KEY_PASSWORD`) and run `npm run pack:release`.
 4. Verify the installer signature, install/upgrade, Start Menu/Desktop shortcut, data preservation, uninstall behavior, and the hotkey on multiple monitors.
-5. Publish manual download + release notes only. No auto-update feed exists in v1.
+5. Publish manual download + release notes only. No auto-update feed exists.
