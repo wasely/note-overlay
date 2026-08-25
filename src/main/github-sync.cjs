@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { normalizeDailyTasks, reconcileConcurrentCompletions } = require("./daily-tasks.cjs");
 
 const SETTINGS_KEY = "githubSync";
 const DATA_FILE = "notebook-data.json";
@@ -106,8 +107,53 @@ function mergeValue(base, local, remote, preference = "local") {
   return clone(preference === "remote" ? remote : local);
 }
 
+const PROJECT_LOCAL_FIELDS = ["local_path", "localPath", "git_root", "gitRoot", "logo_path", "logoPath", "last_device", "lastDevice"];
+
+function normalizedProjectKeys(project) {
+  const keys = new Set();
+  const github = String(project?.github_url || project?.githubUrl || "").trim().toLowerCase().replace(/\.git\/?$/, "").replace(/\/$/, "");
+  if (github) keys.add(`github:${github}`);
+  for (const value of [project?.git_root, project?.gitRoot, project?.local_path, project?.localPath]) {
+    const normalized = String(value || "").trim().replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+    if (normalized) keys.add(`path:${normalized}`);
+  }
+  return keys;
+}
+
+function sameProject(left, right) {
+  const leftKeys = normalizedProjectKeys(left);
+  return [...normalizedProjectKeys(right)].some((key) => leftKeys.has(key));
+}
+
+function mergeProjectCopies(preferred, incoming) {
+  const local = Object.fromEntries(PROJECT_LOCAL_FIELDS.filter((key) => preferred[key] !== undefined).map((key) => [key, clone(preferred[key])]));
+  const merged = mergeValue({}, preferred, incoming);
+  merged.id = preferred.id;
+  Object.assign(merged, local);
+  return merged;
+}
+
+function coalesceProjects(projects) {
+  const output = [];
+  for (const project of Array.isArray(projects) ? projects : []) {
+    const index = output.findIndex((candidate) => sameProject(candidate, project));
+    if (index < 0) output.push(clone(project));
+    else output[index] = mergeProjectCopies(output[index], project);
+  }
+  return output;
+}
+
 function mergeSnapshots(base, local, remote) {
   const merged = mergeValue(comparable(base) || {}, comparable(local) || {}, comparable(remote) || {});
+  if (Array.isArray(merged.projects)) merged.projects = coalesceProjects(merged.projects);
+  if (Array.isArray(merged.dailyTasks)) {
+    merged.dailyTasks = normalizeDailyTasks(reconcileConcurrentCompletions(
+      merged.dailyTasks,
+      base?.dailyTasks,
+      local?.dailyTasks,
+      remote?.dailyTasks,
+    ));
+  }
   merged.version = Math.max(Number(base?.version) || 0, Number(local?.version) || 0, Number(remote?.version) || 0);
   merged.exportedAt = new Date().toISOString();
   return merged;

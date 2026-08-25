@@ -20,11 +20,15 @@ await new Promise((resolve) => aiServer.listen(0, "127.0.0.1", resolve));
 const aiBase = `http://127.0.0.1:${aiServer.address().port}`;
 const app = await electron.launch({
   executablePath: packagedExecutable || electronPath,
-  args: packagedExecutable ? [`--user-data-dir=${userData}`] : [".", `--user-data-dir=${userData}`],
+  args: [`--user-data-dir=${userData}`, ...(packagedExecutable ? [] : ["."])],
   env: {
     ...process.env,
     NOTEBOOK_TEST_ISOLATED: "1",
     NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1",
+    NOTEBOOK_MAIL_URL: `${aiBase}/mail`,
+    NOTEBOOK_NOTION_URL: `${aiBase}/notion`,
+    NOTEBOOK_TWITTER_URL: `${aiBase}/twitter`,
+    NOTEBOOK_EXCALIDRAW_URL: `${aiBase}/excalidraw`,
     NOTEBOOK_AI_CHATGPT_URL: `${aiBase}/chatgpt`,
     NOTEBOOK_AI_GEMINI_URL: `${aiBase}/gemini`,
     NOTEBOOK_AI_DEEPSEEK_URL: `${aiBase}/deepseek`,
@@ -40,6 +44,8 @@ try {
 
   // Window drag regions: the title strip drags the window, controls do not.
   await navButton(page, "Notes").click();
+  await page.getByRole("button", { name: "New note" }).first().click();
+  await page.locator(".drag-action").waitFor();
   const dragRegions = await page.evaluate(() => ({
     file: getComputedStyle(document.querySelector(".drag-action")).getPropertyValue("-webkit-app-region"),
     bar: getComputedStyle(document.querySelector(".editor-bar")).getPropertyValue("-webkit-app-region"),
@@ -81,9 +87,28 @@ try {
   if (cloudBridge.sync !== "function" || cloudBridge.updated !== "function") throw new Error(`Cloud sync preload shape is wrong: ${JSON.stringify(cloudBridge)}`);
   const serviceBridge = await page.evaluate(() => ({
     hasMcp: "mcpServers" in window.hushnote,
+    apps: ["mail", "notion", "twitter", "excalidraw"].filter((id) => typeof window.hushnote[id]?.show !== "function"),
     ai: ["chatgpt", "gemini", "deepseek"].filter((id) => typeof window.hushnote.ai?.[id]?.show !== "function"),
   }));
-  if (serviceBridge.hasMcp || serviceBridge.ai.length) throw new Error(`AI/MCP preload shape is wrong: ${JSON.stringify(serviceBridge)}`);
+  if (serviceBridge.hasMcp || serviceBridge.apps.length || serviceBridge.ai.length) throw new Error(`App/AI preload shape is wrong: ${JSON.stringify(serviceBridge)}`);
+
+  // Every app is already loading while detached, then attaches on first click.
+  await page.waitForTimeout(600);
+  const warmedApps = await app.evaluate(({ webContents }, urls) => {
+    const loaded = new Set(webContents.getAllWebContents().map((contents) => contents.getURL()));
+    return urls.filter((url) => !loaded.has(url));
+  }, ["mail", "notion", "twitter", "excalidraw"].map((id) => `${aiBase}/${id}`));
+  if (warmedApps.length) throw new Error(`App views were not preloaded: ${warmedApps.join(", ")}`);
+  for (const [label, id] of [["Gmail", "mail"], ["Notion", "notion"], ["Twitter", "twitter"], ["Excalidraw", "excalidraw"]]) {
+    await navButton(page, label).click();
+    await page.getByRole("group", { name: "Switch app" }).waitFor();
+    const attached = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.length);
+    if (attached !== 1) throw new Error(`${label} did not attach instantly.`);
+    const loaded = await app.evaluate(({ webContents }, url) => webContents.getAllWebContents().some((contents) => contents.getURL() === url), `${aiBase}/${id}`);
+    if (!loaded) throw new Error(`${label} did not load in its embedded view.`);
+    await page.getByRole("button", { name: "Notebook", exact: true }).click();
+    await page.locator(".notebook").waitFor();
+  }
 
   // Quick AI panel and native embedded-view switching.
   await page.getByRole("button", { name: "Open ChatGPT" }).click();
@@ -108,12 +133,16 @@ try {
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await page.waitForFunction(() => [...document.querySelector('[aria-label="Current notebook"]').options].some((option) => option.textContent.includes("To-do")));
   await page.getByLabel("Note title").fill("Overlay smoke test");
-  await page.getByLabel("Note content").fill("This note proves local autosave works.\n\n- [ ] Verify checklist");
+  const noteEditor = page.locator(".note-editor .ProseMirror");
+  await noteEditor.click();
+  await page.keyboard.type("This note proves local autosave works.");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- [ ] Verify checklist");
   await page.waitForTimeout(900);
   await page.getByText("Saved", { exact: true }).waitFor();
 
   // Drag-out filename copy.
-  await page.getByRole("button", { name: /Drag \.md/ }).click();
+  await page.locator(".drag-action").click();
   await page.getByText("Filename copied", { exact: true }).waitFor();
 
   // Markdown preview writes checkbox state back into the stored note.
@@ -136,6 +165,10 @@ try {
 
   // Today plan.
   await navButton(page, "Today").click();
+  await page.getByLabel("What were you doing?").fill("Verified the daily log");
+  await page.getByRole("button", { name: "Log", exact: true }).click();
+  await page.getByLabel("Edit activity: Verified the daily log").waitFor();
+  await page.getByRole("tab", { name: /Tasks/ }).click();
   await page.getByLabel(/^Task for /).first().fill("Ship the daily flow");
   await page.locator(".line-add button").first().click();
   await page.getByLabel("Check off Ship the daily flow").click();
@@ -144,6 +177,7 @@ try {
   await page.waitForTimeout(400);
   const daily = await page.evaluate(() => window.hushnote.daily.get());
   if (!daily.done.some((task) => task.text === "Ship the daily flow") || !daily.tomorrow.some((task) => task.text === "Review the next priority")) throw new Error("Today done/tomorrow workflow did not save.");
+  if (!daily.activities.some((activity) => activity.text === "Verified the daily log")) throw new Error("Today activity log did not save.");
 
   // Copy the open note through the clipboard bridge.
   await navButton(page, "Notes").click();
@@ -153,12 +187,21 @@ try {
 
   // Skills.
   await navButton(page, "Skills").click();
+  await page.getByRole("heading", { name: "My skills", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Other skills", exact: true }).waitFor();
+  const ownedSkills = await page.evaluate(async () => (await window.hushnote.skills.list()).filter((item) => item.ownership === "mine"));
+  if (ownedSkills.length !== 20) throw new Error(`Expected 20 blixvip skills, found ${ownedSkills.length}.`);
+  await page.locator(".skills-card li button").first().click();
+  await page.getByRole("heading", { name: "1", exact: true }).waitFor();
+  await page.getByRole("button", { name: "View source on GitHub", exact: true }).waitFor();
+  await page.getByText("My skill", { exact: true }).waitFor();
   await page.getByRole("button", { name: "New skill" }).first().click();
   await page.getByLabel("Skill name").fill("Terminal helper");
   await page.getByLabel("Skill category").fill("Automation");
+  await page.getByLabel("Skill source link").fill("https://github.com/blixvip/skills");
   await page.getByLabel("Skill instructions").fill("Run this command safely.");
   await page.getByLabel("Skill instructions").press("Tab");
-  await page.waitForFunction(async () => (await window.hushnote.skills.list()).some((item) => item.name === "Terminal helper" && item.category === "Automation" && item.body === "Run this command safely."));
+  await page.waitForFunction(async () => (await window.hushnote.skills.list()).some((item) => item.name === "Terminal helper" && item.category === "Automation" && item.source_url === "https://github.com/blixvip/skills" && item.ownership === "mine" && item.body === "Run this command safely."));
   await page.getByRole("button", { name: "Copy skill", exact: true }).click();
   await page.getByText("Copied", { exact: true }).waitFor();
 

@@ -18,7 +18,7 @@ const app = await electron.launch({
   executablePath: packagedExecutable || electronPath,
   args: packagedExecutable
     ? [`--user-data-dir=${userData}`, "--background"]
-    : [".", `--user-data-dir=${userData}`, "--background"],
+    : [`--user-data-dir=${userData}`, ".", "--background"],
   env: {
     ...process.env,
     ...(packagedExecutable ? {} : { NOTEBOOK_MAIL_URL: `http://127.0.0.1:${port}/mail` }),

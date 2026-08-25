@@ -132,6 +132,13 @@ function createNotionViewController({ WebContentsView, parentWindow, shell, emit
     });
   }
 
+  // Warm the persistent Notion session without covering the Notebook window.
+  function preload() {
+    ensureView();
+    if (!loaded || status === "error") load();
+    return { status, message: "" };
+  }
+
   function show() {
     active = true;
     attach();
@@ -170,7 +177,7 @@ function createNotionViewController({ WebContentsView, parentWindow, shell, emit
     status = "idle";
   }
 
-  return { show, hide, reload, resize, openExternal, destroy, isActive: () => active, getStatus: () => status };
+  return { preload, show, hide, reload, resize, openExternal, destroy, isActive: () => active, getStatus: () => status };
 }
 
 module.exports = {

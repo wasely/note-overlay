@@ -9,6 +9,13 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-storage-"));
 let cloudSaveSignals = 0;
 const store = createStorage(userData, { onChange: () => { cloudSaveSignals += 1; } });
 try {
+  const bundledSkills = store.listSkills();
+  assert.equal(bundledSkills.filter((item) => item.ownership === "mine").length, 20, "all 20 blixvip/skills entries are separated as the owned library");
+  assert.ok(bundledSkills.every((item) => item.source_url.startsWith("https://github.com/") && item.body.length > 100), "every bundled skill has a source link and pasted content");
+  assert.ok(bundledSkills.find((item) => item.name === "quick-context").body.includes("# /quick-context"), "owned skill content comes from blixvip/skills");
+  assert.ok(bundledSkills.filter((item) => item.ownership === "mine").every((item) => item.source_url === `https://github.com/blixvip/skills/blob/main/${item.name}/SKILL.md`), "every owned skill links to its exact GitHub file");
+  assert.ok(bundledSkills.find((item) => item.name === "frontend-design").body.includes("# Frontend Design"), "third-party stubs are replaced by full skill content");
+  assert.equal(bundledSkills.some((item) => item.name === "Cep Extensions"), false, "the source-less placeholder is removed");
   const note = store.createNote({ title: "Before backup", body: "This stays safe." });
   const skill = store.createSkill({ name: "Terminal helper", category: "Automation", body: "Run this command safely." });
   const slashCommand = store.createSlashCommand({ name: "Deploy", command: "/prompts:deploy", body: "Publish the current build." });
@@ -20,10 +27,14 @@ try {
   const movedProjects = store.moveProject(project.id, 1, secondProject.id);
   assert.deepEqual(movedProjects.filter((item) => item.tier === 1).map((item) => item.id), [project.id, secondProject.id], "cross-tier moves persist before the target");
   let savedProject = store.createProjectTask(project.id, { title: "Build task board", status: "in_progress", priority: "critical" });
+  savedProject = store.moveProjectTask(savedProject.tasks[0].id, "done");
+  assert.equal(savedProject.tasks[0].status, "done", "task moves persist atomically");
   savedProject = store.setProjectAssignments(project.id, { skillIds: [skill.id], slashCommandIds: [slashCommand.id] });
   assert.equal(savedProject.tasks[0].title, "Build task board");
   assert.deepEqual(savedProject.skill_ids, [skill.id]);
   assert.deepEqual(savedProject.slash_command_ids, [slashCommand.id]);
+  savedProject = store.setProjectToolInstall(project.id, "skill", skill.id, ".agents/skills/terminal-helper/SKILL.md", "abc123");
+  assert.equal(savedProject.skill_installs[0].content_hash, "abc123");
   assert.ok(store.listSlashCommands().some((item) => item.command === "/prompts:gitpush"));
   assert.ok(store.listSlashCommands().some((item) => item.name === "Markdown, skills, and slash commands"));
   store.setTags(note.id, ["work"]);
@@ -66,10 +77,28 @@ try {
   assert.deepEqual(yesterday.tomorrow.map((task) => task.text), ["Planned and delegated", "Carry this forward"]);
   const noRoll = store.dailyPage("2026-08-13", "2026-08-14");
   assert.equal(noRoll.items.length, 1, "viewing an old page never rolls tasks into it");
+  const oneMinute = store.createDailyActivity({ text: "Read the project brief", startMinute: 9 * 60 + 17, durationMinutes: 1 }, "2026-08-14");
+  store.createDailyActivity({ text: "Outlined the first section", startMinute: 9 * 60 + 20, durationMinutes: 5 }, "2026-08-14");
+  let activityPage = store.dailyPage("2026-08-14", "2026-08-14");
+  assert.deepEqual(activityPage.activities.map((item) => [item.text, item.start_minute, item.duration_minutes]), [
+    ["Read the project brief", 557, 1],
+    ["Outlined the first section", 560, 5],
+  ], "a day maps one-minute and five-minute activity logs in time order");
+  assert.equal(activityPage.loggedMinutes, 6);
+  store.updateDailyActivity(oneMinute.activities[0].id, { text: "Read and annotated the project brief", startMinute: 9 * 60 + 18 });
+  activityPage = store.dailyPage("2026-08-14", "2026-08-14");
+  assert.equal(activityPage.activities[0].text, "Read and annotated the project brief");
+  assert.equal(activityPage.activities[0].start_minute, 558);
+  const removable = store.createDailyActivity({ text: "Temporary correction", startMinute: 10 * 60, durationMinutes: 1 }, "2026-08-14").activities.find((item) => item.text === "Temporary correction");
+  store.deleteDailyActivity(removable.id);
+  assert.equal(store.dailyPage("2026-08-14", "2026-08-14").activities.some((item) => item.id === removable.id), false, "activity entries can be removed without touching the rest of the day");
+  assert.throws(() => store.createDailyActivity({ text: "Invalid duration", startMinute: 600, durationMinutes: 2 }, "2026-08-14"), /1 or 5 minutes/);
+  assert.throws(() => store.createDailyActivity({ text: "Crosses midnight", startMinute: 1439, durationMinutes: 5 }, "2026-08-14"), /same day/);
   const calendar = store.dailyMonth("2026-08");
-  assert.deepEqual(calendar.days.find((day) => day.date === "2026-08-14"), { date: "2026-08-14", total: 2, done: 1 });
-  assert.deepEqual(calendar.days.find((day) => day.date === "2026-08-13"), { date: "2026-08-13", total: 1, done: 0 });
+  assert.deepEqual(calendar.days.find((day) => day.date === "2026-08-14"), { date: "2026-08-14", total: 2, done: 1, activityCount: 2, loggedMinutes: 6 });
+  assert.deepEqual(calendar.days.find((day) => day.date === "2026-08-13"), { date: "2026-08-13", total: 1, done: 0, activityCount: 0, loggedMinutes: 0 });
   assert.equal(store.dailyMonth("2026-07").days.length, 0);
+  store.setProjectLogo(project.id, "C:\\code\\notebook-storage-test\\icon.png");
   const backup = store.createBackup();
   assert.equal(store.listBackups()[0].name, backup.name);
   store.updateNote(note.id, { title: "Changed", body: "This should be replaced.", folderId: "inbox" });
@@ -88,13 +117,16 @@ try {
   assert.equal(restored.projects.find((item) => item.id === project.id).name, "Notebook");
   assert.equal(restored.projects.find((item) => item.id === project.id).category, "Apps");
   assert.equal(restored.projects.find((item) => item.id === project.id).tier, 1);
-  assert.equal(restored.projects.find((item) => item.id === project.id).tasks[0].status, "in_progress");
+  assert.equal(restored.projects.find((item) => item.id === project.id).logo_path, "C:\\code\\notebook-storage-test\\icon.png", "cloud and backup replacement keeps each device's detected project logo");
+  assert.equal(restored.projects.find((item) => item.id === project.id).tasks[0].status, "done");
   daily = store.dailyDashboard("2026-08-14");
   assert.equal(daily.done[0].text, "Planned and delegated");
   assert.equal(daily.tomorrow[0].text, "Set up Friday");
   assert.equal(daily.history[0].completed, 1);
   assert.equal(daily.carriedCount, 1);
-  assert.equal(store.exportData().version, 9);
+  assert.equal(store.dailyPage("2026-08-14", "2026-08-14").activities.length, 2, "restore keeps the day's activity log");
+  assert.equal(store.exportData().version, 12);
+  assert.equal(store.exportData().dailyActivities.length, 2, "activity history is included in cloud/export snapshots");
   assert(cloudSaveSignals > 10, "content mutations must schedule cloud sync");
   const notebook = store.createFolder("To-do");
   const taskNote = store.createNote({ title: "Launch", body: "- [ ] Ship it", folderId: notebook.id });
@@ -108,6 +140,64 @@ try {
 } finally {
   store.close();
   fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+const cleanupUserData = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-storage-cleanup-"));
+let cleanupStore = createStorage(cleanupUserData);
+const cleanupProject = cleanupStore.createProject({ name: "Cleanup project", localPath: "C:\\code\\notebook-cleanup-test" });
+cleanupStore.close();
+const cleanupDb = new Database(path.join(cleanupUserData, "hushnote.sqlite"));
+const older = "2026-08-18T12:00:00.000Z";
+const newer = "2026-08-19T12:00:00.000Z";
+cleanupDb.prepare("INSERT INTO notes (id, title, body, folder_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("blank-note", "", "", "inbox", older, older);
+cleanupDb.prepare("INSERT INTO notes (id, title, body, folder_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("duplicate-note-old", "Same note", "Same body", "inbox", older, older);
+cleanupDb.prepare("INSERT INTO notes (id, title, body, folder_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("duplicate-note-new", "Same note", "Same body", "inbox", newer, newer);
+cleanupDb.prepare("INSERT INTO skills (id, name, category, body, source_url, ownership, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("blank-skill", "", "Unsorted", "", "", "mine", older, older);
+cleanupDb.prepare("INSERT INTO skills (id, name, category, body, source_url, ownership, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("duplicate-skill-old", "Duplicate skill", "Automation", "Old copy", "", "mine", older, older);
+cleanupDb.prepare("INSERT INTO skills (id, name, category, body, source_url, ownership, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("duplicate-skill-new", "duplicate SKILL", "Automation", "Current copy", "", "mine", newer, newer);
+cleanupDb.prepare("INSERT INTO project_skills (project_id, skill_id) VALUES (?, ?)").run(cleanupProject.id, "duplicate-skill-old");
+cleanupDb.prepare("INSERT INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("blank-command", "", "", "", older, older);
+cleanupDb.prepare("INSERT INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("duplicate-command-old", "Old deploy", "/prompts:duplicate-deploy", "Old copy", older, older);
+cleanupDb.prepare("INSERT INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("duplicate-command-new", "Deploy", "/prompts:duplicate-deploy", "Current copy", newer, newer);
+cleanupDb.prepare("INSERT INTO project_slash_commands (project_id, slash_command_id) VALUES (?, ?)").run(cleanupProject.id, "duplicate-command-old");
+cleanupDb.close();
+cleanupStore = createStorage(cleanupUserData);
+try {
+  assert.equal(cleanupStore.listNotes().some((note) => !note.title.trim() && !note.body.trim()), false, "startup removes abandoned blank notes");
+  assert.deepEqual(cleanupStore.listNotes().filter((note) => note.title === "Same note").map((note) => note.id), ["duplicate-note-new"], "startup keeps one newest identical note");
+  assert.deepEqual(cleanupStore.listSkills().filter((skill) => skill.name.toLowerCase() === "duplicate skill").map((skill) => skill.id), ["duplicate-skill-new"], "startup consolidates case-insensitive skill copies");
+  assert.deepEqual(cleanupStore.listSlashCommands().filter((command) => command.command === "/prompts:duplicate-deploy").map((command) => command.id), ["duplicate-command-new"], "startup consolidates duplicate invocations");
+  const cleanedProject = cleanupStore.getProject(cleanupProject.id);
+  assert.deepEqual(cleanedProject.skill_ids, ["duplicate-skill-new"], "skill assignments move to the kept copy");
+  assert.deepEqual(cleanedProject.slash_command_ids, ["duplicate-command-new"], "command assignments move to the kept copy");
+  assert.ok(cleanupStore.listBackups().length >= 1, "cleanup writes a safety backup first");
+  assert.throws(() => cleanupStore.createSkill({ name: "DUPLICATE SKILL", body: "Another copy" }), /already exists/, "new duplicate skill names are rejected");
+} finally {
+  cleanupStore.close();
+  fs.rmSync(cleanupUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+const dailyRepairUserData = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-daily-repair-"));
+let dailyRepairStore = createStorage(dailyRepairUserData);
+dailyRepairStore.close();
+const dailyRepairDb = new Database(path.join(dailyRepairUserData, "hushnote.sqlite"));
+dailyRepairDb.exec("DROP INDEX daily_tasks_one_carry_per_source_day");
+const insertDailyRepair = dailyRepairDb.prepare("INSERT INTO daily_tasks (id, task_date, text, status, priority, owner, completed_at, completed_on, carried_from_id, created_at, updated_at) VALUES (?, ?, 'Carry once', ?, 2, 'me', ?, ?, ?, ?, ?)");
+insertDailyRepair.run("repair-root", "2026-08-19", "carried", null, null, null, "2026-08-19T06:00:00.000Z", "2026-08-20T06:00:00.000Z");
+insertDailyRepair.run("repair-done", "2026-08-20", "done", "2026-08-20T17:00:00.000Z", "2026-08-20", "repair-root", "2026-08-20T06:00:00.000Z", "2026-08-20T17:00:00.000Z");
+insertDailyRepair.run("repair-duplicate", "2026-08-20", "carried", null, null, "repair-root", "2026-08-20T06:00:01.000Z", "2026-08-21T06:00:00.000Z");
+insertDailyRepair.run("repair-next-one", "2026-08-21", "open", null, null, "repair-duplicate", "2026-08-21T06:00:00.000Z", "2026-08-21T06:00:00.000Z");
+insertDailyRepair.run("repair-next-two", "2026-08-21", "open", null, null, "repair-duplicate", "2026-08-21T06:00:01.000Z", "2026-08-21T06:00:01.000Z");
+dailyRepairDb.close();
+dailyRepairStore = createStorage(dailyRepairUserData);
+try {
+  assert.deepEqual(dailyRepairStore.dailyPage("2026-08-20", "2026-08-21").items.map((task) => [task.id, task.status]), [["repair-done", "done"]], "startup keeps the completed copy of a branched rollover");
+  assert.equal(dailyRepairStore.dailyPage("2026-08-21", "2026-08-21").items.length, 0, "startup removes duplicate descendants created after completion");
+  assert.equal(dailyRepairStore.listDailyTasks().length, 2, "startup repairs the whole rollover lineage");
+  assert.ok(dailyRepairStore.listBackups().length >= 1, "daily repair writes a safety backup first");
+} finally {
+  dailyRepairStore.close();
+  fs.rmSync(dailyRepairUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 const legacyUserData = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-storage-legacy-"));

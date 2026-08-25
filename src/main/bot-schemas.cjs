@@ -8,6 +8,15 @@ const optionalHttpUrl = z.string().max(2_000).refine((value) => {
 const optionalTimestamp = z.union([z.string().datetime({ offset: true }), z.literal(""), z.null()]).optional();
 const optionalId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,119}$/).optional();
 const secretRef = z.union([z.string().regex(/^[A-Z_][A-Z0-9_]{1,127}$/), z.literal("")]).optional();
+const botPermission = z.enum(["read_notes", "write_notes", "projects", "skills"]);
+const botIconInput = z.object({
+  type: z.enum(["symbol", "initials", "image"]),
+  value: z.string().max(700_000),
+  color: z.enum(["violet", "blue", "teal", "amber", "rose", "slate"]),
+}).superRefine((icon, context) => {
+  if (icon.type === "symbol" && (!icon.value || [...icon.value].length > 8)) context.addIssue({ code: "custom", path: ["value"], message: "Choose one short symbol." });
+  if (icon.type === "image" && !/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(icon.value)) context.addIssue({ code: "custom", path: ["value"], message: "Only embedded PNG, JPEG, or WebP bot icons are allowed." });
+});
 
 const connectionInput = z.object({
   id: z.string().max(160).optional(),
@@ -21,12 +30,16 @@ const connectionInput = z.object({
   credentialVerifiedAt: optionalTimestamp,
   credentialErrorSummary: z.string().max(1_000).optional(),
   installPermissions: z.string().regex(/^\d{1,24}$/).optional(),
+  connectorAgentId: z.string().max(160).optional(),
+  installUrl: optionalHttpUrl.optional(),
+  verificationMode: z.enum(["token", "runtime"]).optional(),
 });
 
 const jobInput = z.object({
   id: z.string().max(160).optional(),
   name: z.string().trim().min(1).max(240),
   description: z.string().max(4_000).optional(),
+  icon: botIconInput.optional(),
   scheduleType: z.enum(["cron", "interval", "oneTime", "external", "manual"]),
   cronExpression: z.string().max(200).optional(),
   intervalSeconds: z.coerce.number().positive().max(31_536_000).optional(),
@@ -59,7 +72,7 @@ const jobInput = z.object({
 
 const commandInput = z.object({
   id: z.string().max(160).optional(),
-  platform: z.enum(["discord", "telegram"]),
+  platform: z.enum(["notebook", "discord", "telegram"]),
   command: z.string().trim().min(1).max(240),
   description: z.string().max(2_000).optional(),
   usage: z.string().max(2_000).optional(),
@@ -94,7 +107,8 @@ const botInput = z.object({
   name: z.string().trim().min(1).max(240),
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/).optional(),
   description: z.string().max(4_000).optional(),
-  platforms: z.array(z.enum(["discord", "telegram"])).min(1).max(2),
+  platforms: z.array(z.enum(["notebook", "discord", "telegram"])).min(1).max(3),
+  permissions: z.array(botPermission).max(4).optional(),
   executionMode: z.enum(["continuous", "scheduled", "webhook", "manual"]),
   environment: z.string().trim().min(1).max(120),
   enabled: z.boolean().optional(),
@@ -132,4 +146,4 @@ const botInput = z.object({
   if (bot.executionMode === "scheduled" && !bot.jobs.some((job) => job.enabled !== false && !job.archivedAt)) context.addIssue({ code: "custom", path: ["jobs"], message: "Scheduled bots require at least one enabled job." });
 });
 
-module.exports = { botInput, connectionInput, jobInput, monitoringInput };
+module.exports = { botInput, botIconInput, connectionInput, jobInput, monitoringInput };

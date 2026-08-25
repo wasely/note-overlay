@@ -40,11 +40,13 @@ async function waitForState(expected) {
 try {
   application = await electron.launch({
     executablePath: electronPath,
-    args: packagedPath ? [`--user-data-dir=${userData}`] : [".", `--user-data-dir=${userData}`],
+    args: [`--user-data-dir=${userData}`, ...(packagedPath ? [] : ["."])],
     env: { ...process.env, NOTEBOOK_TEST_ISOLATED: "1", NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1" },
   });
   const mainPage = await application.firstWindow();
   await mainPage.getByText("Notebook", { exact: true }).waitFor();
+  const voiceRegistered = await application.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+L"));
+  if (!voiceRegistered) throw new Error("The quick voice-log shortcut was not registered.");
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
   await mainPage.bringToFront();
   await mainPage.evaluate((hotkey) => window.hushnote.settings.set({ hotkey }), accelerator);

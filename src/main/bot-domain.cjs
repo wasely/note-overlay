@@ -150,6 +150,16 @@ const structuredJobSchema = z.object({
   lastDurationMs: z.number().int().nonnegative().max(31_536_000_000).optional(),
   message: z.string().max(1000).optional(),
 });
+const structuredConnectionSchema = z.object({
+  platform: z.enum(["discord", "telegram"]),
+  state: z.enum(["verified", "invalid", "not_configured", "unknown"]),
+  displayName: z.string().max(240).optional(),
+  username: z.string().max(120).optional(),
+  externalBotId: z.string().max(120).optional(),
+  avatarUrl: z.string().url().max(2_000).optional(),
+  verifiedAt: isoTimestamp.optional(),
+  message: z.string().max(1000).optional(),
+});
 const structuredStatusSchema = z.object({
   schemaVersion: z.literal(1),
   botId: z.string().min(1).max(120),
@@ -161,6 +171,7 @@ const structuredStatusSchema = z.object({
   version: z.string().max(120).optional(),
   latencyMs: z.number().nonnegative().max(3_600_000).optional(),
   jobs: z.array(structuredJobSchema).max(200).default([]),
+  connections: z.array(structuredConnectionSchema).max(2).default([]),
 });
 
 function parseStructuredStatus(value, expectedBotId) {

@@ -15,8 +15,8 @@ Modern-minimal with a utilitarian tone. Information first; decoration removed.
 
 ## Theme
 
-- Warm paper surfaces with a low-chroma sage anchor.
-- Ink carries hierarchy; accent is reserved for focus and active state.
+- Clean white surfaces and a strictly neutral graphite scale.
+- Ink carries hierarchy; white/graphite edge light is reserved for focus and active state.
 - Light and dark values live in `src/renderer/tokens.css`.
 
 ## Typography
@@ -63,7 +63,7 @@ Modern-minimal with a utilitarian tone. Information first; decoration removed.
 
 ## What pages MUST share
 
-- Geist type, warm paper, sage accent, radii, focus ring, button geometry.
+- Roboto type, white paper, graphite accent, radii, focus ring, button geometry.
 - Navigation order and icon logic.
 - Loading, empty, error, and success language.
 

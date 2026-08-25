@@ -11,8 +11,9 @@ This repository stores records in the existing local Notebook database at `%APPD
 - Runtime snapshots, job runs, and bounded operational events use separate `bot_runtime`, `bot_job_runs`, and `bot_events` tables. Checks do not rewrite the Markdown body.
 - Events retain at most 500 records per bot and 90 days.
 - JSON export, import, and rotating backups include bot definitions, documentation notes, skill links, runtime snapshots, runs, and events.
+- Every bot keeps an independent icon definition. Symbols, initials, colors, and uploaded PNG/JPEG/WebP images are local data and survive backup/restore.
 
-The app does not collect Discord/Telegram messages, conversations, attachments, or member data. Raw credentials are never saved. The renderer receives only secret-reference names and redacted results.
+The app does not collect Discord/Telegram messages, conversations, attachments, or member data. Telegram bot tokens, the Telegram MTProto session, and connector device credentials stay in the Electron main process, are encrypted with Windows `safeStorage`, and are never returned to the renderer or included in exports. Discord's shared bot token and the Telegram manager token stay in the hosted connector. Pairing claim secrets travel in request headers, not URLs. Environment-variable references remain supported for existing bots.
 
 ## Runtime meanings
 
@@ -76,17 +77,22 @@ Manual monitoring performs no network or file check. It stays visibly Manual/Unk
 
 ## Secret references and identity verification
 
-Enter an environment-variable name, not a token—for example `DISCORD_CALENDAR_BOT_TOKEN` or `TELEGRAM_REMINDER_BOT_TOKEN`. Set the variable before launching Notebook. The Electron main process resolves it only while checking/verifying.
+Quick Create never asks for a platform application ID or token. It creates a Notebook-managed bot and stores only its private-link capability in the Windows-encrypted local secret store. Advanced Settings can use an environment-variable name—for example `DISCORD_CALENDAR_BOT_TOKEN` or `TELEGRAM_REMINDER_BOT_TOKEN`—when an external platform connection is added later. The Electron main process resolves secrets only while checking, verifying, or starting a configured external bot.
 
 Discord verification calls `GET https://discord.com/api/v10/users/@me` with the bot authorization header. Telegram verification calls the Bot API `getMe` method. Only safe identity fields (ID, username, display name, avatar, verification time/error) return to the UI.
 
-## Fast platform setup
+## One-time connection and managed creation
 
-For Discord, configure the application ID and minimum numeric permission bitfield. **Open setup** opens the application in the Discord Developer Portal. **Install to server** creates the official OAuth authorization URL with `bot applications.commands` scopes and the configured permissions. Discord performs the server selection and authorization.
+Create Bot requires a platform, name, description, logo, and at least one Notebook permission. Every result gets a registry entry, Markdown runbook, and private `notebook://bot/...` link. **Reset link** rotates the encrypted capability and invalidates the previous link.
 
-For Telegram, **Open setup** opens BotFather and **Open bot** opens `t.me/<username>`. Add the bot to a group and grant only required administrator rights in Telegram.
+- **Discord:** the first connection opens OAuth for Notebook's shared Discord application. Each later name creates a logical agent instantly. Agents can be selected through `/agent`; they intentionally share one Discord bot identity because Discord has no supported API for silently creating applications or bot users.
+- **Telegram:** the first connection uses Telegram's QR login and saves an encrypted MTProto session. Each later name checks a unique username, calls `bots.createBot`, waits for the hosted manager bot to export the managed token, stores that token encrypted, and returns an `@bot` link. Each result is a distinct Telegram bot identity.
 
-These actions onboard an existing platform bot. Notebook deliberately does not execute project commands, deploy code, start processes, or mutate external schedulers. Start/restart/recovery commands belong in the Markdown runbook unless a separate secure action system is added.
+Notebook permissions cover reading notes, editing notes, using project context, and running installed skills. They remain visible in Bot Settings and can be changed through Advanced Settings. The provider identities and commands are created here; actual AI/workflow execution still depends on the linked Notebook runtime.
+
+The hosted Worker/D1 connector is in `services/bot-connector`. Its Discord bot token, Telegram manager token, webhook secret, signing key, and admin token must be provisioned before managed creation can go live. Desktop builds need `NOTEBOOK_BOT_CONNECTOR_URL`, `NOTEBOOK_TELEGRAM_API_ID`, and `NOTEBOOK_TELEGRAM_API_HASH`.
+
+Notebook starts only projects created by its Bot Factory, keeps their tokens in the encrypted main-process secret store, and stops their processes when Notebook exits. It does not deploy code, run arbitrary project commands, or mutate external schedulers. Deployment and recovery commands remain in the Markdown runbook.
 
 ## Jobs, cron, and timezones
 

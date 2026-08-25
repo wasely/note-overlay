@@ -32,7 +32,7 @@ function documentationTemplate(name) {
     "",
     "## Scheduled jobs",
     "",
-    "## Discord or Telegram setup",
+    "## Connections or access links",
     "",
     "## Skills used",
     "",
@@ -158,6 +158,7 @@ function createBotRepository({ db, createNote, getNote }) {
       credentialVerifiedAt: connection?.credentialVerifiedAt || null,
       credentialErrorSummary: connection?.credentialErrorSummary || "",
       installPermissions: String(connection?.installPermissions || "0"),
+      verificationMode: connection?.verificationMode === "runtime" ? "runtime" : "token",
     }));
     const jobs = (Array.isArray(merged.jobs) ? merged.jobs : []).map((job, index) => ({
       ...(job || {}),

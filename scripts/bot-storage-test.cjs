@@ -17,6 +17,7 @@ try {
   const bot = store.createBot({
     name: "Calendar Assistant",
     description: "Posts reminders without reading message content.",
+    icon: { type: "symbol", value: "📅", color: "blue" },
     platforms: ["discord", "telegram"],
     executionMode: "scheduled",
     environment: "production",
@@ -33,6 +34,7 @@ try {
   assert.equal(bot.id, "calendar-assistant");
   assert.equal(bot.connections.length, 2);
   assert.equal(bot.jobs.length, 1);
+  assert.deepEqual(bot.icon, { type: "symbol", value: "📅", color: "blue" });
   assert.equal("mcpServerIds" in bot, false);
   assert.ok(store.getNote(bot.documentationNoteId).body.includes("# What this bot does"));
 
@@ -69,6 +71,7 @@ try {
 
   store = createStorage(firstPath); activeStore = store;
   assert.equal(store.getBot(bot.id).name, "Calendar Operations");
+  assert.equal(store.getBot(bot.id).icon.value, "📅");
   assert.equal(store.listBotRuns(bot.id).length, 1);
   store.close(); activeStore = null;
 
@@ -79,6 +82,7 @@ try {
   const restored = createStorage(restorePath); activeStore = restored;
   restored.importData(backup);
   assert.equal(restored.getBot(bot.id).name, "Calendar Operations");
+  assert.deepEqual(restored.getBot(bot.id).icon, { type: "symbol", value: "📅", color: "blue" });
   assert.equal(restored.getBot(bot.id).runtime.source, "Local status file");
   assert.equal(restored.listBotRuns(bot.id).length, 1);
   assert.equal(restored.getNote(restored.getBot(bot.id).documentationNoteId).body, "# Custom runbook\n\nKeep this body.");

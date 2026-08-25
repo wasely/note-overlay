@@ -17,8 +17,8 @@ await fs.mkdir(screenshots, { recursive: true });
 async function launch() {
   return electron.launch({
     executablePath: packagedExecutable || electronPath,
-    args: packagedExecutable ? [`--user-data-dir=${userData}`] : [".", `--user-data-dir=${userData}`],
-    env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1", TELEGRAM_E2E_BOT_TOKEN: secretValue, DISCORD_E2E_BOT_TOKEN: secretValue },
+    args: [`--user-data-dir=${userData}`, ...(packagedExecutable ? [] : ["."])],
+    env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1", NOTEBOOK_BOT_CONNECTOR_URL: "", NOTEBOOK_TELEGRAM_API_ID: "", NOTEBOOK_TELEGRAM_API_HASH: "", TELEGRAM_E2E_BOT_TOKEN: secretValue, DISCORD_E2E_BOT_TOKEN: secretValue },
   });
 }
 
@@ -31,7 +31,7 @@ async function ready(application, width = 1180, height = 860) {
   });
   await page.bringToFront();
   await page.setViewportSize({ width, height });
-  await page.getByText("Notebook", { exact: true }).waitFor();
+  await page.locator(".wordmark").getByText("Notebook", { exact: true }).waitFor();
   return page;
 }
 
@@ -56,7 +56,9 @@ function statusPayload(bot, job, state, message) {
 }
 
 async function openSavedBot(page) {
-  await page.getByRole("button", { name: "Bots", exact: true }).click();
+  const botsButton = page.getByRole("button", { name: /^Bots/ });
+  if (!(await botsButton.count())) throw new Error(`Bots navigation unavailable. Buttons: ${JSON.stringify(await page.locator("button").allTextContents())}`);
+  await botsButton.click();
   const heading = page.getByRole("heading", { name: "Scheduled Multi Platform Ops", exact: true });
   if (!(await heading.isVisible().catch(() => false))) await page.locator(".bot-sidebar-list button").filter({ hasText: "Scheduled Multi Platform Ops" }).first().click();
   await heading.waitFor();
@@ -66,79 +68,69 @@ let app;
 try {
   app = await launch();
   let page = await ready(app);
+  const connectorBoundary = await page.evaluate(async () => {
+    const status = await window.hushnote.bots.connectorStatus();
+    let unsafeRejected = false;
+    try { await window.hushnote.bots.setConnectorUrl("http://connector.example"); } catch { unsafeRejected = true; }
+    return { status, unsafeRejected };
+  });
+  if (connectorBoundary.status.connector.configured || connectorBoundary.status.telegramAuth.configured || !connectorBoundary.unsafeRejected) throw new Error(`Bot Connector IPC boundary is unsafe: ${JSON.stringify(connectorBoundary)}`);
   const related = await page.evaluate(async () => {
     const skill = await window.hushnote.skills.create({ name: "Bot Operations Test Skill", category: "Automation", body: "Fixture skill." });
     return { skill };
   });
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText("Notebook", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Bots", exact: true }).click();
-  await page.getByRole("heading", { name: "Bots", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Add bot", exact: true }).first().click();
-  const dialog = page.getByRole("dialog", { name: "Add bot" });
-  await page.getByLabel("Bot name").fill("Scheduled Multi Platform Ops");
-  await page.getByLabel("Bot description").fill("Real Electron persistence and monitoring fixture.");
-  await page.getByLabel("Execution mode").selectOption("scheduled");
-  await page.getByLabel("Bot environment").fill("production");
-  await dialog.getByRole("checkbox", { name: "Telegram", exact: true }).check();
-  await page.getByLabel("discord username").fill("scheduled_discord_bot");
-  await page.getByLabel("discord external bot ID").fill("123456789012345678");
-  await page.getByLabel("discord credential secret reference").fill("DISCORD_E2E_BOT_TOKEN");
-  await page.getByLabel("Discord install permissions").fill("274877975552");
-  await page.getByLabel("telegram username").fill("scheduled_telegram_bot");
-  await page.getByLabel("telegram credential secret reference").fill("TELEGRAM_E2E_BOT_TOKEN");
-  await page.getByLabel("Local project folder").fill(projectRoot);
-  await page.getByLabel("Runtime language").fill("Node.js 24");
-  await page.getByLabel("Monitoring adapter").selectOption("local-status");
-  await page.getByLabel("Status file path").fill("status.json");
-  await dialog.getByRole("button", { name: "Add job", exact: true }).click();
-  await page.getByLabel("Job name").fill("Five minute digest");
-  await page.getByLabel("Cron expression for Five minute digest").fill("*/5 * * * *");
-  await page.getByLabel("Timezone for Five minute digest").fill("America/Edmonton");
-  await dialog.getByRole("checkbox", { name: "Bot Operations Test Skill", exact: true }).check();
-  await dialog.getByRole("button", { name: "Add bot", exact: true }).click();
-  await page.getByRole("heading", { name: "Scheduled Multi Platform Ops", exact: true }).waitFor();
-
-  const bot = await page.evaluate(async () => (await window.hushnote.bots.list({ includeArchived: true }))[0]);
+  const bot = await page.evaluate(async ({ skillId, projectRoot }) => window.hushnote.bots.create({
+    name: "Scheduled Multi Platform Ops",
+    description: "Real Electron persistence and monitoring fixture.",
+    platforms: ["discord", "telegram"],
+    executionMode: "scheduled",
+    environment: "production",
+    tags: ["fixture"],
+    localProjectPath: projectRoot,
+    runtime: "Node.js 24",
+    monitoring: { adapter: "local-status", filePath: "status.json", monitoringEnabled: true, intervalSeconds: 60, timeoutMilliseconds: 5000, staleAfterSeconds: 180, failuresBeforeOffline: 3, httpMethod: "GET", authSecretRef: "" },
+    connections: [
+      { platform: "discord", username: "scheduled_discord_bot", externalBotId: "123456789012345678", credentialSecretRef: "DISCORD_E2E_BOT_TOKEN", credentialState: "not_configured", installPermissions: "274877975552" },
+      { platform: "telegram", username: "scheduled_telegram_bot", credentialSecretRef: "TELEGRAM_E2E_BOT_TOKEN", credentialState: "not_configured" },
+    ],
+    jobs: [{ id: "digest-job", name: "Five minute digest", scheduleType: "cron", cronExpression: "*/5 * * * *", timezone: "America/Edmonton", enabled: true, schedulerSource: "External automation", gracePeriodSeconds: 600, expectedDurationSeconds: 300 }],
+    commands: [],
+    skillIds: [skillId],
+  }), { skillId: related.skill.id, projectRoot });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("Notebook", { exact: true }).waitFor();
+  await openSavedBot(page);
   if (!bot || bot.runtimeLanguage !== "Node.js 24") throw new Error(`Bot definition was not persisted safely: ${JSON.stringify(bot)}`);
   if (!bot.skillIds.includes(related.skill.id) || "mcpServerIds" in bot) throw new Error("Bot skill relationships or removed MCP state are wrong.");
-  await page.getByLabel("Search everything").fill("Bot Operations Test Skill");
-  await page.locator(".global-results section").filter({ has: page.getByText("Bots", { exact: true }) }).getByRole("button", { name: /Scheduled Multi Platform Ops/ }).waitFor();
-  await page.getByLabel("Search everything").fill("Common failure modes");
-  await page.locator(".global-results section").filter({ has: page.getByText("Bots", { exact: true }) }).getByRole("button", { name: /Scheduled Multi Platform Ops/ }).waitFor();
-  await page.getByLabel("Search everything").fill("");
   const serialized = await page.evaluate(async () => JSON.stringify(await window.hushnote.bots.list({ includeArchived: true })));
   if (serialized.includes(secretValue)) throw new Error("A resolved secret reached the renderer.");
   const invalidRejected = await page.evaluate(async () => { try { await window.hushnote.bots.create({ name: "invalid" }); return false; } catch { return true; } });
   if (!invalidRejected) throw new Error("Invalid bot IPC payload was accepted.");
 
   await fs.writeFile(path.join(projectRoot, "status.json"), JSON.stringify(statusPayload(bot, bot.jobs[0], "success", "Connected and waiting for scheduled work.")));
-  await page.getByRole("button", { name: "Check now", exact: true }).click();
+  await page.getByRole("button", { name: "Check Now", exact: true }).click();
   await page.getByText(/Check succeeded in \d+ ms\./).waitFor();
   await page.locator(".bot-state.state-on_schedule").waitFor();
   await page.screenshot({ path: path.join(screenshots, "bots-electron-healthy.png"), fullPage: true });
 
-  await page.getByRole("button", { name: "Documentation", exact: true }).click();
-  await page.getByRole("button", { name: "Open note", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Open Note", exact: true }).click();
   await page.getByLabel("Note title").waitFor();
-  if (!(await page.getByLabel("Note content").inputValue()).includes("# What this bot does")) throw new Error("Bot Markdown runbook did not open in the existing editor.");
+  if (!(await page.getByLabel("Note content").textContent()).includes("What this bot does")) throw new Error("Bot Markdown runbook did not open in the existing editor.");
   await openSavedBot(page);
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
-  await page.getByRole("button", { name: "Bot Operations Test Skill", exact: true }).click();
-  await page.getByText("Used by bots", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Scheduled Multi Platform Ops", exact: true }).waitFor();
-
-  await openSavedBot(page);
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await app.evaluate(({ shell }) => {
     globalThis.__botSetupUrls = [];
     shell.openExternal = async (url) => { globalThis.__botSetupUrls.push(url); };
   });
-  await page.getByRole("button", { name: "Open setup", exact: true }).first().click();
-  await page.getByRole("button", { name: "Install to server", exact: true }).click();
-  await page.getByRole("button", { name: "Open setup", exact: true }).last().click();
-  await page.getByRole("button", { name: "Open bot", exact: true }).click();
+  await page.getByRole("button", { name: "Install To Server", exact: true }).click();
+  await page.getByRole("button", { name: "Open Bot", exact: true }).click();
+  await page.evaluate(async ({ botId, discordId, telegramId }) => {
+    await window.hushnote.bots.openSetup(botId, discordId, "portal");
+    await window.hushnote.bots.openSetup(botId, telegramId, "portal");
+  }, { botId: bot.id, discordId: bot.connections[0].id, telegramId: bot.connections[1].id });
   const setupUrls = await app.evaluate(() => globalThis.__botSetupUrls);
   if (!setupUrls.some((url) => url.includes("discord.com/developers/applications/123456789012345678"))) throw new Error("Discord developer portal URL was not generated.");
   if (!setupUrls.some((url) => url.includes("discord.com/oauth2/authorize") && url.includes("permissions=274877975552"))) throw new Error("Discord server install URL was not generated with configured permissions.");
@@ -152,22 +144,22 @@ try {
   if (!persisted?.runtime || persisted.jobs[0].name !== "Five minute digest") throw new Error("Bot definition or runtime did not survive restart.");
 
   await fs.writeFile(path.join(projectRoot, "status.json"), JSON.stringify(statusPayload(persisted, persisted.jobs[0], "failed", "Process reachable; latest job failed.")));
-  await page.getByRole("button", { name: "Check now", exact: true }).click();
+  await page.getByRole("button", { name: "Check Now", exact: true }).click();
   await page.getByText(/Check succeeded in \d+ ms\./).waitFor();
   await page.locator(".bot-state.state-degraded").waitFor();
-  await page.getByRole("button", { name: "Jobs", exact: true }).click();
-  await page.locator(".job-error").filter({ hasText: "Fixture job failed without exposing secrets." }).waitFor();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.getByText("Fixture job failed without exposing secrets.", { exact: false }).first().waitFor();
   await page.screenshot({ path: path.join(screenshots, "bots-electron-narrow-failed.png"), fullPage: true });
 
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   page.once("dialog", (dialogEvent) => dialogEvent.accept());
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
-  await page.getByRole("button", { name: "Restore", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Archive Bot", exact: true }).click();
+  await page.getByRole("button", { name: "Restore Bot", exact: true }).waitFor();
   page.once("dialog", (dialogEvent) => dialogEvent.accept());
-  await page.getByRole("button", { name: "Restore", exact: true }).click();
-  await page.getByRole("button", { name: "Archive", exact: true }).waitFor();
-  await page.getByRole("button", { name: "← Registry", exact: true }).click();
-  await page.getByRole("button", { name: "Refresh all", exact: true }).click();
+  await page.getByRole("button", { name: "Restore Bot", exact: true }).click();
+  await page.getByRole("button", { name: "Archive Bot", exact: true }).waitFor();
+  await page.getByRole("button", { name: "← Bots", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await page.getByText(/Checked 1: 1 succeeded, 0 failed\./).waitFor();
   await page.evaluate(async (createdAt) => window.hushnote.bots.create({
     name: "Overdue Telegram Fixture",
@@ -184,11 +176,28 @@ try {
   }), new Date(Date.now() - 7_200_000).toISOString());
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText("Notebook", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Bots", exact: true }).click();
-  const overdueRow = page.locator(".bot-table-row").filter({ hasText: "Overdue Telegram Fixture" });
+  await page.getByRole("button", { name: /^Bots/ }).click();
+  const overdueRow = page.locator(".bot-list-row").filter({ hasText: "Overdue Telegram Fixture" });
   await overdueRow.locator(".state-overdue").waitFor();
   await page.screenshot({ path: path.join(screenshots, "bots-electron-overdue.png"), fullPage: true });
-  console.log("Real Electron bot create, both-platform setup URLs, relationships, Markdown, local monitoring, restart persistence, failed run, archive/restore, and refresh passed.");
+  const instant = await page.evaluate(async () => {
+    const created = await window.hushnote.bots.createInstant({ name: "Instant Notebook Agent", description: "Uses trusted local context.", icon: { type: "symbol", value: "⚡", color: "blue" }, permissions: ["read_notes", "skills"] });
+    const first = await window.hushnote.bots.link(created.bot.id);
+    const reset = await window.hushnote.bots.resetLink(created.bot.id);
+    return { created, first, reset, listed: await window.hushnote.bots.get(created.bot.id) };
+  });
+  if (instant.created.bot.platforms[0] !== "notebook" || instant.listed.permissions.join(",") !== "read_notes,skills") throw new Error("Instant Notebook bot identity or permissions were not persisted.");
+  if (!/^notebook:\/\/bot\//.test(instant.first.url) || instant.first.url === instant.reset.url) throw new Error("Private bot link was not created and rotated through real IPC.");
+  if (JSON.stringify(instant.listed).includes(instant.reset.url.split("key=")[1])) throw new Error("Private bot link token leaked into the bot record.");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator(".wordmark").getByText("Notebook", { exact: true }).waitFor();
+  await page.getByRole("button", { name: /^Bots/ }).click();
+  await page.locator(".bot-list-row").filter({ hasText: "Instant Notebook Agent" }).click();
+  await page.getByRole("heading", { name: "Instant Notebook Agent", exact: true }).waitFor();
+  await page.locator(".bot-tabs").getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByText("Private bot link", { exact: true }).first().waitFor();
+  await page.screenshot({ path: path.join(screenshots, "bots-electron-instant-settings.png"), fullPage: true });
+  console.log("Real Electron bots, instant Notebook creation, private link rotation, platform setup URLs, relationships, Markdown, monitoring, restart, archive/restore, and refresh passed.");
 } finally {
   if (app) await stop(app);
   await fs.rm(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});

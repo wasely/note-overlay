@@ -54,7 +54,7 @@ const navButton = (page, view) => page.locator(".nav button").filter({ hasText: 
 
 const browser = await launch();
 try {
-  for (const [label, width, height] of [["narrow", 340, 760], ["compact", 460, 800], ["medium", 780, 820], ["wide", 1180, 880]]) {
+  for (const [label, width, height] of [["narrow", 340, 760], ["compact", 460, 800], ["split-pane", 620, 800], ["medium", 780, 820], ["wide", 1180, 880]]) {
     const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage();
     await page.goto(`${base}/?daily=demo&projects=demo`, { waitUntil: "networkidle" });
@@ -63,10 +63,47 @@ try {
       await page.waitForTimeout(120);
       await assertNoOverflow(page, `${view} @ ${width}`);
       await assertLegible(page, `${view} @ ${width}`);
+      if (view === "Today") {
+        const clipped = await page.locator(".day-log").evaluate((owner) => {
+          const bounds = owner.getBoundingClientRect();
+          return [...owner.querySelectorAll(".day-clock strong, .activity-capture input, .activity-capture button, .activity-history-head span, .activity-row input, .activity-row select")]
+            .filter((element) => element.getClientRects().length)
+            .map((element) => ({ label: element.getAttribute("aria-label") || element.textContent.trim(), box: element.getBoundingClientRect() }))
+            .filter(({ box }) => box.left < bounds.left - 1 || box.right > bounds.right + 1)
+            .map(({ label, box }) => `${label}: ${Math.round(box.left)}..${Math.round(box.right)} outside ${Math.round(bounds.left)}..${Math.round(bounds.right)}`);
+        });
+        if (clipped.length) throw new Error(`Today @ ${width}: clipped controls — ${clipped.join(" | ")}`);
+      }
     }
     const aiButtons = page.locator(".ai-panel-buttons button");
     if (await aiButtons.count() !== 3) throw new Error(`AI panel @ ${width}: expected three services.`);
+    const aiMarks = await aiButtons.evaluateAll((buttons) => buttons.map((button) => ({
+      label: button.getAttribute("aria-label"),
+      image: Boolean(button.querySelector(".brand-image img")),
+      brandSvg: Boolean(button.querySelector("svg.brand-icon")),
+      placeholder: Boolean(button.querySelector(".service-glyph")),
+    })));
+    if (!aiMarks[0]?.image || !aiMarks[1]?.brandSvg || !aiMarks[2]?.brandSvg || aiMarks.some((mark) => mark.placeholder)) {
+      throw new Error(`AI panel @ ${width}: expected real ChatGPT, Gemini, and DeepSeek brand marks — ${JSON.stringify(aiMarks)}`);
+    }
+    const aiGeometry = await aiButtons.evaluateAll((buttons) => buttons.map((button) => {
+      const box = button.getBoundingClientRect();
+      const label = button.querySelector("span:last-of-type")?.getBoundingClientRect();
+      return { left: box.left, width: box.width, labelCenter: label ? label.left + label.width / 2 : 0 };
+    }));
+    const aiWidths = aiGeometry.map(({ width: buttonWidth }) => Math.round(buttonWidth));
+    if (Math.max(...aiWidths) - Math.min(...aiWidths) > 1 || aiGeometry.some(({ left, width: buttonWidth, labelCenter }) => Math.abs(labelCenter - (left + buttonWidth / 2)) > 1)) {
+      throw new Error(`AI panel @ ${width}: provider controls are not evenly centred — ${JSON.stringify(aiGeometry)}`);
+    }
+    const beforeHover = await aiButtons.nth(1).boundingBox();
+    await aiButtons.nth(1).hover();
+    const afterHover = await aiButtons.nth(1).boundingBox();
+    if (!beforeHover || !afterHover || beforeHover.x !== afterHover.x || beforeHover.y !== afterHover.y || beforeHover.width !== afterHover.width || beforeHover.height !== afterHover.height) {
+      throw new Error(`AI panel @ ${width}: hover moved the provider control.`);
+    }
     await assertLegible(page, `AI panel @ ${width}`);
+    const appButtons = page.locator(".nav").getByRole("button").filter({ has: page.locator("svg.brand-icon") });
+    if (await appButtons.count() < 4) throw new Error(`Apps @ ${width}: Excalidraw or another app mark is missing.`);
     await page.getByRole("button", { name: "Settings and backups" }).click();
     await page.getByRole("heading", { name: "Settings" }).waitFor();
     await assertNoOverflow(page, `Settings @ ${width}`);
@@ -89,10 +126,34 @@ try {
   await assertLegible(page, "AI service screen");
   await page.getByRole("button", { name: "Notebook", exact: true }).click();
 
-  // Today: write a line, check it off, and page back and forth through the days.
+  await navButton(page, "Excalidraw").click();
+  await page.getByRole("group", { name: "Switch app" }).waitFor();
+  await page.getByText("Excalidraw preview", { exact: true }).waitFor();
+  await assertNoOverflow(page, "Excalidraw service screen");
+  await assertLegible(page, "Excalidraw service screen");
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+
+  // Today: log exact time, then write a task, check it off, and page through days.
   await navButton(page, "Today").click();
   await page.locator(".paper").waitFor();
   const todayHeading = await page.locator(".paper-date h1").innerText();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("notebook:mock-quick-voice", { detail: { id: "voice-test", phase: "recording" } })));
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "What were you doing?", null, { timeout: 1500 });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("notebook:mock-quick-voice", { detail: { id: "voice-test", phase: "transcribing" } })));
+  await page.getByLabel("What were you doing?").fill("Voice logged the current activity");
+  await page.getByLabel("Edit activity: Voice logged the current activity").waitFor();
+  await page.getByLabel("What were you doing?").fill("Checked the morning plan");
+  await page.getByRole("group", { name: "Activity duration" }).getByRole("button", { name: "1m" }).click();
+  await page.getByRole("button", { name: "Log", exact: true }).click();
+  await page.getByLabel("Edit activity: Checked the morning plan").waitFor();
+  await page.getByText(/^Logged at .*:\d{2}:\d{2}/).last().waitFor();
+  if (await page.locator(".activity-list .activity-row").count() < 4) throw new Error("The activity stream did not add the logged minute.");
+  await page.getByRole("button", { name: "Next day" }).click();
+  await page.getByText("Nothing logged yet", { exact: false }).waitFor();
+  if (!await page.getByLabel("What were you doing?").isDisabled()) throw new Error("Future-day activity capture should stay disabled.");
+  await page.getByRole("button", { name: "Back to today" }).click();
+  await page.waitForFunction((heading) => document.querySelector(".paper-date h1")?.textContent === heading, todayHeading);
+  await page.getByRole("tab", { name: /Tasks/ }).click();
   await page.getByLabel(/^Task for /).first().fill("Test the paper page");
   await page.locator(".line-add button").first().click();
   await page.getByLabel("Check off Test the paper page").waitFor();
@@ -113,11 +174,20 @@ try {
   if (await page.locator(".library-browser").count()) throw new Error("Notes: hide-list control did not close the library rail.");
   await page.getByRole("button", { name: "Show note list" }).click();
   await page.locator(".library-browser").waitFor();
+  await page.getByLabel("Filter notes").fill("missing phrase");
+  await page.getByText("No matching notes", { exact: true }).waitFor();
+  await page.getByLabel("Filter notes").fill("");
   await page.getByLabel("Note title").fill("Release checklist");
-  await page.getByLabel("Note content").fill("# Ship it\n\nA **short** plan.\n\n- [ ] Verify the build\n- [x] Update the notes");
+  const noteEditor = page.locator(".note-editor .ProseMirror");
+  await noteEditor.click();
+  await page.keyboard.type("# Ship it");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("A **short** plan.");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- [ ] Verify the build");
   await page.getByText("Saved", { exact: true }).waitFor();
   const counted = await page.locator(".note-meta").innerText();
-  if (!/\d+ words/.test(counted) || !counted.includes("1/2 done")) throw new Error(`Note meta line is wrong: ${counted}`);
+  if (!/\d+ words/.test(counted) || !counted.includes("0/1 done")) throw new Error(`Note meta line is wrong: ${counted}`);
 
   await page.getByRole("button", { name: "Preview" }).click();
   await page.getByRole("heading", { name: "Ship it" }).waitFor();
@@ -129,8 +199,8 @@ try {
   const checkedState = await page.getByRole("checkbox", { name: "Verify the build" }).isChecked();
   if (!checkedState) throw new Error("Preview checkbox did not stay checked after writing back to the note.");
   await page.getByRole("button", { name: "Edit" }).click();
-  const editorText = await page.getByLabel("Note content").inputValue();
-  if (!editorText.includes("- [x] Verify the build")) throw new Error(`Checkbox did not write back into Markdown: ${editorText}`);
+  const checkedInEditor = await page.locator('.note-editor ul[data-type="taskList"] li[data-checked="true"]', { hasText: "Verify the build" }).count();
+  if (checkedInEditor !== 1) throw new Error("Preview checkbox did not write back into the editor.");
 
   await page.getByRole("button", { name: "Pin note" }).click();
   await page.locator(".row.is-selected .row-pin").waitFor();
@@ -143,25 +213,27 @@ try {
   await navButton(page, "Commands").click();
   await assertLibraryRail(page, "Commands");
   await page.locator(".library-browser").getByText("Git push", { exact: true }).waitFor();
+  await page.getByLabel("Filter commands").fill("missing command");
+  await page.getByText("No matching commands", { exact: true }).waitFor();
+  await page.getByLabel("Filter commands").fill("");
 
-  // Projects: category filtering, cross-tier drag, and the review-before-push flow.
+  await navButton(page, "Skills").click();
+  await assertLibraryRail(page, "Skills");
+
+  // Projects: four-row ranking, task-first detail, and review-before-push flow.
   await navButton(page, "Projects").click();
-  await page.getByRole("heading", { name: "Now" }).waitFor();
-  await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByText("Claude proxy", { exact: true }).waitFor();
-  await page.getByRole("button", { name: /All/ }).click();
-  await page.locator(".priority-card", { hasText: "Claude proxy" }).locator(".priority-drag").dragTo(page.locator(".priority-lane.tier-1"));
-  await page.locator(".priority-lane.tier-1 .priority-card", { hasText: "Claude proxy" }).waitFor();
-  await page.getByRole("button", { name: "GitHub", exact: true }).click();
-  await page.getByRole("button", { name: "Review & commit" }).click();
+  await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+  await page.locator(".project-simple-card", { hasText: "Claude proxy" }).getByRole("button").dragTo(page.locator('.project-rank-row[aria-label="1st place"]'));
+  await page.locator('.project-rank-row[aria-label="1st place"] .project-simple-card', { hasText: "Claude proxy" }).waitFor();
+  await page.locator(".project-simple-card", { hasText: "ClipForge AI" }).getByRole("button").click();
+  await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor();
+  if (await page.getByRole("tab", { name: "Overview", exact: true }).count()) throw new Error("Projects: removed Overview tab is still visible.");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Review & commit", exact: true }).click();
   await page.getByRole("dialog", { name: "Commit ClipForge AI" }).waitFor();
-  await page.getByText("diff --git", { exact: false }).waitFor();
+  await page.getByText("src/export.py", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Commit & push" }).click();
   await page.getByText(/Committed f00ba412 and pushed/).waitFor();
-  await page.getByRole("button", { name: "Set up", exact: true }).click();
-  await page.getByRole("dialog", { name: "Set up GitHub for Claude proxy" }).waitFor();
-  await page.getByRole("button", { name: "Create repository" }).click();
-  await page.getByText(/Created wasely\/claude-proxy on GitHub/).waitFor();
   await assertNoOverflow(page, "Projects GitHub flow");
   await assertLegible(page, "Projects GitHub flow");
   await navButton(page, "Notes").click();
@@ -188,7 +260,7 @@ try {
   await page.getByRole("button", { name: "Close settings" }).click();
 
   await context.close();
-  console.log("UI test passed: layout at 4 widths, 11px minimum type, Projects drag/GitHub flow, daily page capture/check/paging, Markdown preview write-back, pinning, search, keyboard, and theme.");
+  console.log("UI test passed: layout at 5 widths, 11px minimum type, Projects drag/GitHub flow, daily timeline/task capture/paging, Markdown preview write-back, pinning, search, keyboard, and theme.");
 } finally {
   await browser.close();
   await server.close();

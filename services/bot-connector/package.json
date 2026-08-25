@@ -1,0 +1,16 @@
+{
+  "name": "@notebook/bot-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply notebook-bot-connector --local",
+    "db:migrate:remote": "wrangler d1 migrations apply notebook-bot-connector --remote",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.124.0"
+  }
+}

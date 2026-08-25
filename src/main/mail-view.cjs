@@ -128,6 +128,14 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
     });
   }
 
+  // Load while detached so the first visible attach is immediate. The persistent
+  // partition keeps the user's Google session across app restarts.
+  function preload() {
+    ensureView();
+    if (!loaded || status === "error") load();
+    return { status, message: "" };
+  }
+
   function show() {
     active = true;
     attach();
@@ -166,7 +174,7 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
     status = "idle";
   }
 
-  return { show, hide, reload, resize, openExternal, destroy, isActive: () => active, getStatus: () => status };
+  return { preload, show, hide, reload, resize, openExternal, destroy, isActive: () => active, getStatus: () => status };
 }
 
 module.exports = {

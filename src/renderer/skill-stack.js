@@ -1,170 +1,108 @@
+// The curated order used by the Skills library. Categories in storage keep their
+// numeric prefixes for ordering; the UI removes those prefixes when it renders.
 export const SKILL_STACK_GROUPS = [
   {
     status: "active",
-    label: "Core Workflow",
+    label: "My skills",
     items: [
-      ["GitHub Publisher ($github)", "Prepare truthful docs and repository health files, validate, commit, then safely publish or update GitHub."],
-      ["grill-with-docs", "Pressure-test an idea against the repository and build shared vocabulary before planning."],
-      ["to-spec", "Turn established conversation and code context into a concrete build specification."],
-      ["to-tickets", "Split a specification into dependency-aware, tracer-bullet tickets."],
-      ["implement", "Execute specifications or tickets; typecheck often, test narrowly, then run the full suite."],
-      ["diagnosing-bugs", "Create one reliable red feedback loop, find the cause, then lock the fix with a regression test."],
-      ["tdd", "Use red, green, refactor at a stable seam and produce durable behavior tests."],
-      ["code-review", "Review a diff against both repository standards and the originating specification."],
-      ["research", "Delegate primary-source reading and save a cited Markdown report in the repository."],
+      ["1", "Fast execution timebox for small, well-defined tasks."],
+      ["2", "Short execution timebox for straightforward tasks."],
+      ["3", "Standard execution timebox for moderately involved tasks."],
+      ["4", "Deeper execution timebox for substantial tasks."],
+      ["5", "Maximum normal execution timebox for complex tasks."],
+      ["asap", "Take the shortest reliable path while preserving correctness."],
+      ["backbefore", "Restore the last good version, then reapply the newest request."],
+      ["components", "Scout and implement strong UI components from approved libraries."],
+      ["github", "Audit, document, validate, commit, and safely publish projects."],
+      ["huh", "Report current activity immediately and tersely."],
+      ["instant", "Answer immediately with the best available response."],
+      ["quick-context", "Load a selected project's CLAUDE.md instructions quickly."],
+      ["shader-ui", "Add tasteful, localized shader effects to interfaces."],
+      ["ui-intergrity", "Prevent overlap, clipping, stacking, and integration bugs."],
     ],
   },
   {
     status: "active",
-    label: "Engineering Judgment",
+    label: "Planning",
     items: [
-      ["prototype", "Write the smallest throwaway program that answers one design question."],
-      ["resolving-merge-conflicts", "Resolve conflicts from each side’s original intent, never by blindly picking lines."],
-      ["improve-codebase-architecture", "Find architectural friction and high-leverage deepening opportunities."],
-      ["codebase-design", "Design deep modules: substantial behavior behind small interfaces at clean seams."],
-      ["domain-modeling", "Sharpen overloaded terms, edge cases, glossaries, and hard-to-reverse decisions."],
-      ["ponytail", "Use senior-simplicity mode to cut speculative abstractions and write the least code that solves today’s problem."],
+      ["Grill-with-docs", "Pressure-test an idea against repository documentation before planning."],
+      ["To-spec", "Turn established conversation and code context into a concrete build specification."],
+      ["Grilling", "Interrogate requirements, assumptions, constraints, and tradeoffs before committing."],
+      ["Prototype", "Build the smallest throwaway implementation that answers one design question."],
     ],
   },
   {
     status: "active",
-    label: "UI and Design",
+    label: "Code Format",
     items: [
-      ["hallmark", "Apply opinionated UI rules that make generated interfaces feel deliberately designed, not generic."],
-      ["ui-ux-pro-max", "Search styles, palettes, font pairings, UX rules, icons, and motion guidance."],
-      ["design", "Use one umbrella skill for brand, tokens, UI, logos, slides, banners, social assets, and icons."],
+      ["Improve Codebase Architecture", "Find high-leverage structural improvements without unnecessary churn."],
+      ["Code Simplification", "Remove avoidable complexity while preserving behavior."],
+      ["Code Review & Quality", "Review implementation quality, correctness, and maintainability."],
     ],
   },
   {
     status: "active",
-    label: "Cloud and Web",
+    label: "UI",
     items: [
-      ["cloudflare", "Choose the right Cloudflare product and retrieve current platform guidance before building."],
-      ["wrangler", "Use current Wrangler CLI, configuration, deployment, and troubleshooting guidance."],
-      ["workers-best-practices", "Apply retrieval-first rules for writing and reviewing modern Cloudflare Workers."],
-      ["web-perf", "Audit Core Web Vitals, bundles, loading, and runtime behavior using current thresholds."],
+      ["frontend-design", "Create distinctive, production-quality interfaces instead of generic AI UI."],
+      ["frontend-ui-engineering", "Apply practical frontend engineering patterns to interface work."],
+      ["web-design-guidelines", "Review interfaces against modern web design and accessibility guidance."],
     ],
   },
   {
     status: "active",
-    label: "Writing and Context",
+    label: "Safety",
     items: [
-      ["writing-for-agents", "Write reliable skills, AGENTS.md files, and agent-facing reference documents."],
-      ["writing-fragments", "Explore raw ideas broadly without committing to structure too early."],
-      ["writing-shape", "Turn a pile of material into a coherent argument or story structure."],
-      ["writing-beats", "Mine fixed source material to fill a detailed beat-by-beat sequence."],
-      ["handoff", "Save a portable, redacted context summary so another session can continue cleanly."],
-      ["wait-what", "Force a plain-English re-pitch using the project’s agreed vocabulary."],
+      ["SecOpsAgentKit", "Security operations workflows for agent-driven projects."],
+      ["AI Security Arsenal", "A focused collection of AI security tools and practices."],
+      ["Superagent Security Skills", "Reusable security skills from Superagent."],
+      ["Security & Hardening", "Addy Osmani's security and hardening guidance."],
+      ["SkillTotal", "Track and inspect agent skill security changes."],
     ],
   },
   {
     status: "active",
-    label: "High-Leverage Specialists",
+    label: "Anti-Slop — Frontend / UI",
     items: [
-      ["wayfinder", "Map decisions for a huge, foggy effort, then hand the cleared path to a specification instead of building prematurely."],
-      ["teach", "Run a stateful, multi-session learning workspace with lessons, references, and learning records."],
+      ["Impeccable", "Refine hierarchy, type, spacing, responsiveness, UX, accessibility, motion, and UI copy."],
+      ["Frontend Design Principles", "Use clear principles to prevent generic frontend output."],
+      ["Frontend Design 2.0", "PracticalSwan's updated frontend design workflow."],
     ],
   },
   {
-    status: "archived",
-    label: "Apps and Integrations",
+    status: "active",
+    label: "Anti-Slop — Backend / Code",
     items: [
-      ["telegram-bot-builder", "No active Telegram project; current bot work is centered on Discord and content tooling."],
-      ["affine-native", "Narrow app integration with no current AFFiNE work in the active projects."],
-      ["OnlyOffice", "Product reference rather than an actionable agent workflow; Word plus Google Docs already cover this need."],
+      ["Test-Driven Development", "Build behavior through a red, green, refactor loop."],
+      ["Debugging & Error Recovery", "Diagnose failures systematically and recover safely."],
     ],
   },
   {
-    status: "archived",
-    label: "Cloud and Web",
+    status: "active",
+    label: "Anti-Slop — Text / Writing",
     items: [
-      ["durable-objects", "Useful only when a project needs edge state or coordination; the active cloudflare skill can route here."],
-      ["turnstile-spin", "Single-feature setup skill; only needed when a project is actively adding bot protection."],
-      ["cloudflare-email-service", "No active email-service build; the main cloudflare skill is enough until one exists."],
-      ["sandbox-sdk", "Experimental, infrastructure-heavy niche with no current sandbox workload."],
+      ["Anti-Slop Writing", "Remove generic AI phrasing and empty prose."],
+      ["Writing Clearly & Concisely", "Write direct, precise prose without filler."],
+      ["Red Pen", "Edit aggressively for clarity, precision, and economy."],
+      ["Vercel Writing Guidelines", "Apply Vercel's product-writing guidance."],
     ],
   },
   {
-    status: "archived",
-    label: "Engineering",
+    status: "active",
+    label: "Caveats Testing",
     items: [
-      ["karpathy-guidelines", "Overlaps global agent rules, TDD, diagnosis, and code review rather than needing a separate invocation."],
-      ["remotion-best-practices", "Remotion projects are archived, so this is not part of the daily stack."],
-      ["obscura", "Built-in browser and Chrome tools cover normal automation; only valuable for specialized stealth work."],
-      ["migrate-to-shoehorn", "Package-specific, test-only migration for repositories already adopting shoehorn."],
+      ["Agentic QE Fleet", "Generate tests and find gaps across coverage, mutation, chaos, security, and performance."],
+      ["Schemathesis", "Break APIs with schema-driven boundary, invalid, random, and stateful requests."],
+      ["Continuous Claude", "Run a persistent testing and CI repair loop across large projects."],
     ],
   },
   {
-    status: "archived",
-    label: "Personas and Meta Tools",
+    status: "active",
+    label: "Skill Creation",
     items: [
-      ["grilling", "The active grill-with-docs wrapper already invokes this behavior with repository context."],
-      ["ponytail-review", "Active code-review plus ponytail covers the same outcome with broader quality checks."],
-      ["ponytail-audit", "Occasional maintenance tool; improve-codebase-architecture covers broader repository health."],
-      ["ask-matt", "This ranked reference replaces that routing guide and makes the main flow directly visible."],
-      ["grill-me", "Most work happens inside repositories, where grill-with-docs leaves a useful paper trail."],
-      ["cavecrew", "Claude-specific delegation format that does not match the current Codex workflow."],
-      ["loop-me", "Very narrow workflow-design use case; not a general planning tool."],
-      ["ponytail-debt", "Useful only after a project consistently adopts the ponytail comment convention."],
-      ["ponytail-help", "Help card only; the active ponytail skill contains the working behavior."],
-      ["ponytail-gain", "Informational scoreboard, not a tool that advances project work."],
-      ["caveman-review", "Active code-review plus the global concise communication rule already provides this."],
-      ["caveman-commit", "GitHub Publisher and the concise style already cover commit-message quality."],
-      ["caveman-compress", "Destructive, niche optimization with readability costs; instructions are already concise."],
-      ["caveman", "Redundant because global AGENTS.md already requires extreme concision."],
-      ["caveman-help", "Meta-only help card for an archived persona."],
-      ["caveman-stats", "Hook-specific display utility that performs no reasoning or project work."],
-    ],
-  },
-  {
-    status: "archived",
-    label: "Planning and Process",
-    items: [
-      ["triage", "Current work is not dominated by an inbound issue queue; the active spec-to-ticket flow covers self-created work."],
-      ["to-questionnaire", "High value only when progress depends on another person’s knowledge, which is not a daily condition."],
-      ["wizard", "Reserved for rare moments when automation is blocked by a genuinely manual external step."],
-      ["plandeck", "Adds a separate planning system and overhead when built-in plans and tickets are sufficient."],
-      ["claude-handoff", "Claude-specific and duplicates the active portable handoff skill."],
-    ],
-  },
-  {
-    status: "archived",
-    label: "Tooling and Setup",
-    items: [
-      ["setup-pre-commit", "Useful one-time repository setup, not a daily skill; reactivate when a JavaScript project lacks hooks."],
-      ["find-skills", "Discovery stays archived until a concrete capability gap appears."],
-      ["setup-matt-pocock-skills", "One-time precondition; the workflow is already represented in the active stack."],
-      ["setup-ts-deep-modules", "Specialized architecture enforcement; codebase-design covers the general principle."],
-      ["git-guardrails-claude-code", "Claude-specific, while Codex already follows explicit Git safety rules."],
-      ["scaffold-exercises", "Project-specific convention with no active exercise-authoring repository."],
-    ],
-  },
-  {
-    status: "archived",
-    label: "UI and Design",
-    items: [
-      ["design-system", "Valuable for a dedicated system build, but the active design skill covers normal token and component work."],
-      ["shadcn", "No active repository currently has shadcn configuration; reactivate when components.json appears."],
-      ["brand", "Overlaps the active design umbrella; reactivate for a dedicated brand-identity engagement."],
-      ["banner-design", "Covered by the active design workflow and image generation unless a campaign needs a dedicated banner system."],
-      ["ui-styling", "Substantial overlap with hallmark, ui-ux-pro-max, and design."],
-      ["slides", "A newer dedicated presentations workflow makes this short reference redundant."],
-      ["material-ui-nextjs", "No active Material UI project."],
-      ["material-ui-theming", "No active Material UI project."],
-      ["material-ui-styling", "No active Material UI project."],
-      ["material-ui-tailwind", "No active project combining Material UI and Tailwind."],
-      ["chakra-ui-builder", "No active Chakra UI project."],
-      ["chakra-ui-refactor", "No active Chakra UI project."],
-      ["chakra-ui-migrate", "Migration-only tool with no active Chakra v2 codebase."],
-      ["migrate-radix-to-base", "No active Radix-to-Base migration."],
-    ],
-  },
-  {
-    status: "archived",
-    label: "Unsorted",
-    items: [
-      ["ratchet review", "Claude-oriented and overlaps code-review while adding heavy review cost to routine work."],
-      ["Unnamed empty entry", "Empty record with no name, instructions, or executable guidance."],
+      ["skill-creator", "Anthropic's official skill-creation meta-skill."],
+      ["agent-skill-creator", "Turn workflows into packaged, cross-platform Agent Skills."],
+      ["write-a-skill", "Create clean, focused skills with progressive disclosure."],
     ],
   },
 ];
@@ -184,7 +122,13 @@ export function isArchivedSkill(skill) {
   return skillStackReference(skill)?.status === "archived" || (skill?.category || "").startsWith("99 · Archive");
 }
 
+export function skillOwnership(skill) {
+  return skill?.ownership === "other" ? "other" : "mine";
+}
+
 export function sortSkillsByStack(left, right) {
+  const ownershipOrder = Number(skillOwnership(left) === "other") - Number(skillOwnership(right) === "other");
+  if (ownershipOrder) return ownershipOrder;
   const leftReference = skillStackReference(left);
   const rightReference = skillStackReference(right);
   if (leftReference && rightReference) return leftReference.globalRank - rightReference.globalRank;
@@ -200,7 +144,7 @@ export function cleanSkillCategory(category) {
 }
 
 export function isArchiveLabel(label) {
-  return /^archive/i.test(label);
+  return /^archive\b/i.test(label);
 }
 
 // Shelf titles drop the "Archive · " prefix; the browser shows one Archive divider instead.
@@ -219,12 +163,15 @@ export function groupSkills(skills, scope = "active", query = "") {
     if (scope === "active" && isArchivedSkill(skill)) return false;
     if (scope === "starred" && !skill.pinned) return false;
     if (!needle) return true;
-    return `${displaySkillName(skill)} ${cleanSkillCategory(skill.category)} ${skill.body || ""}`.toLowerCase().includes(needle);
+    return `${displaySkillName(skill)} ${cleanSkillCategory(skill.category)} ${skill.source_url || ""} ${skill.body || ""}`.toLowerCase().includes(needle);
   });
   const ordered = [...visible].sort(sortSkillsByStack);
-  const groups = [...new Set(ordered.map((skill) => cleanSkillCategory(skill.category)))].map((label) => {
-    const items = ordered.filter((skill) => cleanSkillCategory(skill.category) === label).sort(bestFirst);
-    return { label, items, archived: isArchiveLabel(label) || items.every(isArchivedSkill) };
+  const groupKeys = [...new Set(ordered.map((skill) => `${skillOwnership(skill)}:${cleanSkillCategory(skill.category)}`))];
+  const groups = groupKeys.map((key) => {
+    const [ownership, ...labelParts] = key.split(":");
+    const label = labelParts.join(":");
+    const items = ordered.filter((skill) => skillOwnership(skill) === ownership && cleanSkillCategory(skill.category) === label).sort(bestFirst);
+    return { key, label, ownership, items, archived: isArchiveLabel(label) || items.every(isArchivedSkill) };
   });
-  return [...groups.filter((group) => !group.archived), ...groups.filter((group) => group.archived)];
+  return groups.sort((left, right) => Number(left.ownership === "other") - Number(right.ownership === "other") || Number(left.archived) - Number(right.archived));
 }

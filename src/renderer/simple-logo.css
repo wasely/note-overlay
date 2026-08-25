@@ -1,0 +1,13 @@
+.simple-logo { display: block; overflow: hidden; color: #fff; }
+.simple-logo-background { fill: var(--logo-background); }
+.simple-logo-accent { fill: var(--logo-accent); opacity: .78; }
+.simple-logo-dot { fill: currentColor; opacity: .88; }
+.simple-logo text { fill: currentColor; font: 800 22px/1 var(--font-display); letter-spacing: -1.2px; }
+.simple-logo.tone-0 { --logo-background: #24579a; --logo-accent: #68a5f1; }
+.simple-logo.tone-1 { --logo-background: #167267; --logo-accent: #5bc3ac; }
+.simple-logo.tone-2 { --logo-background: #a04a23; --logo-accent: #ee9a63; }
+.simple-logo.tone-3 { --logo-background: #6744a3; --logo-accent: #ac86e8; }
+.simple-logo.tone-4 { --logo-background: #37713d; --logo-accent: #82bd72; }
+.simple-logo.tone-5 { --logo-background: #9a3655; --logo-accent: #e47799; }
+.simple-logo.tone-6 { --logo-background: #2f6879; --logo-accent: #72b8c9; }
+.simple-logo.tone-7 { --logo-background: #74522b; --logo-accent: #c79957; }

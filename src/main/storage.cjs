@@ -5,9 +5,14 @@ const os = require("os");
 const { randomUUID } = require("crypto");
 const { createBotRepository } = require("./bot-storage.cjs");
 const { enrichProject } = require("./workshop.cjs");
+const { dailyCarryId, normalizeDailyTasks } = require("./daily-tasks.cjs");
+const CURATED_SKILLS = require("./curated-skills.json");
+const CURATED_SKILLS_VERSION = 5;
 const DEVICE_NAME = os.hostname();
 
 function now() { return new Date().toISOString(); }
+function normalizedLibraryText(value) { return String(value || "").replace(/\r\n?/g, "\n").trim(); }
+function normalizedLibraryName(value) { return normalizedLibraryText(value).toLocaleLowerCase("en-US"); }
 function localDate(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   const year = date.getFullYear();
@@ -29,6 +34,8 @@ const STARTER_SKILLS = [
     id: "starter-onlyoffice",
     name: "OnlyOffice",
     category: "Apps & Integrations",
+    source_url: "https://github.com/ONLYOFFICE/DesktopEditors",
+    ownership: "other",
     body: [
       "## Best overall office suite",
       "OnlyOffice is the strongest Microsoft Office-compatible alternative — a full-featured office suite for text, spreadsheets, and presentations with a modern, clean UI.",
@@ -105,7 +112,7 @@ function createStorage(userDataPath, { onChange } = {}) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_inbox INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', folder_id TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(folder_id) REFERENCES folders(id));
-    CREATE TABLE IF NOT EXISTS skills (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'Unsorted', body TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS skills (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'Unsorted', body TEXT NOT NULL DEFAULT '', source_url TEXT NOT NULL DEFAULT '', ownership TEXT NOT NULL DEFAULT 'mine', pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS slash_commands (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', command TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS note_tags (note_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY(note_id, tag_id), FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE, FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE);
@@ -113,11 +120,15 @@ function createStorage(userDataPath, { onChange } = {}) {
     CREATE TABLE IF NOT EXISTS daily_tasks (id TEXT PRIMARY KEY, task_date TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'done', 'carried')), priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 3), owner TEXT NOT NULL DEFAULT 'me' CHECK(owner IN ('me', 'agent')), completed_at TEXT, completed_on TEXT, carried_from_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(carried_from_id) REFERENCES daily_tasks(id) ON DELETE SET NULL);
     CREATE INDEX IF NOT EXISTS daily_tasks_date_status ON daily_tasks(task_date, status);
     CREATE INDEX IF NOT EXISTS daily_tasks_completed_on ON daily_tasks(completed_on);
+    CREATE TABLE IF NOT EXISTS daily_activities (id TEXT PRIMARY KEY, activity_date TEXT NOT NULL, text TEXT NOT NULL, start_minute INTEGER NOT NULL CHECK(start_minute BETWEEN 0 AND 1439), duration_minutes INTEGER NOT NULL CHECK(duration_minutes IN (1, 5)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS daily_activities_date_time ON daily_activities(activity_date, start_minute, created_at);
     CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'blocked', 'completed', 'archived')), priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_rank INTEGER NOT NULL DEFAULT 0, category TEXT NOT NULL DEFAULT 'Uncategorized', tier INTEGER NOT NULL DEFAULT 4 CHECK(tier BETWEEN 1 AND 4), tier_order INTEGER NOT NULL DEFAULT 0, local_path TEXT UNIQUE, git_root TEXT, github_url TEXT, primary_language TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', next_action TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', push_after_commit INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_worked_at TEXT, last_device TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS project_tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'blocked', 'done', 'archived')), priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('critical', 'high', 'medium', 'low', 'none')), manual_order INTEGER NOT NULL DEFAULT 0, due_date TEXT, tags_json TEXT NOT NULL DEFAULT '[]', related TEXT NOT NULL DEFAULT '', completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
     CREATE INDEX IF NOT EXISTS project_tasks_project_status ON project_tasks(project_id, status, manual_order);
     CREATE TABLE IF NOT EXISTS project_skills (project_id TEXT NOT NULL, skill_id TEXT NOT NULL, PRIMARY KEY(project_id, skill_id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS project_slash_commands (project_id TEXT NOT NULL, slash_command_id TEXT NOT NULL, PRIMARY KEY(project_id, slash_command_id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(slash_command_id) REFERENCES slash_commands(id) ON DELETE CASCADE);
+    CREATE TABLE IF NOT EXISTS project_skill_installs (project_id TEXT NOT NULL, skill_id TEXT NOT NULL, relative_path TEXT NOT NULL, content_hash TEXT NOT NULL, installed_at TEXT NOT NULL, PRIMARY KEY(project_id, skill_id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE);
+    CREATE TABLE IF NOT EXISTS project_command_installs (project_id TEXT NOT NULL, slash_command_id TEXT NOT NULL, relative_path TEXT NOT NULL, content_hash TEXT NOT NULL, installed_at TEXT NOT NULL, PRIMARY KEY(project_id, slash_command_id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(slash_command_id) REFERENCES slash_commands(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS project_activity (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
     CREATE INDEX IF NOT EXISTS project_activity_project_time ON project_activity(project_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS project_canvas_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT 'yellow' CHECK(color IN ('yellow', 'blue', 'green', 'pink', 'gray')), x INTEGER NOT NULL DEFAULT 24, y INTEGER NOT NULL DEFAULT 24, width INTEGER NOT NULL DEFAULT 220, height INTEGER NOT NULL DEFAULT 150, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
@@ -129,6 +140,8 @@ function createStorage(userDataPath, { onChange } = {}) {
   if (!dailyColumns.has("owner")) db.exec("ALTER TABLE daily_tasks ADD COLUMN owner TEXT NOT NULL DEFAULT 'me' CHECK(owner IN ('me', 'agent'))");
   const skillColumns = new Set(db.pragma("table_info(skills)").map((column) => column.name));
   if (!skillColumns.has("pinned")) db.exec("ALTER TABLE skills ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+  if (!skillColumns.has("source_url")) db.exec("ALTER TABLE skills ADD COLUMN source_url TEXT NOT NULL DEFAULT ''");
+  if (!skillColumns.has("ownership")) db.exec("ALTER TABLE skills ADD COLUMN ownership TEXT NOT NULL DEFAULT 'mine'");
   const projectColumns = new Set(db.pragma("table_info(projects)").map((column) => column.name));
   if (!projectColumns.has("last_device")) db.exec("ALTER TABLE projects ADD COLUMN last_device TEXT NOT NULL DEFAULT ''");
   if (!projectColumns.has("logo_path")) db.exec("ALTER TABLE projects ADD COLUMN logo_path TEXT NOT NULL DEFAULT ''");
@@ -209,13 +222,17 @@ function createStorage(userDataPath, { onChange } = {}) {
     return hydrateSkill(db.prepare("SELECT * FROM skills WHERE id = ?").get(id) || null);
   }
   function createSkill(input = {}) {
+    const requestedName = normalizedLibraryText(input.name);
+    if (requestedName && db.prepare("SELECT id FROM skills WHERE lower(trim(name)) = lower(?)").get(requestedName)) throw new Error("A skill with that name already exists.");
     const id = randomUUID(); const timestamp = now();
-    db.prepare("INSERT INTO skills (id, name, category, body, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, input.name || "", input.category || "Unsorted", input.body || "", Number(Boolean(input.pinned)), timestamp, timestamp);
+    db.prepare("INSERT INTO skills (id, name, category, body, source_url, ownership, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.name || "", input.category || "Unsorted", input.body || "", input.sourceUrl || input.source_url || "", input.ownership === "other" ? "other" : "mine", Number(Boolean(input.pinned)), timestamp, timestamp);
     return getSkill(id);
   }
   function updateSkill(id, input) {
     const skill = getSkill(id); if (!skill) throw new Error("Skill not found.");
-    db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, pinned = ?, updated_at = ? WHERE id = ?").run(input.name ?? skill.name, input.category ?? skill.category, input.body ?? skill.body, Number(input.pinned ?? skill.pinned), now(), id);
+    const nextName = normalizedLibraryText(input.name ?? skill.name);
+    if (nextName && db.prepare("SELECT id FROM skills WHERE id != ? AND lower(trim(name)) = lower(?)").get(id, nextName)) throw new Error("A skill with that name already exists.");
+    db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, source_url = ?, ownership = ?, pinned = ?, updated_at = ? WHERE id = ?").run(input.name ?? skill.name, input.category ?? skill.category, input.body ?? skill.body, input.sourceUrl ?? input.source_url ?? skill.source_url, input.ownership === undefined ? skill.ownership : input.ownership === "other" ? "other" : "mine", Number(input.pinned ?? skill.pinned), now(), id);
     return getSkill(id);
   }
   function deleteSkill(id) { db.prepare("DELETE FROM skills WHERE id = ?").run(id); }
@@ -226,16 +243,120 @@ function createStorage(userDataPath, { onChange } = {}) {
     return db.prepare("SELECT * FROM slash_commands WHERE id = ?").get(id) || null;
   }
   function createSlashCommand(input = {}) {
+    const requestedCommand = normalizedLibraryName(input.command);
+    const requestedName = normalizedLibraryName(input.name);
+    if (requestedCommand && db.prepare("SELECT id FROM slash_commands WHERE lower(trim(command)) = ?").get(requestedCommand)) throw new Error("That command invocation is already saved.");
+    if (!requestedCommand && requestedName && db.prepare("SELECT id FROM slash_commands WHERE trim(command) = '' AND lower(trim(name)) = ?").get(requestedName)) throw new Error("A command page with that name already exists.");
     const id = randomUUID(); const timestamp = now();
     db.prepare("INSERT INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, input.name || "", input.command || "", input.body || "", timestamp, timestamp);
     return getSlashCommand(id);
   }
   function updateSlashCommand(id, input) {
     const slashCommand = getSlashCommand(id); if (!slashCommand) throw new Error("Slash command not found.");
+    const nextCommand = normalizedLibraryName(input.command ?? slashCommand.command);
+    const nextName = normalizedLibraryName(input.name ?? slashCommand.name);
+    if (nextCommand && db.prepare("SELECT id FROM slash_commands WHERE id != ? AND lower(trim(command)) = ?").get(id, nextCommand)) throw new Error("That command invocation is already saved.");
+    if (!nextCommand && nextName && db.prepare("SELECT id FROM slash_commands WHERE id != ? AND trim(command) = '' AND lower(trim(name)) = ?").get(id, nextName)) throw new Error("A command page with that name already exists.");
     db.prepare("UPDATE slash_commands SET name = ?, command = ?, body = ?, updated_at = ? WHERE id = ?").run(input.name ?? slashCommand.name, input.command ?? slashCommand.command, input.body ?? slashCommand.body, now(), id);
     return getSlashCommand(id);
   }
   function deleteSlashCommand(id) { db.prepare("DELETE FROM slash_commands WHERE id = ?").run(id); }
+
+  // Keeps cloud/import history from turning the personal library into repeated pages.
+  // A backup is written before any startup cleanup; relations are moved to the kept row.
+  function cleanupLibraryEntries({ backup = true } = {}) {
+    const noteRows = db.prepare("SELECT * FROM notes").all();
+    const skillRows = db.prepare("SELECT * FROM skills").all();
+    const commandRows = db.prepare("SELECT * FROM slash_commands").all();
+    const referencedNotes = new Set(db.prepare("SELECT documentation_note_id AS id FROM bots WHERE documentation_note_id IS NOT NULL").all().map((row) => row.id));
+    const catalogByName = new Map(CURATED_SKILLS.map((skill) => [normalizedLibraryName(skill.name), skill]));
+
+    const blankNotes = noteRows.filter((note) => !normalizedLibraryText(note.title) && !normalizedLibraryText(note.body) && !referencedNotes.has(note.id));
+    const blankSkills = skillRows.filter((skill) => !normalizedLibraryText(skill.name) && !normalizedLibraryText(skill.body) && !normalizedLibraryText(skill.source_url));
+    const blankCommands = commandRows.filter((command) => !normalizedLibraryText(command.name) && !normalizedLibraryText(command.command) && !normalizedLibraryText(command.body));
+
+    function duplicateGroups(rows, keyFor) {
+      const groups = new Map();
+      for (const row of rows) {
+        const key = keyFor(row);
+        if (!key) continue;
+        const items = groups.get(key) || [];
+        items.push(row);
+        groups.set(key, items);
+      }
+      return [...groups.values()].filter((items) => items.length > 1);
+    }
+
+    const noteDuplicates = duplicateGroups(
+      noteRows.filter((note) => !blankNotes.some((blank) => blank.id === note.id)),
+      (note) => `${normalizedLibraryName(note.title)}\u0000${normalizedLibraryText(note.body)}`
+    );
+    const skillDuplicates = duplicateGroups(
+      skillRows.filter((skill) => !blankSkills.some((blank) => blank.id === skill.id)),
+      (skill) => normalizedLibraryName(skill.name)
+    );
+    const commandDuplicates = duplicateGroups(
+      commandRows.filter((command) => !blankCommands.some((blank) => blank.id === command.id)),
+      (command) => normalizedLibraryName(command.command) ? `command:${normalizedLibraryName(command.command)}` : `page:${normalizedLibraryName(command.name)}`
+    );
+
+    const duplicateNoteCount = noteDuplicates.reduce((total, items) => total + items.length - 1, 0);
+    const duplicateSkillCount = skillDuplicates.reduce((total, items) => total + items.length - 1, 0);
+    const duplicateCommandCount = commandDuplicates.reduce((total, items) => total + items.length - 1, 0);
+    const removedNotes = blankNotes.length + duplicateNoteCount;
+    const removedSkills = blankSkills.length + duplicateSkillCount;
+    const removedCommands = blankCommands.length + duplicateCommandCount;
+    if (!removedNotes && !removedSkills && !removedCommands) return { removedNotes: 0, removedSkills: 0, removedCommands: 0, backup: null };
+
+    const safetyBackup = backup ? createBackup() : null;
+    const updatedAt = now();
+    const chooseNewest = (left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")) || String(left.id).localeCompare(String(right.id));
+    const cleanup = db.transaction(() => {
+      for (const note of blankNotes) db.prepare("DELETE FROM notes WHERE id = ?").run(note.id);
+      for (const items of noteDuplicates) {
+        const ordered = [...items].sort((left, right) => Number(referencedNotes.has(right.id)) - Number(referencedNotes.has(left.id)) || Number(!right.deleted_at) - Number(!left.deleted_at) || Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || chooseNewest(left, right));
+        const keep = ordered[0];
+        db.prepare("UPDATE notes SET pinned = ?, archived = ?, deleted_at = ?, updated_at = ? WHERE id = ?").run(Number(items.some((item) => item.pinned)), Number(items.every((item) => item.archived)), items.some((item) => !item.deleted_at) ? null : keep.deleted_at, updatedAt, keep.id);
+        for (const duplicate of ordered.slice(1)) {
+          db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) SELECT ?, tag_id FROM note_tags WHERE note_id = ?").run(keep.id, duplicate.id);
+          db.prepare("UPDATE compressions SET note_id = ? WHERE note_id = ?").run(keep.id, duplicate.id);
+          db.prepare("UPDATE bots SET documentation_note_id = ? WHERE documentation_note_id = ?").run(keep.id, duplicate.id);
+          db.prepare("DELETE FROM notes WHERE id = ?").run(duplicate.id);
+        }
+      }
+
+      for (const skill of blankSkills) db.prepare("DELETE FROM skills WHERE id = ?").run(skill.id);
+      for (const items of skillDuplicates) {
+        const catalog = catalogByName.get(normalizedLibraryName(items[0].name));
+        const ordered = [...items].sort((left, right) => Number(right.id === catalog?.id) - Number(left.id === catalog?.id) || Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || chooseNewest(left, right));
+        const keep = ordered[0];
+        const pinned = Number(items.some((item) => item.pinned));
+        if (catalog) db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, source_url = ?, ownership = ?, pinned = ?, updated_at = ? WHERE id = ?").run(catalog.name, catalog.category, catalog.body, catalog.source_url, catalog.ownership, pinned, updatedAt, keep.id);
+        else db.prepare("UPDATE skills SET pinned = ?, updated_at = ? WHERE id = ?").run(pinned, updatedAt, keep.id);
+        for (const duplicate of ordered.slice(1)) {
+          db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) SELECT project_id, ? FROM project_skills WHERE skill_id = ?").run(keep.id, duplicate.id);
+          db.prepare("INSERT OR IGNORE INTO project_skill_installs (project_id, skill_id, relative_path, content_hash, installed_at) SELECT project_id, ?, relative_path, content_hash, installed_at FROM project_skill_installs WHERE skill_id = ?").run(keep.id, duplicate.id);
+          db.prepare("INSERT OR IGNORE INTO bot_relations (bot_id, relation_type, relation_id) SELECT bot_id, 'skill', ? FROM bot_relations WHERE relation_type = 'skill' AND relation_id = ?").run(keep.id, duplicate.id);
+          db.prepare("DELETE FROM skills WHERE id = ?").run(duplicate.id);
+        }
+      }
+
+      for (const command of blankCommands) db.prepare("DELETE FROM slash_commands WHERE id = ?").run(command.id);
+      for (const items of commandDuplicates) {
+        const ordered = [...items].sort(chooseNewest);
+        const keep = ordered[0];
+        for (const duplicate of ordered.slice(1)) {
+          db.prepare("INSERT OR IGNORE INTO project_slash_commands (project_id, slash_command_id) SELECT project_id, ? FROM project_slash_commands WHERE slash_command_id = ?").run(keep.id, duplicate.id);
+          db.prepare("INSERT OR IGNORE INTO project_command_installs (project_id, slash_command_id, relative_path, content_hash, installed_at) SELECT project_id, ?, relative_path, content_hash, installed_at FROM project_command_installs WHERE slash_command_id = ?").run(keep.id, duplicate.id);
+          db.prepare("DELETE FROM slash_commands WHERE id = ?").run(duplicate.id);
+        }
+      }
+    });
+    cleanup();
+    const report = { removedNotes, removedSkills, removedCommands, backup: safetyBackup?.name || null, cleanedAt: updatedAt };
+    setSetting("libraryCleanup", report);
+    return report;
+  }
   function cleanJsonList(value, limit = 24) {
     const source = Array.isArray(value) ? value : [];
     return [...new Set(source.map((item) => String(item).trim()).filter(Boolean))].slice(0, limit);
@@ -250,6 +371,8 @@ function createStorage(userDataPath, { onChange } = {}) {
       tasks,
       skill_ids: db.prepare("SELECT skill_id FROM project_skills WHERE project_id = ? ORDER BY skill_id").all(row.id).map((item) => item.skill_id),
       slash_command_ids: db.prepare("SELECT slash_command_id FROM project_slash_commands WHERE project_id = ? ORDER BY slash_command_id").all(row.id).map((item) => item.slash_command_id),
+      skill_installs: db.prepare("SELECT skill_id AS item_id, relative_path, content_hash, installed_at FROM project_skill_installs WHERE project_id = ? ORDER BY skill_id").all(row.id),
+      command_installs: db.prepare("SELECT slash_command_id AS item_id, relative_path, content_hash, installed_at FROM project_command_installs WHERE project_id = ? ORDER BY slash_command_id").all(row.id),
       activity: db.prepare("SELECT * FROM project_activity WHERE project_id = ? ORDER BY created_at DESC LIMIT 100").all(row.id),
       canvas_items: db.prepare("SELECT * FROM project_canvas_items WHERE project_id = ? ORDER BY created_at").all(row.id),
     });
@@ -322,6 +445,23 @@ function createStorage(userDataPath, { onChange } = {}) {
     addProjectActivity(task.project_id, "task", status === "done" ? "Task completed" : "Task updated", input.title ?? task.title);
     return getProject(task.project_id);
   }
+  function moveProjectTask(id, status, beforeId = null) {
+    const task = db.prepare("SELECT * FROM project_tasks WHERE id = ?").get(id); if (!task) throw new Error("Task not found.");
+    const targetStatus = ["todo", "in_progress", "blocked", "done"].includes(status) ? status : "todo";
+    const timestamp = now();
+    db.transaction(() => {
+      db.prepare("UPDATE project_tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(targetStatus, targetStatus === "done" ? task.completed_at || timestamp : null, timestamp, id);
+      const targetIds = db.prepare("SELECT id FROM project_tasks WHERE project_id = ? AND status = ? AND id <> ? ORDER BY manual_order, created_at").all(task.project_id, targetStatus, id).map((item) => item.id);
+      const beforeIndex = beforeId ? targetIds.indexOf(beforeId) : -1;
+      targetIds.splice(beforeIndex >= 0 ? beforeIndex : targetIds.length, 0, id);
+      const updateOrder = db.prepare("UPDATE project_tasks SET manual_order = ? WHERE id = ?");
+      targetIds.forEach((taskId, order) => updateOrder.run(order, taskId));
+      if (task.status !== targetStatus) db.prepare("SELECT id FROM project_tasks WHERE project_id = ? AND status = ? ORDER BY manual_order, created_at").all(task.project_id, task.status).forEach((item, order) => updateOrder.run(order, item.id));
+    })();
+    touchProject(task.project_id);
+    addProjectActivity(task.project_id, "task", targetStatus === "done" ? "Task completed" : "Task moved", task.title);
+    return getProject(task.project_id);
+  }
   function removeProjectTask(id) { const task = db.prepare("SELECT project_id, title FROM project_tasks WHERE id = ?").get(id); if (!task) throw new Error("Task not found."); db.prepare("DELETE FROM project_tasks WHERE id = ?").run(id); touchProject(task.project_id); addProjectActivity(task.project_id, "task", "Task deleted", task.title); return getProject(task.project_id); }
   function setProjectAssignments(projectId, input = {}) {
     if (!db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId)) throw new Error("Project not found.");
@@ -331,6 +471,25 @@ function createStorage(userDataPath, { onChange } = {}) {
     })();
     touchProject(projectId, false);
     addProjectActivity(projectId, "assignment", "Skills and commands updated");
+    return getProject(projectId);
+  }
+  function getProjectToolInstall(projectId, kind, itemId) {
+    const table = kind === "skill" ? "project_skill_installs" : "project_command_installs";
+    const column = kind === "skill" ? "skill_id" : "slash_command_id";
+    return db.prepare(`SELECT ${column} AS item_id, relative_path, content_hash, installed_at FROM ${table} WHERE project_id = ? AND ${column} = ?`).get(projectId, itemId) || null;
+  }
+  function setProjectToolInstall(projectId, kind, itemId, relativePath, contentHash) {
+    const table = kind === "skill" ? "project_skill_installs" : "project_command_installs";
+    const column = kind === "skill" ? "skill_id" : "slash_command_id";
+    db.prepare(`INSERT INTO ${table} (project_id, ${column}, relative_path, content_hash, installed_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, ${column}) DO UPDATE SET relative_path = excluded.relative_path, content_hash = excluded.content_hash, installed_at = excluded.installed_at`).run(projectId, itemId, relativePath, contentHash, now());
+    touchProject(projectId, false);
+    return getProject(projectId);
+  }
+  function removeProjectToolInstall(projectId, kind, itemId) {
+    const table = kind === "skill" ? "project_skill_installs" : "project_command_installs";
+    const column = kind === "skill" ? "skill_id" : "slash_command_id";
+    db.prepare(`DELETE FROM ${table} WHERE project_id = ? AND ${column} = ?`).run(projectId, itemId);
+    touchProject(projectId, false);
     return getProject(projectId);
   }
   function createProjectCanvasItem(projectId, input = {}) {
@@ -352,20 +511,71 @@ function createStorage(userDataPath, { onChange } = {}) {
   function listDailyTasks() {
     return db.prepare("SELECT * FROM daily_tasks ORDER BY task_date DESC, priority, created_at").all();
   }
+  function normalizedDailyActivities(input) {
+    const byId = new Map();
+    for (const raw of Array.isArray(input) ? input : []) {
+      const activityDate = String(raw?.activity_date || raw?.activityDate || "");
+      const text = String(raw?.text || "").trim().slice(0, 500);
+      const startMinute = Number(raw?.start_minute ?? raw?.startMinute);
+      const durationMinutes = Number(raw?.duration_minutes ?? raw?.durationMinutes);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(activityDate) || !text || !Number.isInteger(startMinute) || ![1, 5].includes(durationMinutes) || startMinute < 0 || startMinute + durationMinutes > 1440) continue;
+      const activity = { id: String(raw.id || randomUUID()), activity_date: activityDate, text, start_minute: startMinute, duration_minutes: durationMinutes, created_at: raw.created_at || now(), updated_at: raw.updated_at || now() };
+      const existing = byId.get(activity.id);
+      if (!existing || String(activity.updated_at) >= String(existing.updated_at)) byId.set(activity.id, activity);
+    }
+    return [...byId.values()].sort((left, right) => right.activity_date.localeCompare(left.activity_date) || left.start_minute - right.start_minute || String(left.created_at).localeCompare(String(right.created_at)));
+  }
+  function listDailyActivities(date) {
+    if (date) return db.prepare("SELECT * FROM daily_activities WHERE activity_date = ? ORDER BY start_minute, created_at").all(date);
+    return db.prepare("SELECT * FROM daily_activities ORDER BY activity_date DESC, start_minute, created_at").all();
+  }
+  function insertDailyActivityRows(input) {
+    const activities = normalizedDailyActivities(input);
+    const insert = db.prepare("INSERT INTO daily_activities (id, activity_date, text, start_minute, duration_minutes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    for (const activity of activities) insert.run(activity.id, activity.activity_date, activity.text, activity.start_minute, activity.duration_minutes, activity.created_at, activity.updated_at);
+    return activities;
+  }
+  function insertDailyTaskRows(input) {
+    const tasks = normalizeDailyTasks(input);
+    const insert = db.prepare("INSERT INTO daily_tasks (id, task_date, text, status, priority, owner, completed_at, completed_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    for (const task of tasks) insert.run(task.id, task.task_date, task.text, task.status, taskPriority(task.priority), taskOwner(task.owner), task.completed_at || null, task.completed_on || null, task.created_at || now(), task.updated_at || now());
+    const connect = db.prepare("UPDATE daily_tasks SET carried_from_id = ? WHERE id = ?");
+    for (const task of tasks) if (task.carried_from_id) connect.run(task.carried_from_id, task.id);
+    return tasks;
+  }
+  function dailyTasksDiffer(before, after) {
+    if (before.length !== after.length) return true;
+    const byId = new Map(before.map((task) => [task.id, task]));
+    return after.some((task) => !byId.has(task.id) || JSON.stringify(byId.get(task.id)) !== JSON.stringify(task));
+  }
+  function repairDailyTasks({ backup = true } = {}) {
+    const before = listDailyTasks();
+    const after = normalizeDailyTasks(before);
+    if (!dailyTasksDiffer(before, after)) return 0;
+    if (backup) createBackup();
+    db.transaction(() => {
+      db.prepare("DELETE FROM daily_tasks").run();
+      insertDailyTaskRows(after);
+    })();
+    return before.length - after.length;
+  }
   function rollDailyTasks(date = localDate()) {
     const overdue = db.prepare("SELECT * FROM daily_tasks WHERE task_date < ? AND status = 'open' ORDER BY task_date, created_at").all(date);
     if (!overdue.length) return 0;
     const timestamp = now();
+    let moved = 0;
     const roll = db.transaction(() => {
       const markCarried = db.prepare("UPDATE daily_tasks SET status = 'carried', updated_at = ? WHERE id = ? AND status = 'open'");
-      const insert = db.prepare("INSERT INTO daily_tasks (id, task_date, text, status, priority, owner, carried_from_id, created_at, updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?)");
+      const insert = db.prepare("INSERT OR IGNORE INTO daily_tasks (id, task_date, text, status, priority, owner, carried_from_id, created_at, updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?)");
       for (const task of overdue) {
         if (!markCarried.run(timestamp, task.id).changes) continue;
-        insert.run(randomUUID(), date, task.text, taskPriority(task.priority), taskOwner(task.owner), task.id, timestamp, timestamp);
+        insert.run(dailyCarryId(task.id, date), date, task.text, taskPriority(task.priority), taskOwner(task.owner), task.id, timestamp, timestamp);
+        moved += 1;
       }
     });
     roll();
-    return overdue.length;
+    if (moved && typeof onChange === "function") onChange("rollDailyTasks");
+    return moved;
   }
   function dailyDashboard(date = localDate()) {
     rollDailyTasks(date);
@@ -380,6 +590,7 @@ function createStorage(userDataPath, { onChange } = {}) {
       history.push({ date: day, completed: completedCount.get(day).count });
     }
     const hydrate = (task) => ({ ...task, carried: Boolean(task.carried_from_id) });
+    const activities = listDailyActivities(date);
     return {
       date,
       tomorrowDate: tomorrow,
@@ -388,6 +599,8 @@ function createStorage(userDataPath, { onChange } = {}) {
       tomorrow: tomorrowTasks.map(hydrate),
       history,
       carriedCount: todayTasks.filter((task) => task.carried_from_id).length,
+      activities,
+      loggedMinutes: activities.reduce((total, activity) => total + activity.duration_minutes, 0),
     };
   }
   function dailyPage(viewDate = localDate(), todayDate = localDate()) {
@@ -399,6 +612,7 @@ function createStorage(userDataPath, { onChange } = {}) {
     const open = items.filter((task) => task.status === "open");
     const done = items.filter((task) => task.status === "done");
     const moved = items.filter((task) => task.status === "carried");
+    const activities = listDailyActivities(viewDate);
     return {
       date: viewDate,
       today: todayDate,
@@ -411,11 +625,22 @@ function createStorage(userDataPath, { onChange } = {}) {
       doneCount: done.length,
       movedCount: moved.length,
       carriedCount: items.filter((task) => task.carried && task.status !== "carried").length,
+      activities,
+      loggedMinutes: activities.reduce((total, activity) => total + activity.duration_minutes, 0),
     };
   }
   function dailyMonth(month = localDate().slice(0, 7)) {
-    const rows = db.prepare("SELECT task_date AS date, COUNT(*) AS total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done FROM daily_tasks WHERE task_date LIKE ? GROUP BY task_date ORDER BY task_date").all(`${month}-%`);
-    return { month, days: rows.map((row) => ({ date: row.date, total: Number(row.total), done: Number(row.done) })) };
+    const rows = db.prepare(`
+      SELECT date, SUM(total) AS total, SUM(done) AS done, SUM(activity_count) AS activity_count, SUM(logged_minutes) AS logged_minutes
+      FROM (
+        SELECT task_date AS date, COUNT(*) AS total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done, 0 AS activity_count, 0 AS logged_minutes
+        FROM daily_tasks WHERE task_date LIKE ? GROUP BY task_date
+        UNION ALL
+        SELECT activity_date AS date, 0 AS total, 0 AS done, COUNT(*) AS activity_count, SUM(duration_minutes) AS logged_minutes
+        FROM daily_activities WHERE activity_date LIKE ? GROUP BY activity_date
+      ) GROUP BY date ORDER BY date
+    `).all(`${month}-%`, `${month}-%`);
+    return { month, days: rows.map((row) => ({ date: row.date, total: Number(row.total), done: Number(row.done), activityCount: Number(row.activity_count), loggedMinutes: Number(row.logged_minutes) })) };
   }
   function createDailyTask(input, date = localDate()) {
     const text = String(input?.text || "").trim();
@@ -447,6 +672,35 @@ function createStorage(userDataPath, { onChange } = {}) {
   function deleteDailyTask(id, date = localDate()) {
     db.prepare("DELETE FROM daily_tasks WHERE id = ?").run(id);
     return dailyDashboard(date);
+  }
+  function validateDailyActivity(input, fallback = {}) {
+    const text = String(input?.text ?? fallback.text ?? "").trim();
+    const startMinute = Number(input?.startMinute ?? input?.start_minute ?? fallback.start_minute);
+    const durationMinutes = Number(input?.durationMinutes ?? input?.duration_minutes ?? fallback.duration_minutes);
+    if (!text) throw new Error("Activity text is required.");
+    if (!Number.isInteger(startMinute) || startMinute < 0 || startMinute > 1439) throw new Error("Activity time is invalid.");
+    if (![1, 5].includes(durationMinutes)) throw new Error("Activity duration must be 1 or 5 minutes.");
+    if (startMinute + durationMinutes > 1440) throw new Error("Activity must end on the same day.");
+    return { text: text.slice(0, 500), startMinute, durationMinutes };
+  }
+  function createDailyActivity(input, date = localDate()) {
+    const activity = validateDailyActivity(input);
+    const timestamp = now();
+    db.prepare("INSERT INTO daily_activities (id, activity_date, text, start_minute, duration_minutes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), date, activity.text, activity.startMinute, activity.durationMinutes, timestamp, timestamp);
+    return dailyPage(date);
+  }
+  function updateDailyActivity(id, input) {
+    const existing = db.prepare("SELECT * FROM daily_activities WHERE id = ?").get(id);
+    if (!existing) throw new Error("Daily activity not found.");
+    const activity = validateDailyActivity(input, existing);
+    db.prepare("UPDATE daily_activities SET text = ?, start_minute = ?, duration_minutes = ?, updated_at = ? WHERE id = ?").run(activity.text, activity.startMinute, activity.durationMinutes, now(), id);
+    return dailyPage(existing.activity_date);
+  }
+  function deleteDailyActivity(id) {
+    const existing = db.prepare("SELECT activity_date FROM daily_activities WHERE id = ?").get(id);
+    if (!existing) throw new Error("Daily activity not found.");
+    db.prepare("DELETE FROM daily_activities WHERE id = ?").run(id);
+    return dailyPage(existing.activity_date);
   }
   function updateNote(id, input) {
     const note = getNote(id); if (!note) throw new Error("Note not found.");
@@ -485,9 +739,11 @@ function createStorage(userDataPath, { onChange } = {}) {
     return { id, ...input, created_at: timestamp };
   }
   function listCompressions(noteId) { return db.prepare("SELECT * FROM compressions WHERE note_id = ? ORDER BY created_at DESC").all(noteId); }
-  function exportData() { return { version: 9, exportedAt: now(), folders: listFolders(), notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), dailyTasks: listDailyTasks(), compressions: db.prepare("SELECT * FROM compressions ORDER BY created_at DESC").all(), ...botRepo.exportBotData() }; }
+  function exportData() { return { version: 12, exportedAt: now(), folders: listFolders(), notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), dailyTasks: listDailyTasks(), dailyActivities: listDailyActivities(), compressions: db.prepare("SELECT * FROM compressions ORDER BY created_at DESC").all(), ...botRepo.exportBotData() }; }
   function importData(data) {
     if (!data || !Array.isArray(data.notes)) throw new Error("That is not a Notebook JSON backup.");
+    const dailyTasks = normalizeDailyTasks([...listDailyTasks(), ...(data.dailyTasks || [])]);
+    const dailyActivities = normalizedDailyActivities([...listDailyActivities(), ...(data.dailyActivities || [])]);
     const run = db.transaction(() => {
       for (const folder of data.folders || []) if (folder.id !== inbox.id) db.prepare("INSERT OR IGNORE INTO folders (id, name, is_inbox, created_at) VALUES (?, ?, 0, ?)").run(folder.id, folder.name, folder.created_at || now());
       for (const note of data.notes) {
@@ -496,20 +752,16 @@ function createStorage(userDataPath, { onChange } = {}) {
         if (Array.isArray(note.tags)) setTags(note.id, note.tags.map((tag) => tag.name));
       }
       for (const skill of data.skills || []) {
-        db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
+        db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, source_url, ownership, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", skill.source_url || skill.sourceUrl || "", skill.ownership === "other" ? "other" : "mine", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
       }
       for (const slashCommand of data.slashCommands || []) {
         db.prepare("INSERT OR IGNORE INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(slashCommand.id || randomUUID(), slashCommand.name || "", slashCommand.command || "", slashCommand.body || "", slashCommand.created_at || now(), slashCommand.updated_at || now());
       }
       for (const project of data.projects || []) importProject(project, true);
-      for (const task of data.dailyTasks || []) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(task.task_date || "") || !String(task.text || "").trim()) continue;
-        const status = ["open", "done", "carried"].includes(task.status) ? task.status : "open";
-        db.prepare("INSERT OR IGNORE INTO daily_tasks (id, task_date, text, status, priority, owner, completed_at, completed_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(task.id || randomUUID(), task.task_date, String(task.text).trim(), status, taskPriority(task.priority), taskOwner(task.owner), task.completed_at || null, task.completed_on || null, task.created_at || now(), task.updated_at || now());
-      }
-      for (const task of data.dailyTasks || []) {
-        if (task.id && task.carried_from_id && db.prepare("SELECT id FROM daily_tasks WHERE id = ?").get(task.carried_from_id)) db.prepare("UPDATE daily_tasks SET carried_from_id = ? WHERE id = ?").run(task.carried_from_id, task.id);
-      }
+      db.prepare("DELETE FROM daily_tasks").run();
+      insertDailyTaskRows(dailyTasks);
+      db.prepare("DELETE FROM daily_activities").run();
+      insertDailyActivityRows(dailyActivities);
       botRepo.importBotData(data);
     }); run(); return listNotes();
   }
@@ -552,6 +804,8 @@ function createStorage(userDataPath, { onChange } = {}) {
     if (!fs.existsSync(backupPath)) throw new Error("Backup not found.");
     const data = JSON.parse(fs.readFileSync(backupPath, "utf8"));
     if (!data || !Array.isArray(data.notes)) throw new Error("This backup is not a Notebook backup.");
+    const dailyTasks = normalizeDailyTasks(data.dailyTasks || []);
+    const dailyActivities = normalizedDailyActivities(data.dailyActivities || []);
     const restore = db.transaction(() => {
       db.prepare("DELETE FROM note_tags").run();
       db.prepare("DELETE FROM tags").run();
@@ -559,6 +813,7 @@ function createStorage(userDataPath, { onChange } = {}) {
       db.prepare("DELETE FROM notes").run();
       db.prepare("DELETE FROM skills").run();
       db.prepare("DELETE FROM daily_tasks").run();
+      db.prepare("DELETE FROM daily_activities").run();
       if (Array.isArray(data.projects)) db.prepare("DELETE FROM projects").run();
       if (Array.isArray(data.slashCommands)) db.prepare("DELETE FROM slash_commands").run();
       db.prepare("DELETE FROM folders WHERE id != ?").run(inbox.id);
@@ -582,20 +837,14 @@ function createStorage(userDataPath, { onChange } = {}) {
         db.prepare("INSERT INTO compressions (id, note_id, source_text, compressed_text, preset, rate, origin_tokens, compressed_tokens, ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(compression.id || randomUUID(), noteId || null, compression.source_text || "", compression.compressed_text || "", compression.preset || "Balanced", compression.rate || 0.6, compression.origin_tokens || null, compression.compressed_tokens || null, compression.ratio || null, compression.created_at || now());
       }
       for (const skill of data.skills || []) {
-        db.prepare("INSERT INTO skills (id, name, category, body, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
+        db.prepare("INSERT INTO skills (id, name, category, body, source_url, ownership, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", skill.source_url || skill.sourceUrl || "", skill.ownership === "other" ? "other" : "mine", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
       }
       for (const slashCommand of data.slashCommands || []) {
         db.prepare("INSERT INTO slash_commands (id, name, command, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(slashCommand.id || randomUUID(), slashCommand.name || "", slashCommand.command || "", slashCommand.body || "", slashCommand.created_at || now(), slashCommand.updated_at || now());
       }
       for (const project of data.projects || []) importProject(project, false);
-      for (const task of data.dailyTasks || []) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(task.task_date || "") || !String(task.text || "").trim()) continue;
-        const status = ["open", "done", "carried"].includes(task.status) ? task.status : "open";
-        db.prepare("INSERT INTO daily_tasks (id, task_date, text, status, priority, owner, completed_at, completed_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(task.id || randomUUID(), task.task_date, String(task.text).trim(), status, taskPriority(task.priority), taskOwner(task.owner), task.completed_at || null, task.completed_on || null, task.created_at || now(), task.updated_at || now());
-      }
-      for (const task of data.dailyTasks || []) {
-        if (task.id && task.carried_from_id && db.prepare("SELECT id FROM daily_tasks WHERE id = ?").get(task.carried_from_id)) db.prepare("UPDATE daily_tasks SET carried_from_id = ? WHERE id = ?").run(task.carried_from_id, task.id);
-      }
+      insertDailyTaskRows(dailyTasks);
+      insertDailyActivityRows(dailyActivities);
       botRepo.importBotData(data, { replace: true });
     });
     restore();
@@ -609,7 +858,11 @@ function createStorage(userDataPath, { onChange } = {}) {
     const temporary = `${destination}.tmp`;
     fs.writeFileSync(temporary, JSON.stringify(data), "utf8");
     fs.renameSync(temporary, destination);
-    try { return restoreBackup(name); }
+    try {
+      restoreBackup(name);
+      cleanupLibraryEntries({ backup: false });
+      return { notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), bots: botRepo.listBots({ includeArchived: true }) };
+    }
     finally { fs.rmSync(destination, { force: true }); }
   }
 
@@ -617,11 +870,13 @@ function createStorage(userDataPath, { onChange } = {}) {
     const verb = ignore ? "INSERT OR IGNORE" : "INSERT"; const projectId = project.id || randomUUID();
     const priority = project.priority || "none";
     const tier = project.tier ?? ({ critical: 1, high: 2, medium: 3 }[priority] || 4);
-    db.prepare(`${verb} INTO projects (id, name, description, status, priority, manual_rank, category, tier, tier_order, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).run(projectId, project.name || "Untitled project", project.description || "", project.status || "active", priority, project.manual_rank ?? project.manualRank ?? 0, project.category || "Uncategorized", tier, project.tier_order ?? project.tierOrder ?? project.manual_rank ?? project.manualRank ?? 0, project.local_path || project.localPath || null, project.git_root || project.gitRoot || null, project.github_url || project.githubUrl || null, project.primary_language || project.primaryLanguage || "", JSON.stringify(cleanJsonList(project.tags)), project.next_action || project.nextAction || "", project.notes || "", Number(Boolean(project.push_after_commit ?? project.pushAfterCommit)), project.created_at || now(), project.updated_at || now(), project.last_worked_at || project.lastWorkedAt || null, project.last_device || DEVICE_NAME);
+    db.prepare(`${verb} INTO projects (id, name, description, status, priority, manual_rank, category, tier, tier_order, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device, logo_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).run(projectId, project.name || "Untitled project", project.description || "", project.status || "active", priority, project.manual_rank ?? project.manualRank ?? 0, project.category || "Uncategorized", tier, project.tier_order ?? project.tierOrder ?? project.manual_rank ?? project.manualRank ?? 0, project.local_path || project.localPath || null, project.git_root || project.gitRoot || null, project.github_url || project.githubUrl || null, project.primary_language || project.primaryLanguage || "", JSON.stringify(cleanJsonList(project.tags)), project.next_action || project.nextAction || "", project.notes || "", Number(Boolean(project.push_after_commit ?? project.pushAfterCommit)), project.created_at || now(), project.updated_at || now(), project.last_worked_at || project.lastWorkedAt || null, project.last_device || DEVICE_NAME, project.logo_path || project.logoPath || "");
     const taskInsert = db.prepare(`${verb} INTO project_tasks (id, project_id, title, description, status, priority, manual_order, due_date, tags_json, related, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const task of project.tasks || []) taskInsert.run(task.id || randomUUID(), projectId, task.title || "Untitled task", task.description || "", task.status || "todo", task.priority || "medium", task.manual_order ?? task.manualOrder ?? 0, task.due_date || task.dueDate || null, JSON.stringify(cleanJsonList(task.tags)), task.related || "", task.completed_at || null, task.created_at || now(), task.updated_at || now());
     const skillInsert = db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) VALUES (?, ?)"); for (const id of project.skill_ids || project.skillIds || []) skillInsert.run(projectId, id);
     const commandInsert = db.prepare("INSERT OR IGNORE INTO project_slash_commands (project_id, slash_command_id) VALUES (?, ?)"); for (const id of project.slash_command_ids || project.slashCommandIds || []) commandInsert.run(projectId, id);
+    const skillInstallInsert = db.prepare("INSERT OR IGNORE INTO project_skill_installs (project_id, skill_id, relative_path, content_hash, installed_at) VALUES (?, ?, ?, ?, ?)"); for (const item of project.skill_installs || project.skillInstalls || []) skillInstallInsert.run(projectId, item.item_id || item.itemId, item.relative_path || item.relativePath, item.content_hash || item.contentHash, item.installed_at || item.installedAt || now());
+    const commandInstallInsert = db.prepare("INSERT OR IGNORE INTO project_command_installs (project_id, slash_command_id, relative_path, content_hash, installed_at) VALUES (?, ?, ?, ?, ?)"); for (const item of project.command_installs || project.commandInstalls || []) commandInstallInsert.run(projectId, item.item_id || item.itemId, item.relative_path || item.relativePath, item.content_hash || item.contentHash, item.installed_at || item.installedAt || now());
     const activityInsert = db.prepare("INSERT OR IGNORE INTO project_activity (id, project_id, kind, summary, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)"); for (const item of project.activity || []) activityInsert.run(item.id || randomUUID(), projectId, item.kind || "imported", item.summary || "Imported", item.detail || "", item.created_at || now());
     const canvasInsert = db.prepare("INSERT OR IGNORE INTO project_canvas_items (id, project_id, title, body, color, x, y, width, height, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); for (const item of project.canvas_items || project.canvasItems || []) canvasInsert.run(item.id || randomUUID(), projectId, item.title || "Card", item.body || "", item.color || "yellow", item.x ?? 24, item.y ?? 24, item.width ?? 220, item.height ?? 150, item.created_at || now(), item.updated_at || now());
   }
@@ -629,10 +884,29 @@ function createStorage(userDataPath, { onChange } = {}) {
   function seedSkills() {
     if (getSetting("starterSkillsVersion", 0) >= 1) return;
     const timestamp = now();
-    const insert = db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
-    const seed = db.transaction(() => STARTER_SKILLS.forEach((item) => insert.run(item.id, item.name, item.category, item.body, timestamp, timestamp)));
+    const insert = db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, source_url, ownership, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    const seed = db.transaction(() => STARTER_SKILLS.forEach((item) => insert.run(item.id, item.name, item.category, item.body, item.source_url || "", item.ownership || "other", timestamp, timestamp)));
     seed();
     setSetting("starterSkillsVersion", 1);
+  }
+
+  function seedCuratedSkills() {
+    if (getSetting("curatedSkillsVersion", 0) >= CURATED_SKILLS_VERSION) return;
+    const timestamp = now();
+    const findByName = db.prepare("SELECT id FROM skills WHERE name = ? COLLATE NOCASE");
+    const insert = db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, source_url, ownership, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const update = db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, source_url = ?, ownership = ?, updated_at = ? WHERE id = ?");
+    const seed = db.transaction(() => {
+      for (const item of CURATED_SKILLS) {
+        const existing = findByName.get(item.name);
+        if (existing) update.run(item.name, item.category, item.body, item.source_url, item.ownership, timestamp, existing.id);
+        else insert.run(item.id, item.name, item.category, item.body, item.source_url, item.ownership, Number(Boolean(item.pinned)), timestamp, timestamp);
+      }
+      db.prepare("DELETE FROM skills WHERE name = 'Cep Extensions' COLLATE NOCASE AND id LIKE 'curated-%'").run();
+      db.prepare("DELETE FROM skills WHERE id IN ('library-ui-max', 'library-affine-native') AND source_url IN ('https://github.com/blixvip/skills/blob/main/ui-max/SKILL.md', 'https://github.com/blixvip/skills/blob/main/affine-native/SKILL.md')").run();
+    });
+    seed();
+    setSetting("curatedSkillsVersion", CURATED_SKILLS_VERSION);
   }
 
   function seedSlashCommands() {
@@ -645,17 +919,23 @@ function createStorage(userDataPath, { onChange } = {}) {
   }
 
   seedSkills();
+  seedCuratedSkills();
   seedSlashCommands();
   migrateLegacyJson();
-  const api = { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, createSkill, updateSkill, deleteSkill, listSlashCommands, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, moveProject, removeProject, setProjectLogo, createProjectTask, updateProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  repairDailyTasks();
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS daily_tasks_one_carry_per_source_day ON daily_tasks(task_date, carried_from_id) WHERE carried_from_id IS NOT NULL");
+  cleanupLibraryEntries();
+  const api = { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, getSkill, createSkill, updateSkill, deleteSkill, listSlashCommands, getSlashCommand, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, moveProject, removeProject, setProjectLogo, createProjectTask, updateProjectTask, moveProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, getProjectToolInstall, setProjectToolInstall, removeProjectToolInstall, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createDailyActivity, updateDailyActivity, deleteDailyActivity, listDailyActivities, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
   const mutations = new Set([
     "createNote", "updateNote", "setTags", "moveToTrash", "restoreNote", "deleteForever",
     "createFolder", "renameFolder", "removeFolder", "createSkill", "updateSkill", "deleteSkill",
     "createSlashCommand", "updateSlashCommand", "deleteSlashCommand", "createProject", "updateProject",
+    "moveProjectTask", "setProjectToolInstall", "removeProjectToolInstall",
     "reorderProjects", "moveProject", "removeProject", "setProjectLogo", "createProjectTask",
     "updateProjectTask", "removeProjectTask", "createProjectCanvasItem", "updateProjectCanvasItem",
     "removeProjectCanvasItem", "setProjectAssignments", "addProjectActivity", "createDailyTask",
-    "updateDailyTask", "completeDailyTask", "deleteDailyTask", "createCompression", "importData",
+    "updateDailyTask", "completeDailyTask", "deleteDailyTask", "createDailyActivity", "updateDailyActivity",
+    "deleteDailyActivity", "createCompression", "importData",
     "restoreBackup", "archiveBot", "createBot", "importBotData", "recordBotEvent", "recordBotRun",
     "restoreBot", "saveBotRuntime", "updateBot", "updateConnectionVerification",
   ]);

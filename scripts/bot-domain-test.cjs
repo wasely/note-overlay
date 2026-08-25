@@ -11,6 +11,7 @@ const {
   redactSecrets,
   sanitizeHttpUrl,
 } = require("../src/main/bot-domain.cjs");
+const { botInput } = require("../src/main/bot-schemas.cjs");
 
 const continuous = {
   id: "ops-bot",
@@ -69,8 +70,11 @@ assert.equal(deriveBotState({ bot: continuous, snapshot: { reportedState: "healt
 assert.equal(deriveBotState({ bot: continuous, snapshot: { reportedState: "healthy", observedAt: "2026-08-17T15:19:30.000Z", consecutiveFailures: 0, source: "HTTP health response" }, jobs: [{ ...dailyJob, critical: true }], runs: [{ ...successRun, status: "failed" }], now: new Date("2026-08-17T15:20:00.000Z") }).state, "degraded");
 assert.equal(deriveJobState(dailyJob, [successRun], new Date("2026-08-20T15:20:00.000Z")).state, "overdue");
 
-const payload = parseStructuredStatus({ schemaVersion: 1, botId: "ops-bot", observedAt: "2026-08-17T15:20:00.000Z", state: "healthy", activity: "idle", message: "Waiting", jobs: [{ id: "summary", state: "success", lastRunAt: "2026-08-17T14:00:00.000Z", nextRunAt: "2026-08-18T14:00:00.000Z", lastDurationMs: 1200 }] }, "ops-bot");
+const payload = parseStructuredStatus({ schemaVersion: 1, botId: "ops-bot", observedAt: "2026-08-17T15:20:00.000Z", state: "healthy", activity: "idle", message: "Waiting", jobs: [{ id: "summary", state: "success", lastRunAt: "2026-08-17T14:00:00.000Z", nextRunAt: "2026-08-18T14:00:00.000Z", lastDurationMs: 1200 }], connections: [{ platform: "discord", state: "verified", displayName: "Cloud alerts", verifiedAt: "2026-08-17T15:19:00.000Z", message: "Webhook verified by runtime." }] }, "ops-bot");
 assert.equal(payload.jobs[0].state, "success");
+assert.equal(payload.connections[0].state, "verified");
+const runtimeVerifiedBot = botInput.parse({ name: "Cloud bot", platforms: ["discord"], executionMode: "continuous", environment: "production", monitoring: { adapter: "http-status", url: "https://example.com/status" }, connections: [{ platform: "discord", verificationMode: "runtime" }], jobs: [], commands: [] });
+assert.equal(runtimeVerifiedBot.connections[0].verificationMode, "runtime");
 assert.throws(() => parseStructuredStatus({ schemaVersion: 1, botId: "other", observedAt: "bad", state: "up" }, "ops-bot"), /Invalid structured status payload/);
 
 assert.deepEqual(calculateRunMetrics([]), { total: 0, successes: 0, failures: 0, successRate: null, averageDurationMilliseconds: null, latestDurationMilliseconds: null });

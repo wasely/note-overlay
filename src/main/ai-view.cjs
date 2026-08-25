@@ -12,6 +12,9 @@ const AI_SERVICES = Object.freeze({
     name: "Gemini",
     url: "https://gemini.google.com/app",
     hosts: ["gemini.google.com", "google.com"],
+    // Gmail and Gemini are the same Google account surface. Reuse Gmail's persistent
+    // partition so signing in once works in both embedded views.
+    partition: "persist:notebook-gmail",
   }),
   deepseek: Object.freeze({
     id: "deepseek",
@@ -102,7 +105,7 @@ function createAiViewController({ WebContentsView, parentWindow, shell, service,
     if (view && !view.webContents.isDestroyed()) return view;
     view = new WebContentsView({
       webPreferences: {
-        partition: `persist:notebook-ai-${service.id}`,
+        partition: service.partition || `persist:notebook-ai-${service.id}`,
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,

@@ -39,24 +39,36 @@ function run(executable, args, options = {}) {
   });
 }
 
-async function git(root, args, options = {}) { return run("git.exe", args, { ...options, cwd: root }); }
+async function git(root, args, options = {}) { return run("git.exe", args, { ...options, cwd: root, stripGithubTokens: true }); }
 async function githubAuthStatus() {
   try {
     const version = await run("gh.exe", ["--version"], { allowFailure: true, timeout: 10_000, stripGithubTokens: true });
-    if (version.code) return { available: false, authenticated: false, login: null };
-    const account = await run("gh.exe", ["api", "user", "--jq", ".login"], { allowFailure: true, timeout: 20_000, stripGithubTokens: true });
-    const login = account.code ? "" : account.stdout.trim();
-    return { available: true, authenticated: Boolean(login), login: login || null };
+    if (version.code) return { available: false, authenticated: false, login: null, name: null, avatarUrl: null, url: null };
+    const account = await run("gh.exe", ["api", "user", "--jq", "{login:.login,name:(.name // \"\"),avatarUrl:.avatar_url,url:.html_url}"], { allowFailure: true, timeout: 20_000, stripGithubTokens: true });
+    if (account.code) return { available: true, authenticated: false, login: null, name: null, avatarUrl: null, url: null };
+    const profile = JSON.parse(account.stdout.trim());
+    const login = String(profile.login || "").trim();
+    return { available: true, authenticated: Boolean(login), login: login || null, name: profile.name || null, avatarUrl: profile.avatarUrl || null, url: profile.url || null };
   } catch {
-    return { available: false, authenticated: false, login: null };
+    return { available: false, authenticated: false, login: null, name: null, avatarUrl: null, url: null };
   }
 }
+async function githubSelectAccount(expectedLogin) {
+  const expected = String(expectedLogin || "").trim();
+  let current = await githubAuthStatus();
+  if (!expected || !current.available || String(current.login || "").toLowerCase() === expected.toLowerCase()) return current;
+  await run("gh.exe", ["auth", "switch", "--hostname", "github.com", "--user", expected], { allowFailure: true, timeout: 30_000, stripGithubTokens: true });
+  current = await githubAuthStatus();
+  if (String(current.login || "").toLowerCase() === expected.toLowerCase()) {
+    await run("gh.exe", ["auth", "setup-git", "--hostname", "github.com"], { allowFailure: true, timeout: 30_000, stripGithubTokens: true });
+  }
+  return current;
+}
 async function githubSignIn(expectedLogin = null) {
-  const current = await githubAuthStatus();
+  const current = await githubSelectAccount(expectedLogin);
   if (!current.available) throw new Error("GitHub CLI is not installed. Install it to sign in from Notebook.");
   const expected = String(expectedLogin || "").trim();
-  if (expected) await run("gh.exe", ["auth", "switch", "--hostname", "github.com", "--user", expected], { allowFailure: true, timeout: 30_000, stripGithubTokens: true });
-  let selected = await githubAuthStatus();
+  let selected = current;
   if (!selected.authenticated || (expected && selected.login.toLowerCase() !== expected.toLowerCase())) {
     await run("gh.exe", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--clipboard"], { timeout: 10 * 60_000, stripGithubTokens: true });
     if (expected) await run("gh.exe", ["auth", "switch", "--hostname", "github.com", "--user", expected], { allowFailure: true, timeout: 30_000, stripGithubTokens: true });
@@ -123,11 +135,9 @@ async function inspectFolder(value) {
   const selectedPath = canonical(value); const root = await gitRoot(selectedPath);
   const effective = root || selectedPath; let remote = null; let branch = null;
   if (root) {
-    const [remoteResult, branchResult] = await Promise.all([
-      git(root, ["remote", "get-url", "origin"], { allowFailure: true }),
-      git(root, ["branch", "--show-current"], { allowFailure: true }),
-    ]);
-    remote = remoteResult.code ? null : remoteResult.stdout.trim(); branch = branchResult.stdout.trim() || null;
+    const status = await repositoryStatus(root);
+    remote = status.remote;
+    branch = status.branch;
   }
   return { selectedPath, localPath: effective, gitRoot: root, isGit: Boolean(root), name: path.basename(effective), description: readDescription(effective), branch, remote, githubUrl: githubUrl(remote), primaryLanguage: detectLanguage(effective), hasAgents: fs.existsSync(path.join(effective, "AGENTS.md")), hasReadme: ["README.md", "README.MD", "readme.md"].some((name) => fs.existsSync(path.join(effective, name))) };
 }
@@ -159,13 +169,16 @@ function parseStatus(raw) {
 }
 async function repositoryStatus(rootValue) {
   const root = await gitRoot(rootValue); if (!root) return { available: true, isGit: false, clean: true, files: [], counts: {} };
-  const [status, commit, remote] = await Promise.all([
+  const [status, commit, origin] = await Promise.all([
     git(root, ["status", "--porcelain=v2", "--branch", "-z"]),
     git(root, ["log", "-1", "--format=%H%x00%s%x00%cI"], { allowFailure: true }),
     git(root, ["remote", "get-url", "origin"], { allowFailure: true }),
   ]);
   const parsed = parseStatus(status.stdout); const [hash, message, committedAt] = commit.stdout.trim().split("\0");
-  return { available: true, isGit: true, root, remote: remote.stdout.trim() || null, githubUrl: githubUrl(remote.stdout), ...parsed, lastCommit: hash ? { hash, shortHash: hash.slice(0, 8), message, committedAt } : null };
+  const trackingRemote = parsed.upstream?.split("/")[0] || "origin";
+  const push = trackingRemote === "origin" ? origin : await git(root, ["remote", "get-url", "--push", trackingRemote], { allowFailure: true });
+  const pushUrl = push.code ? "" : push.stdout.trim();
+  return { available: true, isGit: true, root, remoteName: trackingRemote, remote: pushUrl || origin.stdout.trim() || null, origin: origin.stdout.trim() || null, githubUrl: githubUrl(pushUrl || origin.stdout), ...parsed, lastCommit: hash ? { hash, shortHash: hash.slice(0, 8), message, committedAt } : null };
 }
 function queue(root, operation) {
   const previous = queues.get(root) || Promise.resolve(); const next = previous.catch(() => {}).then(operation); const tracked = next.finally(() => { if (queues.get(root) === tracked) queues.delete(root); }); queues.set(root, tracked); return tracked;
@@ -191,6 +204,12 @@ async function commit(rootValue, input) {
   const suspicious = files.filter((file) => SECRET_FILE.test(file)); if (suspicious.length && !input.acknowledgeSensitive) throw new Error(`Sensitive-looking files require acknowledgement: ${suspicious.join(", ")}`);
   return queue(root, async () => {
     const before = await repositoryStatus(root); if (before.counts.conflicts) throw new Error("Resolve merge conflicts before committing.");
+    if (input.push) {
+      if (!before.githubUrl) throw new Error("Connect this project to GitHub before using Commit & push.");
+      await git(root, ["fetch", before.remoteName || "origin"], { timeout: 120_000 });
+      const fresh = await repositoryStatus(root);
+      if (fresh.behind) throw new Error(`GitHub has ${fresh.behind} newer commit${fresh.behind === 1 ? "" : "s"}. Pull them before committing and pushing.`);
+    }
     await git(root, ["add", "--", ...files]); await git(root, ["commit", "--only", "-m", input.message.trim(), "--", ...files], { timeout: 120_000 });
     const created = await git(root, ["log", "-1", "--format=%H%x00%s"]); const [hash, message] = created.stdout.trim().split("\0");
     if (input.push) await pushRoot(root, await repositoryStatus(root));
@@ -200,6 +219,7 @@ async function commit(rootValue, input) {
 async function pushRoot(root, status) {
   if (status.counts?.conflicts) throw new Error("Resolve merge conflicts before pushing.");
   if (status.detached || !status.branch) throw new Error("Choose a branch before pushing a detached HEAD.");
+  if (status.behind) throw new Error(`GitHub has ${status.behind} newer commit${status.behind === 1 ? "" : "s"}. Pull them before pushing.`);
   if (status.upstream) await git(root, ["push"], { timeout: 120_000 });
   else {
     const origin = await git(root, ["remote", "get-url", "--push", "origin"], { allowFailure: true });
@@ -209,7 +229,14 @@ async function pushRoot(root, status) {
 }
 async function pushRepository(rootValue) {
   const root = await gitRoot(rootValue); if (!root) throw new Error("This project is not a Git repository.");
-  return queue(root, async () => { const before = await repositoryStatus(root); await pushRoot(root, before); return repositoryStatus(root); });
+  return queue(root, async () => {
+    let before = await repositoryStatus(root);
+    if (!before.githubUrl) throw new Error("Connect this project to GitHub before pushing.");
+    await git(root, ["fetch", before.remoteName || "origin"], { timeout: 120_000 });
+    before = await repositoryStatus(root);
+    await pushRoot(root, before);
+    return repositoryStatus(root);
+  });
 }
 async function setupGithubRepository(rootValue, input = {}) {
   const selected = canonical(rootValue);
@@ -232,10 +259,10 @@ async function setupGithubRepository(rootValue, input = {}) {
   const repository = githubRepositoryName(input.repository || path.basename(root), auth.login);
   const url = `https://github.com/${repository}`;
   if (input.mode === "connect") {
-    await run("gh.exe", ["repo", "view", repository, "--json", "url", "--jq", ".url"], { timeout: 30_000 });
+    await run("gh.exe", ["repo", "view", repository, "--json", "url", "--jq", ".url"], { timeout: 30_000, stripGithubTokens: true });
     await git(root, ["remote", "add", "origin", `${url}.git`]);
   } else {
-    await run("gh.exe", ["repo", "create", repository, input.visibility === "public" ? "--public" : "--private", "--source", root, "--remote", "origin", "--description", String(input.description || "").slice(0, 350)], { timeout: 120_000 });
+    await run("gh.exe", ["repo", "create", repository, input.visibility === "public" ? "--public" : "--private", "--source", root, "--remote", "origin", "--description", String(input.description || "").slice(0, 350)], { timeout: 120_000, stripGithubTokens: true });
   }
   return { root, url, repository, created: input.mode !== "connect", initialized, status: await repositoryStatus(root) };
 }
@@ -293,4 +320,4 @@ function writeAgents(rootValue, input) {
 }
 function readReadme(rootValue) { const root = canonical(rootValue); for (const name of ["README.md", "README.MD", "readme.md"]) { const file = path.join(root, name); if (fs.existsSync(file)) return { path: file, content: fs.readFileSync(file, "utf8").slice(0, 250_000) }; } return null; }
 
-module.exports = { SECRET_FILE, run, gitRoot, githubUrl, githubAuthStatus, githubSignIn, inspectFolder, discoverRepositories, repositoryStatus, diff, mutateFiles, commit, pushRepository, setupGithubRepository, publishBlockers, publishRepository, fetchRepository, readAgents, writeAgents, readReadme };
+module.exports = { SECRET_FILE, run, gitRoot, githubUrl, githubAuthStatus, githubSelectAccount, githubSignIn, inspectFolder, discoverRepositories, repositoryStatus, diff, mutateFiles, commit, pushRepository, setupGithubRepository, publishBlockers, publishRepository, fetchRepository, readAgents, writeAgents, readReadme };

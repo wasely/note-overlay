@@ -59,7 +59,7 @@ for (const service of Object.values(AI_SERVICES)) {
 
   assert.equal(controller.show().status, "loading");
   assert.equal(children.length, 1);
-  assert.equal(FakeWebContentsView.last.options.webPreferences.partition, `persist:notebook-ai-${service.id}`);
+  assert.equal(FakeWebContentsView.last.options.webPreferences.partition, service.id === "gemini" ? "persist:notebook-gmail" : `persist:notebook-ai-${service.id}`);
   assert.equal(FakeWebContentsView.last.options.webPreferences.nodeIntegration, false);
   assert.equal(FakeWebContentsView.last.options.webPreferences.contextIsolation, true);
   assert.equal(FakeWebContentsView.last.options.webPreferences.sandbox, true);

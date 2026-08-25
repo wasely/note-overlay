@@ -50,16 +50,19 @@ const controller = createMailViewController({
   emitStatus: (status) => statuses.push(status),
 });
 
-assert.equal(controller.show().status, "loading");
-assert.equal(children.length, 1);
+assert.equal(controller.preload().status, "loading");
+assert.equal(children.length, 0);
 assert.equal(FakeWebContentsView.last.options.webPreferences.partition, "persist:notebook-gmail");
 assert.equal(FakeWebContentsView.last.options.webPreferences.nodeIntegration, false);
 assert.equal(FakeWebContentsView.last.options.webPreferences.sandbox, true);
-assert.deepEqual(FakeWebContentsView.last.bounds, { x: 0, y: 44, width: 800, height: 556 });
+assert.equal(FakeWebContentsView.last.bounds, undefined);
 assert.equal(FakeWebContentsView.last.webContents.url, DEFAULT_MAIL_URL);
 
 FakeWebContentsView.last.webContents.emit("did-stop-loading");
 assert.equal(controller.getStatus(), "ready");
+assert.equal(controller.show().status, "ready");
+assert.equal(children.length, 1);
+assert.deepEqual(FakeWebContentsView.last.bounds, { x: 0, y: 44, width: 800, height: 556 });
 controller.hide();
 assert.equal(children.length, 0);
 controller.show();

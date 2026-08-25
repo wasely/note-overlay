@@ -28,8 +28,12 @@ async function readJson(fetchImpl, url, options = {}) {
 function createBotProvisioning({ env = process.env, fetchImpl = fetch, openExternal, getSetting = () => ({}), setSetting = () => {}, secrets }) {
   let telegramIdentity = null;
   let discordIdentity = null;
-  const managerToken = () => String(env.NOTEBOOK_TELEGRAM_MANAGER_BOT_TOKEN || "").trim();
-  const controllerToken = () => String(env.NOTEBOOK_DISCORD_CONTROLLER_TOKEN || "").trim();
+  function storedSecret(reference) {
+    try { return String(secrets?.get(reference) || "").trim(); } catch { return ""; }
+  }
+  const configuration = () => getSetting("botProvisioning", {}) || {};
+  const managerToken = () => storedSecret("NOTEBOOK_TELEGRAM_MANAGER_BOT_TOKEN") || String(env.NOTEBOOK_TELEGRAM_MANAGER_BOT_TOKEN || "").trim();
+  const controllerToken = () => storedSecret("NOTEBOOK_DISCORD_CONTROLLER_TOKEN") || String(env.NOTEBOOK_DISCORD_CONTROLLER_TOKEN || "").trim();
 
   async function telegramManager() {
     if (telegramIdentity) return telegramIdentity;
@@ -44,7 +48,7 @@ function createBotProvisioning({ env = process.env, fetchImpl = fetch, openExter
 
   async function discordController() {
     if (discordIdentity) return discordIdentity;
-    const configuredId = String(env.NOTEBOOK_DISCORD_CONTROLLER_ID || "").trim();
+    const configuredId = String(configuration().discordApplicationId || env.NOTEBOOK_DISCORD_CONTROLLER_ID || "").trim();
     const token = controllerToken();
     if (DISCORD_ID.test(configuredId)) {
       discordIdentity = { id: configuredId, displayName: "Notebook Controller" };
@@ -55,6 +59,34 @@ function createBotProvisioning({ env = process.env, fetchImpl = fetch, openExter
     if (!DISCORD_ID.test(payload?.id || "")) throw new Error("Discord controller identity is invalid.");
     discordIdentity = { id: payload.id, displayName: payload.global_name || payload.username || "Notebook Controller" };
     return discordIdentity;
+  }
+
+  async function configure(input) {
+    const platform = input?.platform;
+    if (platform === "discord") {
+      const applicationId = String(input.applicationId || "").trim();
+      const token = String(input.token || "").trim();
+      if (!DISCORD_ID.test(applicationId)) throw new Error("Enter the Discord application ID.");
+      if (token.length < 20) throw new Error("Enter the Discord bot token.");
+      const payload = await readJson(fetchImpl, "https://discord.com/api/v10/users/@me", { headers: { Authorization: `Bot ${token}` } });
+      if (!DISCORD_ID.test(payload?.id || "")) throw new Error("Discord did not return a bot identity.");
+      if (payload.id !== applicationId) throw new Error("The application ID and bot token belong to different Discord apps.");
+      await secrets.set("NOTEBOOK_DISCORD_CONTROLLER_TOKEN", token);
+      setSetting("botProvisioning", { ...configuration(), discordApplicationId: applicationId });
+      discordIdentity = { id: applicationId, displayName: payload.global_name || payload.username || "Notebook Bot" };
+      return status();
+    }
+    if (platform === "telegram") {
+      const token = String(input.token || "").trim();
+      if (token.length < 20) throw new Error("Enter the Telegram manager token.");
+      const payload = await readJson(fetchImpl, `https://api.telegram.org/bot${token}/getMe`);
+      const result = payload?.result;
+      if (!result || !USERNAME.test(result.username || "")) throw new Error("Telegram did not return a manager identity.");
+      await secrets.set("NOTEBOOK_TELEGRAM_MANAGER_BOT_TOKEN", token);
+      telegramIdentity = { id: String(result.id), username: result.username, displayName: result.first_name || result.username, canManageBots: result.can_manage_bots === true };
+      return status();
+    }
+    throw new Error("Choose Discord or Telegram.");
   }
 
   async function status() {
@@ -128,7 +160,7 @@ function createBotProvisioning({ env = process.env, fetchImpl = fetch, openExter
     return { platform: "telegram", state: "ready", externalBotId: String(match.bot.id), username: match.bot.username, displayName: match.bot.first_name || match.bot.username, secretRef };
   }
 
-  return { status, begin, completeTelegram };
+  return { status, configure, begin, completeTelegram };
 }
 
 module.exports = { createBotProvisioning, secretReference };

@@ -6,8 +6,8 @@ Notebook is a Windows-only, local-first Markdown notebook. `Ctrl+Alt+Shift+N` to
 
 Its primary notebook pages are:
 
-- **Today** — one page per calendar day, shaped like paper: the day's checklist in the order it was written, an add line at the bottom, the next day's page below it, and previous/next arrows plus a sidebar month calendar for moving between days. An earlier page keeps its own record: what was checked off there, and what moved on unfinished. Unfinished work rolls forward once per day — `dailyPage(viewDate)` rolls only when the viewed date is the real local today, so opening an old page never rewrites it, and a window left open past midnight turns its own page.
-- **Notes** — Markdown notes in notebooks, autosaving, pinnable, with a write/preview toggle. Preview renders headings, lists, quotes, code, inline styles, and task lists; ticking a rendered checkbox rewrites that exact source line.
+- **Today** — one page per calendar day with two sections. **Day log** shows a live seconds-left clock, a 24-hour map, and editable one- or five-minute activity entries. **Tasks** keeps the day's checklist and next-day plan. Previous/next arrows and the sidebar calendar page through both histories. An earlier page keeps its own record: what was logged, checked off, or moved on unfinished. Unfinished work rolls forward once per day — `dailyPage(viewDate)` rolls only when the viewed date is the real local today, so opening an old page never rewrites it, and a window left open past midnight turns its own page.
+- **Notes** — Markdown notes in notebooks, autosaving, pinnable, with a WYSIWYG editor and a preview toggle. The editor (TipTap) styles text as you type but serializes back to Markdown, which remains the source of truth; preview renders headings, lists, quotes, code, inline styles, and task lists, and ticking a rendered checkbox rewrites that exact source line.
 - **Skills** — a library with three places: an **All categories** home of category cards, a **category page** listing that category's skills with a one-line summary and a star toggle, and the **skill page** itself (rendered Markdown, edit toggle, heading outline, `Alt+←`/`Alt+→` paging). The sidebar shows collapsed category rows — the chevron expands a shelf, the label opens the category page. Scope is Active/Starred/All; archive shelves sit below one Archive divider. Stars persist in `skills.pinned`.
 - **Commands** — saved slash-command invocations and reference pages.
 
@@ -26,13 +26,14 @@ Supported target: normal Windows apps and borderless/windowed games. Do not prom
 - `src/main/main.cjs`: Electron lifecycle, single-instance lock, global shortcut, tray, window placement, validated IPC, drag-out.
 - `src/main/ai-view.cjs`: sandboxed ChatGPT/Gemini/DeepSeek `WebContentsView` lifecycle, URL allowlists, persistent partitions, and bounds.
 - `src/main/preload.cjs`: the only renderer bridge. Add every native capability here as a narrowly scoped function.
-- `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill/command/daily operations, JSON export/import, rotating backups and restores. `dailyPage(viewDate, today)` returns one day's lines plus the next day's; `dailyMonth(month)` returns the per-day totals the calendar draws.
+- `src/main/storage.cjs`: SQLite (`better-sqlite3`) schema, migrations, note/skill/command/daily operations, JSON export/import, rotating backups and restores. `dailyPage(viewDate, today)` returns one day's activity log and task lines plus the next day's tasks; `dailyMonth(month)` returns per-day task and logged-minute totals for the calendar.
 - `src/main/github-sync.cjs` + the runner in `src/main/projects.cjs`: fixed-account two-way merge, conflict retry, private repository creation, and sandboxed `gh`/`git` execution.
 - `src/main/projects.cjs` + `src/renderer/ProjectsPage.jsx`: categorized Now/Next/Later/Parked ordering, local repository status, scoped commits, pushes, and explicit GitHub setup.
 - `src/main/hotkey-manager.cjs`, `window-bounds.cjs`, `startup.cjs`: shortcut recovery, multi-monitor placement, start-at-login repair.
 - `src/renderer/main.jsx`: the whole React UI. `window.hushnote` is real in Electron and mocked for the browser preview.
 - `src/renderer/skills.jsx` + `skills.css`: the Skills page. Its grouping, shelf ordering, and label rules live in `skill-stack.js` so `scripts/skill-stack-test.mjs` can cover them.
 - `src/renderer/markdown-blocks.js` (pure parser, unit-tested) + `markdown.jsx` (React renderer). Markdown is never turned into HTML strings — no `dangerouslySetInnerHTML`.
+- `src/renderer/rich-markdown.js` (pure Markdown ↔ TipTap JSON converter, unit-tested) + `RichNoteEditor.jsx` (the WYSIWYG note editor built on TipTap). Markdown stays the stored format; the editor parses it on open and serializes back on every change.
 - `src/renderer/styles.css` + `tokens.css`: one spacing/type scale. Minimum rendered text size is 11px and interactive controls are at least 22px tall; `scripts/ui-test.mjs` enforces both.
 
 Legacy MCP rows remain dormant so an upgrade never destroys user data. They are excluded from hydrated bots, renderer APIs, IPC, and UI.

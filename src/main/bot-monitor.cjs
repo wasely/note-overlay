@@ -83,17 +83,23 @@ function resolveLocalStatusPath(bot) {
   return resolved;
 }
 
-function createBotMonitorService({ store, fetchImpl = globalThis.fetch, env = process.env, emit = () => {} }) {
+function createBotMonitorService({ store, fetchImpl = globalThis.fetch, env = process.env, resolveSecret = () => undefined, emit = () => {} }) {
   const timers = new Map();
+
+  function credential(reference) {
+    if (!reference) return null;
+    try { return resolveSecret(reference) || env[reference] || null; }
+    catch { return null; }
+  }
 
   async function structuredHttp(bot, started) {
     const monitoring = bot.monitoring;
     const headers = { Accept: "application/json" };
     const reference = secretReference(monitoring.authSecretRef);
     if (reference) {
-      const credential = env[reference];
-      if (!credential) throw new Error(`Authentication environment variable ${reference} is missing.`);
-      headers.Authorization = `Bearer ${credential}`;
+      const value = credential(reference);
+      if (!value) throw new Error(`Authentication credential ${reference} is unavailable.`);
+      headers.Authorization = `Bearer ${value}`;
     }
     const response = await fetchLimited(fetchImpl, monitoring.url, { method: monitoring.httpMethod || "GET", headers, timeoutMilliseconds: monitoring.timeoutMilliseconds });
     const raw = await readLimitedBody(response);
@@ -109,9 +115,9 @@ function createBotMonitorService({ store, fetchImpl = globalThis.fetch, env = pr
     const headers = {};
     const reference = secretReference(monitoring.authSecretRef);
     if (reference) {
-      const credential = env[reference];
-      if (!credential) throw new Error(`Authentication environment variable ${reference} is missing.`);
-      headers.Authorization = `Bearer ${credential}`;
+      const value = credential(reference);
+      if (!value) throw new Error(`Authentication credential ${reference} is unavailable.`);
+      headers.Authorization = `Bearer ${value}`;
     }
     const response = await fetchLimited(fetchImpl, monitoring.url, { method: monitoring.httpMethod || "GET", headers, timeoutMilliseconds: monitoring.timeoutMilliseconds });
     const expected = monitoring.expectedResponseCode == null || monitoring.expectedResponseCode === "" ? null : Number(monitoring.expectedResponseCode);
@@ -168,6 +174,26 @@ function createBotMonitorService({ store, fetchImpl = globalThis.fetch, env = pr
     }
   }
 
+  function saveReportedConnections(bot, payload) {
+    for (const reported of payload.connections || []) {
+      const connection = bot.connections?.find((item) => item.platform === reported.platform && item.verificationMode === "runtime");
+      if (!connection) continue;
+      const patch = {
+        credentialState: reported.state,
+        credentialVerifiedAt: reported.verifiedAt || null,
+        credentialErrorSummary: reported.state === "verified" ? "" : redactSecrets(reported.message || "Runtime could not verify this connection."),
+        displayName: reported.displayName || connection.displayName || "",
+        username: reported.username || connection.username || "",
+        externalBotId: reported.externalBotId || connection.externalBotId || "",
+        avatarUrl: reported.avatarUrl || connection.avatarUrl || "",
+      };
+      const changed = Object.entries(patch).some(([key, value]) => connection[key] !== value);
+      if (!changed) continue;
+      store.updateConnectionVerification(bot.id, connection.id, patch);
+      store.recordBotEvent({ botId: bot.id, type: "platform_identity_verified", summary: `${reported.platform === "discord" ? "Discord" : "Telegram"} connection ${reported.state} according to the deployed runtime.`, source: "Reported by bot" });
+    }
+  }
+
   function recordDerivedTransitions(before, after) {
     const previousState = before?.derivedState?.state;
     const nextState = after?.derivedState?.state;
@@ -191,6 +217,7 @@ function createBotMonitorService({ store, fetchImpl = globalThis.fetch, env = pr
       else if (adapter === "local-status") observed = await localStatus(bot, started);
       else throw new Error("Monitoring adapter configuration is invalid.");
       saveReportedRuns(bot, observed.payload);
+      saveReportedConnections(bot, observed.payload);
       const previous = bot.runtime;
       const snapshot = {
         reportedState: observed.payload.state,
@@ -289,10 +316,14 @@ function createBotMonitorService({ store, fetchImpl = globalThis.fetch, env = pr
     if (!bot) throw new Error("Bot not found.");
     const connection = bot.connections.find((item) => item.id === connectionId);
     if (!connection) throw new Error("Platform connection not found.");
+    if (connection.verificationMode === "runtime") {
+      await checkBot(botId);
+      return store.getBot(botId).connections.find((item) => item.id === connectionId);
+    }
     const reference = secretReference(connection.credentialSecretRef);
-    const token = reference ? env[reference] : null;
+    const token = credential(reference);
     if (!reference || !token) {
-      const updated = store.updateConnectionVerification(botId, connectionId, { credentialState: "not_configured", credentialVerifiedAt: now(), credentialErrorSummary: reference ? `Environment variable ${reference} is missing.` : "No credential secret reference is configured." });
+      const updated = store.updateConnectionVerification(botId, connectionId, { credentialState: "not_configured", credentialVerifiedAt: now(), credentialErrorSummary: reference ? `Saved credential or environment variable ${reference} is unavailable.` : "No credential secret reference is configured." });
       return updated.connections.find((item) => item.id === connectionId);
     }
     try {

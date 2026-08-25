@@ -19,7 +19,7 @@ const expected = "Token and Efficiency maxxing.md";
 const helperLogPath = path.join(testDir, "helper.log");
 const dropSignalPath = path.join(testDir, "drop.signal");
 const targetFile = path.join(testDir, "target.hwnd");
-const app = await electron.launch({ executablePath: electronPath, args: [root, `--user-data-dir=${userData}`], env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1", NOTEBOOK_CLEAN_DRAG_LOG: helperLogPath, NOTEBOOK_CLEAN_DRAG_DROP_SIGNAL: dropSignalPath, NOTEBOOK_CLEAN_DRAG_TARGET_FILE: targetFile } });
+const app = await electron.launch({ executablePath: electronPath, args: [`--user-data-dir=${userData}`, root], env: { ...process.env, NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1", NOTEBOOK_CLEAN_DRAG_LOG: helperLogPath, NOTEBOOK_CLEAN_DRAG_DROP_SIGNAL: dropSignalPath, NOTEBOOK_CLEAN_DRAG_TARGET_FILE: targetFile } });
 let receiver;
 
 async function waitForFile(filePath, timeoutMs = 10000) {

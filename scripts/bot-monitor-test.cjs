@@ -16,7 +16,7 @@ let service;
 (async () => {
 try {
   const health = store.createBot({ name: "Health Bot", executionMode: "continuous", monitoring: { adapter: "http-health", url: "http://example.test/health", expectedResponseCode: 204, authSecretRef: "HEALTH_SECRET", monitoringEnabled: true, timeoutMilliseconds: 250, staleAfterSeconds: 180, failuresBeforeOffline: 3 }, connections: [{ platform: "discord", credentialSecretRef: "DISCORD_TEST_TOKEN" }] });
-  const structured = store.createBot({ name: "Status Bot", id: "status-bot", executionMode: "continuous", monitoring: { adapter: "http-status", url: "http://example.test/status", monitoringEnabled: true, timeoutMilliseconds: 250, staleAfterSeconds: 180, failuresBeforeOffline: 3 }, jobs: [{ id: "status-bot-daily", name: "Daily", scheduleType: "cron", cronExpression: "0 14 * * *", timezone: "UTC", enabled: true }] });
+  const structured = store.createBot({ name: "Status Bot", id: "status-bot", platforms: ["discord"], executionMode: "continuous", monitoring: { adapter: "http-status", url: "http://example.test/status", monitoringEnabled: true, timeoutMilliseconds: 250, staleAfterSeconds: 180, failuresBeforeOffline: 3 }, connections: [{ platform: "discord", verificationMode: "runtime" }], jobs: [{ id: "status-bot-daily", name: "Daily", scheduleType: "cron", cronExpression: "0 14 * * *", timezone: "UTC", enabled: true }] });
   const local = store.createBot({ name: "Local Bot", id: "local-bot", executionMode: "continuous", localProjectPath: projectDir, monitoring: { adapter: "local-status", filePath: "status.json", monitoringEnabled: true, staleAfterSeconds: 180, failuresBeforeOffline: 3 } });
   const broken = store.createBot({ name: "Broken Bot", id: "broken-bot", executionMode: "continuous", monitoring: { adapter: "http-health", url: "http://example.test/broken", monitoringEnabled: true, timeoutMilliseconds: 250, staleAfterSeconds: 180, failuresBeforeOffline: 2 } });
   store.createBot({ name: "Manual Bot", executionMode: "manual", monitoring: { adapter: "manual", monitoringEnabled: true } });
@@ -25,14 +25,15 @@ try {
   const fetchImpl = async (url, options = {}) => {
     requests.push({ url: String(url), authorization: options.headers?.Authorization || options.headers?.authorization || "" });
     if (String(url).includes("/health")) return new Response(null, { status: 204 });
-    if (String(url).includes("/status")) return new Response(JSON.stringify({ schemaVersion: 1, botId: structured.id, observedAt: new Date().toISOString(), state: "healthy", activity: "idle", version: "1.4.2", jobs: [{ id: "status-bot-daily", state: "success", lastRunAt: "2026-08-17T14:00:00.000Z", nextRunAt: "2026-08-18T14:00:00.000Z", lastDurationMs: 1280, message: "Done" }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (String(url).includes("/status")) return new Response(JSON.stringify({ schemaVersion: 1, botId: structured.id, observedAt: new Date().toISOString(), state: "healthy", activity: "idle", version: "1.4.2", jobs: [{ id: "status-bot-daily", state: "success", lastRunAt: "2026-08-17T14:00:00.000Z", nextRunAt: "2026-08-18T14:00:00.000Z", lastDurationMs: 1280, message: "Done" }], connections: [{ platform: "discord", state: "verified", displayName: "Cloud alerts", verifiedAt: new Date().toISOString(), message: "Webhook verified by runtime." }] }), { status: 200, headers: { "Content-Type": "application/json" } });
     if (String(url).includes("/broken")) return new Response("unavailable", { status: 503 });
     if (String(url).includes("discord.com/api/v10/users/@me")) return new Response(JSON.stringify({ id: "123456", username: "calendar", global_name: "Calendar", avatar: "hash" }), { status: 200 });
     if (String(url).includes("api.telegram.org")) return new Response(JSON.stringify({ ok: true, result: { id: 98765, username: "calendar_bot", first_name: "Calendar" } }), { status: 200 });
     throw new Error("Unexpected request");
   };
   const updates = [];
-  service = createBotMonitorService({ store, fetchImpl, env: { HEALTH_SECRET: "health-secret-value", DISCORD_TEST_TOKEN: "discord-secret-value", TELEGRAM_TEST_TOKEN: "telegram-secret-value" }, emit: (update) => updates.push(update) });
+  const encryptedSecrets = new Map([["HEALTH_SECRET", "health-secret-value"], ["DISCORD_TEST_TOKEN", "discord-secret-value"]]);
+  service = createBotMonitorService({ store, fetchImpl, env: { TELEGRAM_TEST_TOKEN: "telegram-secret-value" }, resolveSecret: (reference) => encryptedSecrets.get(reference), emit: (update) => updates.push(update) });
 
   const healthResult = await service.checkBot(health.id);
   assert.equal(healthResult.ok, true);
@@ -46,6 +47,8 @@ try {
   assert.equal(store.listBotRuns(structured.id)[0].source, "Reported by bot");
   assert.equal(store.getBotActivity(structured.id).filter((event) => event.type === "job_succeeded").length, 1);
   assert.equal(store.getBotActivity(structured.id).filter((event) => event.type === "job_scheduled").length, 1);
+  assert.equal(store.getBot(structured.id).connections[0].credentialState, "verified");
+  assert.equal(store.getBot(structured.id).connections[0].displayName, "Cloud alerts");
   await service.checkBot(structured.id);
   assert.equal(store.listBotRuns(structured.id).length, 1);
   assert.equal(store.getBotActivity(structured.id).filter((event) => event.type === "job_succeeded").length, 1);

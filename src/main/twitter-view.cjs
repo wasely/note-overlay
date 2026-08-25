@@ -133,6 +133,13 @@ function createTwitterViewController({ WebContentsView, parentWindow, shell, emi
     });
   }
 
+  // Warm the persistent X/Twitter session without attaching the native view.
+  function preload() {
+    ensureView();
+    if (!loaded || status === "error") load();
+    return { status, message: "" };
+  }
+
   function show() {
     active = true;
     attach();
@@ -171,7 +178,7 @@ function createTwitterViewController({ WebContentsView, parentWindow, shell, emi
     status = "idle";
   }
 
-  return { show, hide, reload, resize, openExternal, destroy, isActive: () => active, getStatus: () => status };
+  return { preload, show, hide, reload, resize, openExternal, destroy, isActive: () => active, getStatus: () => status };
 }
 
 module.exports = {

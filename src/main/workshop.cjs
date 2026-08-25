@@ -32,7 +32,7 @@ const TIER_C = [
 
 // Undecided — kept, with the call attached.
 const TIER_UNDECIDED = [
-  ["cep", "CEP Panel Suite", "live", "premiere", "Eleven Premiere panels: editing, assets, search, motion, audio, live web.", "Keep. This is the delivery surface for Buzzroll and everything else."],
+  ["cep", "Premiere CEP Extensions", "live", "premiere", "Thirteen Premiere panels: editing, assets, search, motion, audio, publishing, and live web.", "Choose the first editing pain point, then build and test one button-to-result workflow in Premiere Pro 2026."],
   ["brgod", "brgod", "live", "video", "Record polished B-roll from web links with parallel Chromium and NVENC.", "Keep as an engine. Script Gen calls it; do not open it on its own."],
   ["x-media-archive", "X Media Archive", "live", "social", "Download and search every image and video from an X profile.", "Keep, bottom of the list. Cheap, works, feeds B-roll."],
   ["premiere-x", "Buzzroll MCP", "live", "premiere", "Agent-controlled Premiere editing through eighteen MCP tools.", "Keep the MCP layer; the panels belong to cep."],
@@ -46,6 +46,8 @@ const TIER_UNRANKED = [
   ["script-gen", "Script Gen", "live", "creator", "Creator workspace: research, scripts, source shots, B-roll, titles, thumbnails.", "Rank it or cut it. Highest daily use, lowest autonomy."],
   ["extension-manager", "Extension Manager", "live", "browser", "Chrome side panel for finding, toggling, and reloading extensions.", "Rank it or cut it."],
   ["discord-reddit-meme-bot", "Meme Momentum Bot", "code", "bot", "Reddit momentum scoring with SQLite dedup and independent loops.", "Rank it or fold it into Discord YouTube Tracker."],
+  ["ai-only-youtube", "AI-Only YouTube", "code", "browser", "Filter YouTube to AI-relevant videos and explain a private match score.", "Keep its live YouTube adapters and ranking evidence current."],
+  ["blixvip-skills", "Blixvip Skills", "code", "tooling", "Reusable Codex command, GitHub, UI, and timebox skills.", "Keep installed command aliases and public skill sources aligned."],
 ];
 
 // Done. Reopening one of these is the failure mode.
@@ -62,6 +64,7 @@ const TIER_DONE = [
   ["ibm-technology-channel-deck", "IBM Channel Deck", "code", "creator", "One-off reproducible YouTube corpus and presentation pipeline."],
   ["vps-deploy", "VPS Deploy", "code", "infrastructure", "Server bootstrap script and systemd units."],
   ["landgraf", "Landgraf", "code", "experiment", "Draft, verify, and retry agent loop."],
+  ["turbo-tube", "TurboTube", "code", "browser", "YouTube performance extension now absorbed by AI-Only YouTube."],
 ];
 
 // Cut. The rest of the 14 Aug cut list was deleted from disk on 17 Aug 2026.
