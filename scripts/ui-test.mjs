@@ -58,7 +58,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage();
     await page.goto(`${base}/?daily=demo&projects=demo`, { waitUntil: "networkidle" });
-    for (const view of ["Today", "Notes", "Skills", "Commands", "Projects"]) {
+    for (const view of ["Today", "Notes", "Skills & Commands", "Keys", "Projects"]) {
       await navButton(page, view).click();
       await page.waitForTimeout(120);
       await assertNoOverflow(page, `${view} @ ${width}`);
@@ -88,8 +88,11 @@ try {
     }
     const aiGeometry = await aiButtons.evaluateAll((buttons) => buttons.map((button) => {
       const box = button.getBoundingClientRect();
-      const label = button.querySelector("span:last-of-type")?.getBoundingClientRect();
-      return { left: box.left, width: box.width, labelCenter: label ? label.left + label.width / 2 : 0 };
+      // The mark and label sit side by side; the pair, not the label alone, must be centred.
+      const parts = [...button.children].filter((child) => getComputedStyle(child).position !== "absolute").map((child) => child.getBoundingClientRect());
+      const contentLeft = Math.min(...parts.map((part) => part.left));
+      const contentRight = Math.max(...parts.map((part) => part.right));
+      return { left: box.left, width: box.width, labelCenter: parts.length ? (contentLeft + contentRight) / 2 : 0 };
     }));
     const aiWidths = aiGeometry.map(({ width: buttonWidth }) => Math.round(buttonWidth));
     if (Math.max(...aiWidths) - Math.min(...aiWidths) > 1 || aiGeometry.some(({ left, width: buttonWidth, labelCenter }) => Math.abs(labelCenter - (left + buttonWidth / 2)) > 1)) {
@@ -102,7 +105,7 @@ try {
       throw new Error(`AI panel @ ${width}: hover moved the provider control.`);
     }
     await assertLegible(page, `AI panel @ ${width}`);
-    const appButtons = page.locator(".nav").getByRole("button").filter({ has: page.locator("svg.brand-icon") });
+    const appButtons = page.locator(".nav").getByRole("button").filter({ has: page.locator("svg.brand-icon, svg.nb-mailbrain, .brand-image img") });
     if (await appButtons.count() < 4) throw new Error(`Apps @ ${width}: Excalidraw or another app mark is missing.`);
     await page.getByRole("button", { name: "Settings and backups" }).click();
     await page.getByRole("heading", { name: "Settings" }).waitFor();
@@ -210,15 +213,22 @@ try {
   await page.locator(".results").getByText("Release checklist", { exact: true }).waitFor();
   await page.getByLabel("Search everything").fill("");
 
-  await navButton(page, "Commands").click();
+  await navButton(page, "Skills & Commands").click();
+  await page.getByRole("tab", { name: /^Commands/ }).click();
   await assertLibraryRail(page, "Commands");
   await page.locator(".library-browser").getByText("Git push", { exact: true }).waitFor();
   await page.getByLabel("Filter commands").fill("missing command");
   await page.getByText("No matching commands", { exact: true }).waitFor();
   await page.getByLabel("Filter commands").fill("");
 
-  await navButton(page, "Skills").click();
+  await page.getByRole("tab", { name: /^Skills/ }).click();
   await assertLibraryRail(page, "Skills");
+
+  await navButton(page, "Keys").click();
+  await page.getByRole("heading", { name: "Keys", exact: true }).waitFor();
+  await page.getByRole("button", { name: /Build a Key/ }).waitFor();
+  await page.getByRole("button", { name: /Thumbnail Extension Fix/ }).waitFor();
+  await page.getByText("Exact SKILL.md", { exact: true }).waitFor();
 
   // Projects: four-row ranking, task-first detail, and review-before-push flow.
   await navButton(page, "Projects").click();
@@ -240,7 +250,9 @@ try {
 
   // Keyboard: Ctrl+2..4 switch pages, Ctrl+E toggles preview.
   await page.keyboard.press("Control+3");
-  await navButton(page, "Skills").and(page.locator(".is-active")).waitFor();
+  await navButton(page, "Skills & Commands").and(page.locator(".is-active")).waitFor();
+  await page.keyboard.press("Control+4");
+  await navButton(page, "Keys").and(page.locator(".is-active")).waitFor();
   await page.keyboard.press("Control+2");
   await navButton(page, "Notes").and(page.locator(".is-active")).waitFor();
   await page.keyboard.press("Control+e");

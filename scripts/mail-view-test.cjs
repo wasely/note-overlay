@@ -16,6 +16,12 @@ assert.equal(isAllowedMailNavigation("https://example.com/phish"), false);
 assert.equal(isAllowedMailNavigation("javascript:alert(1)"), false);
 assert.equal(isSafeExternalUrl("https://example.com/"), true);
 assert.equal(isSafeExternalUrl("http://example.com/"), false);
+// Mail is Mailbrain on this computer: its own loopback page is the one plain-HTTP exception.
+assert.equal(DEFAULT_MAIL_URL, "http://127.0.0.1:4390/");
+assert.equal(isSafeExternalUrl("http://127.0.0.1:4390/"), true);
+assert.equal(isSafeExternalUrl("http://localhost:4390/"), true);
+assert.equal(isAllowedMailNavigation("http://127.0.0.1:4390/#inbox"), true);
+assert.equal(isAllowedMailNavigation("http://127.0.0.1:9999/"), false);
 
 class FakeContents extends EventEmitter {
   constructor() { super(); this.url = ""; this.destroyed = false; this.reloads = 0; }
@@ -91,4 +97,33 @@ assert.equal(children.length, 0);
 assert.equal(FakeWebContentsView.last.webContents.destroyed, true);
 assert.ok(statuses.some((entry) => entry.status === "error"));
 
-console.log("Gmail view security, bounds, and lifecycle tests passed.");
+// A Mailbrain that is not running gets started, and the panel retries instead of erroring.
+(async () => {
+  let starts = 0;
+  const recoveryStatuses = [];
+  const recovering = createMailViewController({
+    WebContentsView: FakeWebContentsView,
+    parentWindow,
+    shell: { openExternal: async () => {} },
+    emitStatus: (status) => recoveryStatuses.push(status),
+    startService: async () => { starts += 1; },
+    retryDelayMs: 5,
+    maxStartAttempts: 2,
+  });
+  recovering.show();
+  const contents = FakeWebContentsView.last.webContents;
+  contents.url = "";
+  contents.emit("did-fail-load", {}, -102, "CONNECTION_REFUSED", DEFAULT_MAIL_URL, true);
+  assert.equal(recovering.getStatus(), "loading", "a refused connection starts Mailbrain instead of failing");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(starts, 1);
+  assert.equal(contents.url, DEFAULT_MAIL_URL, "the panel retries after starting Mailbrain");
+  contents.emit("did-fail-load", {}, -102, "CONNECTION_REFUSED", DEFAULT_MAIL_URL, true);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  contents.emit("did-fail-load", {}, -102, "CONNECTION_REFUSED", DEFAULT_MAIL_URL, true);
+  assert.equal(starts, 2);
+  assert.equal(recovering.getStatus(), "error", "it stops retrying after the attempt limit");
+  assert.match(recoveryStatuses.at(-1).message, /Mailbrain is not running/);
+  recovering.destroy();
+  console.log("Mailbrain view security, bounds, lifecycle, and auto-start tests passed.");
+})().catch((error) => { console.error(error); process.exit(1); });

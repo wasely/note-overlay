@@ -45,4 +45,12 @@ assert.equal(tokens[3].text, "link");
 // A note that is only whitespace renders nothing rather than an empty paragraph.
 assert.deepEqual(markdownBlocks("\n\n   \n"), []);
 
+// GitHub tables: header, alignment, ragged rows padded, escaped pipes kept; no rule line = paragraph.
+const [table] = markdownBlocks(String.raw`| a \| b | c | d |` + "\n|---|:-:|--:|\n| 1 | **2** |");
+assert.equal(table.type, "table");
+assert.deepEqual(table.header, ["a | b", "c", "d"]);
+assert.deepEqual(table.align, ["left", "center", "right"]);
+assert.deepEqual(table.rows, [["1", "**2**", ""]]);
+assert.equal(markdownBlocks("| not | a table |\nprose")[0].type, "paragraph");
+
 console.log("Markdown block, task line index, and inline token tests passed.");

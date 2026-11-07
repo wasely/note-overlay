@@ -42,6 +42,8 @@ try {
 
   await navButton(page, "Projects").click();
   await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Open Workspace fixture" }).waitFor();
+  await page.getByRole("tab", { name: "Priority queue" }).click();
   const simpleFixtureCard = page.locator(".project-simple-card").filter({ hasText: "Workspace fixture" });
   await simpleFixtureCard.getByText("Original overview", { exact: true }).waitFor();
   if (await simpleFixtureCard.getByText(/Desktop|TypeScript|GitHub current|open tasks/i).count()) throw new Error("Project card still shows removed metadata.");
@@ -52,6 +54,8 @@ try {
   await page.waitForFunction(async () => (await window.hushnote.projects.list()).find((item) => item.name === "Workspace fixture")?.tier === 1);
   await navButton(page, "Today").evaluate((button) => button.click());
   await navButton(page, "Projects").evaluate((button) => button.click());
+  await page.getByRole("button", { name: "Open Workspace fixture" }).waitFor();
+  await page.getByRole("tab", { name: "Priority queue" }).click();
   await page.locator('.project-rank-row[aria-label="1st place"]').getByText("Workspace fixture", { exact: true }).waitFor({ state: "attached" });
   await simpleFixtureCard.getByRole("button", { name: "Open Workspace fixture", exact: true }).evaluate((button) => button.click());
   await page.getByRole("heading", { name: "Workspace fixture", exact: true }).first().waitFor();

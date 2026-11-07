@@ -37,7 +37,13 @@ try {
 
     await navButton(page, "Notes").click();
     await page.getByLabel("Note title").fill("Release checklist");
-    await page.locator(".note-editor .ProseMirror").fill("# Ship it\n\nA **short** plan for the week.\n\n- [ ] Verify the build\n- [x] Update the notes\n\n> Everything stays on this computer.\n\n```bash\nnpm run pack:dir\n```");
+    // Paste as plain text, the way Markdown arrives from a terminal or an AI chat.
+    await page.locator(".note-editor .ProseMirror").click();
+    await page.locator(".note-editor .ProseMirror").evaluate((element, text) => {
+      const data = new DataTransfer();
+      data.setData("text/plain", text);
+      element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    }, "# Ship it\n\nA **short** plan for the week.\n\n- [ ] Verify the build\n- [x] Update the notes\n\n> Everything stays on this computer.\n\n```bash\nnpm run pack:dir\n```");
     await page.getByText("Saved", { exact: true }).waitFor();
     const showNoteList = page.getByRole("button", { name: "Show note list" });
     const openedNoteList = await showNoteList.count() > 0;
@@ -55,7 +61,7 @@ try {
     await page.screenshot({ path: `screenshots/shot-${tag}-search.png` });
     await page.getByLabel("Search everything").fill("");
 
-    await navButton(page, "Skills").click();
+    await navButton(page, "Skills & Commands").click();
     await page.screenshot({ path: `screenshots/shot-${tag}-skills.png` });
     const showSkillList = page.getByRole("button", { name: "Show skill list" });
     if (await showSkillList.count()) {
@@ -64,7 +70,7 @@ try {
       await page.screenshot({ path: `screenshots/shot-${tag}-skills-library.png` });
       await page.getByRole("navigation", { name: "Skill library" }).getByRole("button", { name: "Hide skill list" }).click();
     }
-    await navButton(page, "Commands").click();
+    await page.getByRole("tab", { name: /^Commands/ }).click();
     const showCommandList = page.getByRole("button", { name: "Show command list" });
     const openedCommandList = await showCommandList.count() > 0;
     if (openedCommandList) await showCommandList.click();
@@ -72,6 +78,10 @@ try {
     await page.screenshot({ path: `screenshots/shot-${tag}-command-library.png` });
     if (openedCommandList) await page.locator(".library-browser .row", { hasText: "Git push" }).locator(".row-open").click();
     await page.screenshot({ path: `screenshots/shot-${tag}-commands.png` });
+
+    await navButton(page, "Keys").click();
+    await page.getByRole("heading", { name: "Keys", exact: true }).waitFor();
+    await page.screenshot({ path: `screenshots/shot-${tag}-keys.png` });
 
     await navButton(page, "CEP Extensions").click();
     await page.getByRole("heading", { name: "Main four", exact: true }).waitFor();
@@ -105,12 +115,16 @@ try {
     await navButton(page, "Notes").click();
     await page.waitForTimeout(220);
     await page.screenshot({ path: `screenshots/shot-${tag}-note-dark.png` });
-    await navButton(page, "Skills").click();
+    await navButton(page, "Skills & Commands").click();
+    await page.getByRole("tab", { name: /^Skills/ }).click();
     await page.waitForTimeout(120);
     await page.screenshot({ path: `screenshots/shot-${tag}-skills-dark.png` });
-    await navButton(page, "Commands").click();
+    await page.getByRole("tab", { name: /^Commands/ }).click();
     await page.waitForTimeout(220);
     await page.screenshot({ path: `screenshots/shot-${tag}-commands-dark.png` });
+    await navButton(page, "Keys").click();
+    await page.waitForTimeout(120);
+    await page.screenshot({ path: `screenshots/shot-${tag}-keys-dark.png` });
     await navButton(page, "Today").click();
     await page.screenshot({ path: `screenshots/shot-${tag}-today-dark.png` });
     await navButton(page, "CEP Extensions").click();

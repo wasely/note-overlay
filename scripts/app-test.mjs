@@ -25,6 +25,7 @@ const app = await electron.launch({
     ...process.env,
     NOTEBOOK_TEST_ISOLATED: "1",
     NOTEBOOK_DISABLE_STARTUP_REGISTRATION: "1",
+    NOTEBOOK_VIEW_IDLE_MS: "2000",
     NOTEBOOK_MAIL_URL: `${aiBase}/mail`,
     NOTEBOOK_NOTION_URL: `${aiBase}/notion`,
     NOTEBOOK_TWITTER_URL: `${aiBase}/twitter`,
@@ -35,6 +36,17 @@ const app = await electron.launch({
   },
 });
 const navButton = (page, view) => page.locator(".nav button").filter({ hasText: view }).first();
+
+async function waitForEmbeddedView(url) {
+  const deadline = Date.now() + 10_000;
+  let loadedUrls = [];
+  while (Date.now() < deadline) {
+    loadedUrls = await app.evaluate(({ webContents }) => webContents.getAllWebContents().map((contents) => contents.getURL()));
+    if (loadedUrls.includes(url)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Embedded view did not load ${url}; loaded: ${loadedUrls.join(", ")}`);
+}
 
 try {
   const page = await app.firstWindow();
@@ -79,7 +91,7 @@ try {
   const hotkeyRegistered = await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+N"));
   if (!hotkeyRegistered) console.log("Global hotkey is already owned by another running Notebook instance.");
   // Assert the bridge still exposes every local workspace the renderer actually renders.
-  const missingChannels = await page.evaluate(() => ["notes", "projects", "skills", "slashCommands", "daily"].filter((key) => !window.hushnote[key]));
+  const missingChannels = await page.evaluate(() => ["notes", "projects", "skills", "slashCommands", "keys", "daily"].filter((key) => !window.hushnote[key]));
   if (missingChannels.length) throw new Error(`Preload bridge is missing: ${missingChannels.join(", ")}`);
   const logoBridge = await page.evaluate(() => typeof window.hushnote.projects.logo === "function");
   if (!logoBridge) throw new Error("Project logo bridge is missing from the preload API.");
@@ -92,20 +104,23 @@ try {
   }));
   if (serviceBridge.hasMcp || serviceBridge.apps.length || serviceBridge.ai.length) throw new Error(`App/AI preload shape is wrong: ${JSON.stringify(serviceBridge)}`);
 
-  // Every app is already loading while detached, then attaches on first click.
-  await page.waitForTimeout(600);
-  const warmedApps = await app.evaluate(({ webContents }, urls) => {
+  // Embedded sites cost a full renderer each, so none load until first opened, except the
+  // Mailbrain inbox, which preloads and stays live.
+  const embeddedUrls = [...["notion", "twitter", "excalidraw"], ...["chatgpt", "gemini", "deepseek"]].map((id) => `${aiBase}/${id}`);
+  const loadedEmbedded = () => app.evaluate(({ webContents }, urls) => {
     const loaded = new Set(webContents.getAllWebContents().map((contents) => contents.getURL()));
-    return urls.filter((url) => !loaded.has(url));
-  }, ["mail", "notion", "twitter", "excalidraw"].map((id) => `${aiBase}/${id}`));
-  if (warmedApps.length) throw new Error(`App views were not preloaded: ${warmedApps.join(", ")}`);
-  for (const [label, id] of [["Gmail", "mail"], ["Notion", "notion"], ["Twitter", "twitter"], ["Excalidraw", "excalidraw"]]) {
+    return urls.filter((url) => loaded.has(url));
+  }, embeddedUrls);
+  await page.waitForTimeout(600);
+  const eagerApps = await loadedEmbedded();
+  if (eagerApps.length) throw new Error(`Embedded sites loaded before being opened: ${eagerApps.join(", ")}`);
+  await waitForEmbeddedView(`${aiBase}/mail`);
+  for (const [label, id] of [["Mailbrain", "mail"], ["Notion", "notion"], ["Twitter", "twitter"], ["Excalidraw", "excalidraw"]]) {
     await navButton(page, label).click();
     await page.getByRole("group", { name: "Switch app" }).waitFor();
     const attached = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.length);
     if (attached !== 1) throw new Error(`${label} did not attach instantly.`);
-    const loaded = await app.evaluate(({ webContents }, url) => webContents.getAllWebContents().some((contents) => contents.getURL() === url), `${aiBase}/${id}`);
-    if (!loaded) throw new Error(`${label} did not load in its embedded view.`);
+    await waitForEmbeddedView(`${aiBase}/${id}`);
     await page.getByRole("button", { name: "Notebook", exact: true }).click();
     await page.locator(".notebook").waitFor();
   }
@@ -115,14 +130,20 @@ try {
   await page.getByRole("group", { name: "Switch AI" }).waitFor();
   for (const id of ["chatgpt", "gemini", "deepseek"]) {
     if (id !== "chatgpt") await page.getByRole("group", { name: "Switch AI" }).getByRole("button", { name: new RegExp(id, "i") }).click();
-    await page.waitForTimeout(200);
-    const loaded = await app.evaluate(({ webContents }, url) => webContents.getAllWebContents().some((contents) => contents.getURL() === url), `${aiBase}/${id}`);
-    if (!loaded) throw new Error(`${id} did not load in its embedded view.`);
+    await waitForEmbeddedView(`${aiBase}/${id}`);
   }
   await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.locator(".notebook").waitFor();
   const attachedAiViews = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.length);
   if (attachedAiViews) throw new Error(`${attachedAiViews} AI view(s) stayed attached after returning to Notebook.`);
+  // Hidden sites unload after the idle window (2s under test) and reopen on demand.
+  await page.waitForTimeout(3_000);
+  const lingering = await loadedEmbedded();
+  if (lingering.length) throw new Error(`Hidden embedded sites were not unloaded: ${lingering.join(", ")}`);
+  await navButton(page, "Mailbrain").click();
+  await waitForEmbeddedView(`${aiBase}/mail`);
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await page.locator(".notebook").waitFor();
 
   // Notebooks and notes.
   const folders = await page.evaluate(() => window.hushnote.folders.list());
@@ -185,8 +206,8 @@ try {
   await page.getByRole("button", { name: "Copy Markdown", exact: true }).click();
   await page.getByText("Copied", { exact: true }).waitFor();
 
-  // Skills.
-  await navButton(page, "Skills").click();
+  // Combined Skills & Commands workspace.
+  await navButton(page, "Skills & Commands").click();
   await page.getByRole("heading", { name: "My skills", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Other skills", exact: true }).waitFor();
   const ownedSkills = await page.evaluate(async () => (await window.hushnote.skills.list()).filter((item) => item.ownership === "mine"));
@@ -213,7 +234,7 @@ try {
   await page.getByLabel("Search everything").fill("");
 
   // Commands, including the seeded starter pages.
-  await navButton(page, "Commands").click();
+  await page.getByRole("tab", { name: /^Commands/ }).click();
   await page.getByText("Git push", { exact: true }).first().waitFor();
   await page.getByRole("button", { name: "New command" }).first().click();
   await page.getByLabel("Slash command name").fill("Deploy preview");
@@ -226,6 +247,19 @@ try {
   await page.waitForTimeout(400);
   const commandsLeft = await page.evaluate(() => window.hushnote.slashCommands.list());
   if (commandsLeft.some((item) => item.name === "Deploy preview")) throw new Error("Deleting a slash command did not persist.");
+
+  // Keys display the exact installed source files through a read-only bridge.
+  const keySources = await page.evaluate(() => window.hushnote.keys.list());
+  for (const keyName of ["build-a-key", "thumbnail-extension-fix"]) {
+    const expected = await fs.readFile(path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "skills", keyName, "SKILL.md"), "utf8");
+    const actual = keySources.find((item) => item.id === keyName);
+    if (!actual?.exists || actual.content !== expected) throw new Error(`${keyName} did not return its exact installed SKILL.md content.`);
+  }
+  await navButton(page, "Keys").click();
+  await page.getByRole("heading", { name: "Keys", exact: true }).waitFor();
+  await page.getByRole("button", { name: /Thumbnail Extension Fix/ }).click();
+  const shownSource = await page.locator(".key-source").innerText();
+  if (!shownSource.includes("thumbnail-extension-fix")) throw new Error("Keys page did not show the selected source document.");
 
   // Settings: theme, version, and a real backup.
   await page.getByRole("button", { name: "Settings and backups" }).click();

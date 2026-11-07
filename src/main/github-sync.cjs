@@ -16,10 +16,56 @@ function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
+// Bot health telemetry (check times, failure counters, run/event logs) changes on every monitor
+// tick. Counting it as a notebook edit made each 30-second check push, pull, back up, and
+// rewrite the whole database, so change detection ignores it. Merging still carries it.
+function withoutBotTelemetry(snapshot) {
+  delete snapshot.botRuns;
+  delete snapshot.botEvents;
+  if (!Array.isArray(snapshot.bots)) return;
+  for (const bot of snapshot.bots) {
+    if (!bot || typeof bot !== "object") continue;
+    delete bot.runtime;
+    delete bot.derivedState;
+    if (Array.isArray(bot.connections)) for (const connection of bot.connections) if (connection && typeof connection === "object") delete connection.credentialVerifiedAt;
+    if (Array.isArray(bot.jobs)) for (const job of bot.jobs) if (job && typeof job === "object") delete job.updatedAt;
+  }
+}
+
 function comparable(value) {
   const copy = clone(value);
   if (copy && typeof copy === "object" && !Array.isArray(copy)) delete copy.exportedAt;
   return copy;
+}
+
+// Storage hands rows back in its own order and gives restored tags fresh ids, so for "did the
+// data change?" keyed rows compare as sets and note tags compare by name. Merging is unaffected.
+// A bare timestamp bump is not an edit either: an older build on another device re-saves
+// untouched pages every sync, and treating that as a change rewrote this device every 30s.
+const TIMESTAMP_ONLY_FIELDS = new Set(["updated_at", "updatedAt"]);
+function orderless(value) {
+  if (Array.isArray(value)) {
+    const items = value.map(orderless);
+    return keyed(items) ? items.sort((left, right) => left.id.localeCompare(right.id)) : items;
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !TIMESTAMP_ONLY_FIELDS.has(key)).map(([key, item]) => [key, orderless(item)]));
+}
+
+function changeComparable(value) {
+  const copy = comparable(value);
+  if (!copy || typeof copy !== "object" || Array.isArray(copy)) return copy;
+  if ("bots" in copy || "botRuns" in copy) withoutBotTelemetry(copy);
+  // Project "workshop" details are computed from each build's catalog on export, never stored.
+  if (Array.isArray(copy.projects)) for (const project of copy.projects) if (project && typeof project === "object") delete project.workshop;
+  // Each device creates its own inbox row, so its creation time is not shared data.
+  if (Array.isArray(copy.folders)) for (const folder of copy.folders) if (folder?.id === "inbox") delete folder.created_at;
+  if (Array.isArray(copy.notes)) {
+    for (const note of copy.notes) {
+      if (note && Array.isArray(note.tags)) note.tags = [...new Set(note.tags.map((tag) => String(tag?.name || tag).toLowerCase()))].sort();
+    }
+  }
+  return orderless(copy);
 }
 
 function stableValue(value) {
@@ -36,8 +82,39 @@ function same(left, right) {
   return stableJson(left) === stableJson(right);
 }
 
+// Reads a snapshot the way a device holding `template` stores it: fields it does not keep are
+// dropped and fields the snapshot omits fall back to the template's value. Different builds
+// write different optional fields and defaults, and those gaps are not edits. New or removed
+// rows and changed values still show.
+function shapedLike(value, template) {
+  if (Array.isArray(value) && Array.isArray(template)) {
+    if (!keyed(value) || !keyed(template)) return value;
+    const templates = new Map(template.map((item) => [item.id, item]));
+    return value.map((item) => templates.has(item.id) ? shapedLike(item, templates.get(item.id)) : item);
+  }
+  if (!value || !template || typeof value !== "object" || typeof template !== "object" || Array.isArray(value) || Array.isArray(template)) return value;
+  return Object.fromEntries(Object.keys(template).map((key) => [key, value[key] === undefined ? template[key] : shapedLike(value[key], template[key])]));
+}
+
+function changedPaths(left, right, limit = 20) {
+  const paths = [];
+  const walk = (a, b, at) => {
+    if (paths.length >= limit || JSON.stringify(a) === JSON.stringify(b)) return;
+    if (a && b && typeof a === "object" && typeof b === "object") {
+      for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) walk(a[key], b[key], `${at}.${key}`);
+    } else paths.push(at);
+  };
+  walk(stableValue(changeComparable(left)), stableValue(changeComparable(right)), "");
+  return paths;
+}
+
+// Whole-snapshot check for "did the user's data change?"; telemetry alone never counts.
+function sameContent(left, right) {
+  return JSON.stringify(stableValue(changeComparable(left))) === JSON.stringify(stableValue(changeComparable(right)));
+}
+
 function fingerprint(value) {
-  return crypto.createHash("sha256").update(stableJson(value)).digest("hex");
+  return crypto.createHash("sha256").update(JSON.stringify(stableValue(changeComparable(value)))).digest("hex");
 }
 
 function keyed(array) {
@@ -163,9 +240,21 @@ function supportedSnapshot(value) {
   return Boolean(value && Number.isInteger(value.version) && Array.isArray(value.notes));
 }
 
-function readJson(file) {
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch { return null; }
+function readJson(file, { cloudSnapshot = false } = {}) {
+  let contents;
+  try { contents = fs.readFileSync(file, "utf8"); }
+  catch (error) {
+    if (!cloudSnapshot || error.code === "ENOENT") return null;
+    throw new Error("The cloud Notebook backup could not be read.", { cause: error });
+  }
+  let value;
+  try { value = JSON.parse(contents); }
+  catch (error) {
+    if (!cloudSnapshot) return null;
+    throw new Error("The cloud repository contains invalid Notebook backup JSON.", { cause: error });
+  }
+  if (cloudSnapshot && !supportedSnapshot(value)) throw new Error("The cloud repository contains an unsupported Notebook backup.");
+  return value;
 }
 
 function writeJson(file, value) {
@@ -255,8 +344,7 @@ function createGithubSync({ userDataPath, store, run, authStatus, signIn }) {
       let remote = null;
       if (remoteExists) {
         await run("gh.exe", ["repo", "clone", REPOSITORY, target, "--", "--depth", "1"], { timeout: 120_000, stripGithubTokens: true });
-        remote = readJson(path.join(target, DATA_FILE));
-        if (remote && !supportedSnapshot(remote)) throw new Error("The cloud repository contains an unsupported Notebook backup.");
+        remote = readJson(path.join(target, DATA_FILE), { cloudSnapshot: true });
         if (!fs.existsSync(path.join(target, "README.md"))) fs.writeFileSync(path.join(target, "README.md"), "# Notebook cloud\n\nPrivate cross-device data for @blixvip. Account tokens and bot credentials are never stored here.\n", "utf8");
       } else {
         await run("git.exe", ["init", "-b", "main"], { cwd: target, timeout: 30_000, stripGithubTokens: true });
@@ -266,15 +354,17 @@ function createGithubSync({ userDataPath, store, run, authStatus, signIn }) {
       const merged = mergeSnapshots(base, local, remote);
       if (remote && same(merged, remote)) merged.exportedAt = remote.exportedAt;
       else if (!remote && same(merged, local)) merged.exportedAt = local.exportedAt || merged.exportedAt;
-      const changed = await commitSnapshot(target, merged);
+      // Telemetry-only differences are not worth a commit; they ride along with the next real edit.
+      const telemetryOnly = Boolean(remote) && !same(merged, remote) && sameContent(shapedLike(merged, remote), remote);
+      const changed = telemetryOnly ? false : await commitSnapshot(target, merged);
       if (!remoteExists) {
         await run("gh.exe", ["repo", "create", REPOSITORY, "--private", "--source", target, "--remote", "origin", "--push", "--description", "Private cross-device data for Notebook"], { timeout: 120_000, stripGithubTokens: true });
       } else if (changed) {
         const pushed = await run("git.exe", ["push", "-u", "origin", "HEAD:main"], { cwd: target, allowFailure: true, timeout: 120_000, stripGithubTokens: true });
-        if (pushed.code) return { retry: true, merged };
+        if (pushed.code) return { retry: true, merged, remote };
       }
       const head = await run("git.exe", ["rev-parse", "HEAD"], { cwd: target, timeout: 30_000, stripGithubTokens: true });
-      return { retry: false, merged, changed, remoteChanged: !same(local, merged), sha: head.stdout.trim() };
+      return { retry: false, merged, changed, sha: head.stdout.trim() };
     } finally {
       fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
@@ -285,7 +375,8 @@ function createGithubSync({ userDataPath, store, run, authStatus, signIn }) {
     if (!auth) return { ...(await status()), skipped: "not-authenticated", changed: false, remoteChanged: false };
 
     const config = saved();
-    let local = store.exportData();
+    const initial = clone(store.exportData());
+    let local = initial;
     const localFingerprint = fingerprint(local);
     const remote = await remoteInfo();
     if (!options.force && remote && localFingerprint === config.lastLocalFingerprint) {
@@ -293,20 +384,30 @@ function createGithubSync({ userDataPath, store, run, authStatus, signIn }) {
       if (!remoteHead.code && remoteHead.stdout.trim() === config.lastRemoteSha) return { ...await status(), changed: false, remoteChanged: false };
     }
 
-    const base = readJson(basePath);
+    let base = readJson(basePath);
     let result;
     let exists = Boolean(remote);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       result = await attemptSync(local, base, exists);
       if (!result.retry) break;
       local = result.merged;
+      // The next fetch must compare against the remote we just merged, so its
+      // subsequent deletions and edits are not mistaken for unchanged data.
+      base = result.remote;
       exists = true;
     }
     if (!result || result.retry) throw new Error("Notebook cloud changed repeatedly while syncing. It will retry automatically.");
 
-    if (result.remoteChanged) {
+    // Network requests may take minutes. Rebase the synced data onto edits made
+    // since this operation started before replacing the local database.
+    const current = store.exportData();
+    const reconciled = mergeSnapshots(initial, current, result.merged);
+    const remoteChanged = !sameContent(current, shapedLike(reconciled, current));
+    if (remoteChanged) {
+      // Record what arrived, so an unexpected rewrite can be traced to the field that caused it.
+      writeJson(path.join(root, "last-remote-change.json"), { at: new Date().toISOString(), paths: changedPaths(current, shapedLike(reconciled, current)) });
       store.createBackup();
-      store.replaceData(result.merged);
+      store.replaceData(reconciled);
     }
     writeJson(basePath, result.merged);
     const timestamp = new Date().toISOString();
@@ -317,12 +418,12 @@ function createGithubSync({ userDataPath, store, run, authStatus, signIn }) {
       autoUpload: true,
       autoSync: true,
       lastPushedAt: result.changed ? timestamp : config.lastPushedAt,
-      lastPulledAt: result.remoteChanged ? timestamp : config.lastPulledAt,
+      lastPulledAt: remoteChanged ? timestamp : config.lastPulledAt,
       lastSyncedAt: timestamp,
       lastRemoteSha: result.sha,
       lastLocalFingerprint: fingerprint(result.merged),
     });
-    return { ...await status(), changed: result.changed, remoteChanged: result.remoteChanged };
+    return { ...await status(), changed: result.changed, remoteChanged };
   }
 
   function sync(options = {}) {

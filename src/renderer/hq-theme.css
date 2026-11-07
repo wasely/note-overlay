@@ -1,0 +1,568 @@
+/* Notebook in HQ's clothes.
+ *
+ * HQ (C:\code\coldsend) is the look: Geist type, a zinc-black window, one quiet sidebar with a
+ * hairline edge, white at 85% / 55% / 38% for text, white at 8% for every line, and a single white
+ * pill for the button that matters. Loaded last, so it only states what changes. Notebook is
+ * token-based, so most of the work is the token block; the rest are places that drew their own
+ * colours, weights or chrome and never saw a token.
+ *
+ * HQ's own page (view "hq") embeds HQ itself at ?embed=1, whose background is --hq-panel, so the
+ * seam between the two apps is invisible. Keep the two values in step.
+ */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+:root {
+  --font-display: "Geist Variable", "Segoe UI Variable Display", system-ui, sans-serif;
+  --font-body: "Geist Variable", "Segoe UI Variable Text", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", "Cascadia Mono", ui-monospace, monospace;
+
+  /* HQ light (its original look: white, near-black type, quiet greys) */
+  --hq-window: #f7f7f6;
+  --hq-panel: #ffffff;
+  --hq-side: #f4f4f3;
+  --color-ink: #0b0b0c;
+  --color-ink-soft: #3a3a3c;
+  --color-muted: #6b6b68;
+  --color-faint: #a1a19d;
+  --color-canvas: #f7f7f6;
+  --color-sidebar: #f4f4f3;
+  --color-panel: #ffffff;
+  --color-surface: #ffffff;
+  --color-subtle: #f5f5f4;
+  --color-selected: #ececea;
+  --color-border: #ececea;
+  --color-border-strong: #dcdcd9;
+  --color-accent: #0b0b0c;
+  --color-accent-strong: #000;
+  --color-accent-soft: #ececea;
+  --color-accent-ink: #fff;
+  --color-signal: #0a6cf0;
+  --color-focus: #0b0b0c;
+  --color-good: #15803d;
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 13px;
+  --radius-lg: 16px;
+  --hq-row-on: #fff;
+  --hq-row-on-ring: 0 1px 2px rgba(16, 16, 16, .06), 0 0 0 1px rgba(16, 16, 16, .05);
+  --hq-row-hover: rgba(20, 20, 20, .05);
+  --hq-field: #fff;
+  --shell-gap: 0px;
+}
+
+[data-theme="dark"] {
+  /* Aside / HQ: zinc-900 under white-alpha panels, written out as solids so color-mix() and the
+     many `background: var(--color-panel)` surfaces stay opaque. */
+  --hq-window: #0d0d0f;
+  --hq-panel: #131316;
+  --hq-side: #141417;
+  --color-ink: #dcdcdd;
+  --color-ink-soft: #b9b9bb;
+  --color-muted: #8e8e92;
+  --color-faint: #636367;
+  --color-canvas: #0d0d0f;
+  --color-sidebar: #141417;
+  --color-panel: #131316;
+  --color-surface: #19191c;
+  --color-subtle: #1c1c1f;
+  --color-selected: #242428;
+  --color-border: rgba(255, 255, 255, .08);
+  --color-border-strong: rgba(255, 255, 255, .14);
+  --color-accent: #fafafa;
+  --color-accent-strong: #ffffff;
+  --color-accent-soft: rgba(255, 255, 255, .1);
+  --color-accent-ink: #0a0a0a;
+  --color-signal: #5cc8ff;
+  --color-focus: rgba(255, 255, 255, .55);
+  --color-good: #6ee7a0;
+  --color-danger: #ff8a80;
+  --color-danger-soft: rgba(255, 138, 128, .12);
+  --color-warning: #f0b429;
+  --color-warning-soft: rgba(240, 180, 41, .12);
+  --color-info: #5cc8ff;
+  --color-info-soft: rgba(92, 200, 255, .12);
+  --color-agent: #b9b9bb;
+  --color-agent-soft: #1f1f23;
+  --color-code-bg: #0e0e10;
+  --color-highlight: rgba(255, 255, 255, .06);
+  --color-overlay: rgba(9, 10, 14, .62);
+  --shadow-hairline: rgba(0, 0, 0, .3);
+  --shadow-low: rgba(0, 0, 0, .4);
+  --shadow-high: rgba(0, 0, 0, .6);
+  --hq-row-on: rgba(255, 255, 255, .1);
+  --hq-row-on-ring: inset 0 0 0 1px rgba(255, 255, 255, .14);
+  --hq-row-hover: rgba(255, 255, 255, .06);
+  --hq-field: rgba(255, 255, 255, .05);
+}
+
+/* ---------- type ---------- */
+:root { font-family: var(--font-body); -webkit-font-smoothing: antialiased; font-feature-settings: "ss01" 0; }
+body { font-family: var(--font-body); }
+::selection { background: rgba(92, 200, 255, .28); color: inherit; }
+[data-theme="dark"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 99px; background: rgba(255, 255, 255, .12) padding-box; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .22) padding-box; }
+[data-theme="dark"] ::-webkit-scrollbar-track, [data-theme="dark"] ::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------- the window: one rounded panel, sidebar + content split by a hairline ---------- */
+.window-surface {
+  border: 1px solid var(--color-border-strong);
+  border-radius: 14px;
+  background: var(--hq-panel);
+}
+[data-theme="dark"] .window-surface {
+  border-color: rgba(255, 255, 255, .1);
+  background: radial-gradient(900px 420px at 0% 0%, #1b1b20, transparent 70%), var(--hq-panel);
+}
+.notebook { background: transparent; }
+/* aside.css floated the page as an inset card; HQ has no card-in-window. */
+.notebook > :not(.sidebar):not(.settings):not(.settings-scrim) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--hq-panel);
+}
+
+/* ---------- sidebar (HQ's rail) ---------- */
+.sidebar {
+  width: 14.75rem;
+  flex: 0 0 14.75rem;
+  gap: 4px;
+  padding: 10px 0 10px;
+  background: var(--hq-side);
+  border-right: 1px solid var(--color-border);
+}
+[data-theme="dark"] .sidebar { background: rgba(255, 255, 255, .02); }
+.sidebar-top { height: 2.75rem; padding: 0 8px 0 18px; }
+.wordmark { gap: 9px; }
+.wordmark img { width: 26px; height: 26px; border-radius: 7px; filter: none; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.wordmark strong { font-family: var(--font-display); font-size: 17px; font-weight: 600; letter-spacing: -.03em; color: var(--color-ink); }
+
+.search {
+  height: 2.375rem;
+  margin: 4px 12px 6px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--hq-field);
+  color: var(--color-muted);
+}
+.search:focus-within { border-color: var(--color-border-strong); background: var(--hq-field); box-shadow: none; }
+[data-theme="dark"] .search:focus-within { border-color: rgba(255, 255, 255, .35); }
+.search input { font-size: 14px; }
+.search input::placeholder { color: var(--color-faint); }
+.search kbd { padding: 2px 6px; border: 0; border-radius: 6px; background: var(--color-selected); color: var(--color-muted); font-family: var(--font-body); font-size: 11px; }
+[data-theme="dark"] .search kbd { background: rgba(255, 255, 255, .08); }
+
+.nav { gap: 1px; padding: 0 12px; }
+.nav button {
+  min-height: 2.125rem;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 10px;
+  color: var(--color-ink);
+  font-size: 14px;
+}
+.nav button::before { display: none; }
+.nav button svg:not(.brand-icon) { color: var(--color-muted); }
+.nav button:hover { background: var(--hq-row-hover); color: var(--color-ink); }
+.nav button.is-active { background: var(--hq-row-on); color: var(--color-ink); box-shadow: var(--hq-row-on-ring); }
+[data-theme="dark"] .nav button.is-active { color: #fff; }
+.nav button.is-active svg:not(.brand-icon) { color: inherit; }
+.nav button strong { font-size: 14px; font-weight: 450; letter-spacing: -.005em; }
+.nav button.is-active strong { font-weight: 500; }
+.nav button small { color: var(--color-faint); font-size: 12px; }
+.nav button.is-active small { color: var(--color-muted); }
+.nav-heading {
+  margin: 12px 10px 4px;
+  color: var(--color-faint);
+  font-size: 12.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.nav-external { color: var(--color-faint); opacity: 0; transition: opacity var(--dur-short) var(--ease-out); }
+.nav button:hover .nav-external { opacity: 1; }
+.nav-loaded { color: var(--color-good); font-size: 8px; }
+.github-account-button > i { border-color: var(--hq-side); }
+.github-account-button.is-connected > i { background: var(--color-good); }
+
+/* the side panel below the rail (calendar, bot list, HQ pages) */
+.sidebar-body { padding-top: 4px; }
+.calendar { padding: 6px 4px; }
+.calendar-day.is-today { box-shadow: none; }
+
+/* Quick AI: a quiet row of pills at the foot of the rail, like HQ's status line. */
+.ai-panel { margin: 0 12px; padding: 10px 0 0; border-top: 1px solid var(--color-border); }
+.ai-panel > .nav-heading { margin: 0 0 6px 2px; }
+.ai-panel-buttons { gap: 4px; }
+.ai-panel-buttons button {
+  min-height: 1.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--hq-field);
+  color: var(--color-ink-soft);
+}
+.ai-panel-buttons button:hover, .ai-panel-buttons button:focus-visible { border-color: var(--color-border-strong); background: var(--hq-row-hover); }
+.ai-panel-buttons button.is-active { border-color: var(--color-border-strong); background: var(--hq-row-on); color: var(--color-ink); }
+.ai-panel-buttons button span { font-size: 11.5px; font-weight: 450; }
+.ai-panel-buttons button i { background: var(--color-good); }
+
+/* ---------- controls: HQ's buttons, fields and segmented switches ---------- */
+.button {
+  min-height: 2.125rem;
+  padding: 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--hq-field);
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+.button:hover:not(:disabled) { background: var(--hq-row-hover); border-color: var(--color-border-strong); }
+.button.subtle { border-color: var(--color-border); background: transparent; color: var(--color-ink-soft); }
+.button.primary {
+  border-color: transparent;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+}
+.button.primary:hover:not(:disabled) { background: var(--color-accent-strong); border-color: transparent; }
+[data-theme="dark"] .button.primary:disabled { background: rgba(255, 255, 255, .16); color: rgba(255, 255, 255, .4); opacity: 1; }
+.icon-button { border-radius: 10px; color: var(--color-muted); }
+.icon-button:hover { background: var(--hq-row-hover); color: var(--color-ink); }
+.icon-button.is-active { background: var(--hq-row-on); color: var(--color-ink); }
+.link-button { color: var(--color-ink); font-weight: 500; border-radius: 8px; }
+.link-button:hover { background: var(--hq-row-hover); }
+.kicker, .paper-kicker { color: var(--color-faint); font-size: 12.5px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.tag { border-radius: 999px; padding: 0 9px; background: var(--hq-row-hover); color: var(--color-muted); }
+.count { border-radius: 999px; background: var(--hq-row-hover); color: var(--color-muted); }
+
+.field { color: var(--color-muted); font-size: 12.5px; }
+.field > span { font-weight: 450; }
+.field input, .field select, .picker select, .picker-form input,
+.library-filter, .activity-capture input, .activity-capture select {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background-color: var(--hq-field);
+}
+.field input:focus, .field select:focus, .picker select:focus, .picker-form input:focus,
+.library-filter:focus-within, .activity-capture input:focus {
+  border-color: var(--color-border-strong);
+  box-shadow: none;
+}
+[data-theme="dark"] :is(.field input, .field select, .picker select, .picker-form input, .activity-capture input):focus,
+[data-theme="dark"] .library-filter:focus-within { border-color: rgba(255, 255, 255, .35); }
+[data-theme="dark"] select, [data-theme="dark"] option { background-color: #1c1c20; color: var(--color-ink); }
+
+/* Segmented controls: a well with the chosen segment lifted, exactly HQ's .seg. */
+.today-sections, .duration-switch, .service-switch, .tools-tabs, .format-bar {
+  border: 1px solid var(--color-border);
+  background: var(--hq-field);
+}
+.today-sections { border-radius: 12px; }
+.today-sections button.is-active, .duration-switch button.is-active, .service-switch button.is-active {
+  background: var(--hq-row-on);
+  color: var(--color-ink);
+  box-shadow: var(--hq-row-on-ring);
+}
+[data-theme="dark"] :is(.today-sections, .duration-switch, .service-switch) button.is-active { background: rgba(255, 255, 255, .14); color: #fff; box-shadow: none; }
+
+/* ---------- lists ---------- */
+.row { border-radius: 12px; }
+.row.is-selected { background: var(--hq-row-on); box-shadow: var(--hq-row-on-ring); }
+.row:hover:not(.is-selected) { background: var(--hq-row-hover); }
+.row-title strong { font-weight: 500; }
+.row-detail { color: var(--color-muted); }
+.row-meta { color: var(--color-faint); }
+.library-browser { background: var(--hq-panel); border-right: 1px solid var(--color-border); }
+.library-browser-title strong, .library-browser-top > strong { font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
+.library-browser-title small { background: var(--hq-row-hover); }
+.menu-popover { border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .55); }
+[data-theme="dark"] .menu-popover { background: #18181c; }
+
+/* ---------- page titles: HQ's big, light headline ---------- */
+.paper-date h1, .editor-title, .note-title input, .projects-head h1, .page-title, .memory-page h1, .keys-page h1, .cep-page h1, .bots-page h1 {
+  font-family: var(--font-display);
+  letter-spacing: -.03em;
+}
+.paper-date h1 { font-size: 30px; font-weight: 450; }
+.day-clock strong { font-family: var(--font-display); font-weight: 450; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.day-composer { border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .2); }
+[data-theme="dark"] .day-composer { background: rgba(255, 255, 255, .03); }
+.day-clock { border-bottom-color: var(--color-border); }
+.day-clock span { color: var(--color-faint); font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+/* ---------- settings drawer + dialogs: HQ's #151519 sheet ---------- */
+.settings { background: var(--hq-panel); }
+[data-theme="dark"] .settings { background: #151519; }
+.settings section { border-color: var(--color-border); border-radius: 16px; }
+[data-theme="dark"] .settings-scrim { background: rgba(9, 10, 14, .58); }
+
+/* ---------- the HQ page ---------- */
+.hq-page { position: relative; min-width: 0; min-height: 0; flex: 1; display: flex; background: var(--hq-panel); }
+.hq-page iframe { flex: 1; width: 100%; height: 100%; border: 0; display: block; background: var(--hq-panel); color-scheme: dark; opacity: 0; transition: opacity 160ms var(--ease-out); }
+.hq-page iframe.is-ready { opacity: 1; }
+.hq-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--color-muted);
+  font-size: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+.hq-state img { width: 40px; height: 40px; border-radius: 10px; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+.hq-state strong { color: var(--color-ink); font-size: 17px; font-weight: 500; letter-spacing: -.02em; }
+.hq-state p { max-width: 32ch; margin: 0; line-height: 1.5; }
+.hq-state .button { pointer-events: auto; margin-top: 6px; }
+.hq-state.is-loading img { animation: hq-breathe 1.4s var(--ease-in-out) infinite; }
+@keyframes hq-breathe { 50% { opacity: .45; transform: scale(.96); } }
+
+.hq-mark { width: 18px; height: 18px; border-radius: 5px; display: block; flex: 0 0 auto; }
+.hq-pages { display: flex; flex-direction: column; gap: 1px; padding: 0 12px; }
+.hq-pages .nav-heading { margin: 12px 10px 4px; }
+.hq-pages button {
+  min-height: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-ink-soft);
+  font-size: 13.5px;
+  text-align: left;
+}
+.hq-pages button svg { width: 16px; height: 16px; color: var(--color-muted); flex: 0 0 auto; }
+.hq-pages button:hover { background: var(--hq-row-hover); color: var(--color-ink); }
+.hq-pages button.is-active { background: var(--hq-row-on); color: var(--color-ink); box-shadow: var(--hq-row-on-ring); }
+[data-theme="dark"] .hq-pages button.is-active { color: #fff; }
+.hq-pages button.is-active svg { color: inherit; }
+.hq-pages .hq-gap { height: 10px; }
+.hq-pages .hq-fold { min-height: 0; margin: 12px 0 4px; padding: 0 10px; background: none; box-shadow: none; color: var(--color-faint); font-size: 12.5px; }
+.hq-pages .hq-fold:hover { background: none; color: var(--color-ink); }
+.hq-pages .hq-fold svg { width: 12px; height: 12px; margin-left: auto; transition: transform var(--dur-short) var(--ease-out); }
+.hq-pages .hq-fold.is-open svg { transform: rotate(90deg); }
+
+/* ---------- Apps: one row of marks ---------- */
+.nav-apps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 2px 0 4px; }
+.nav .nav-apps button {
+  min-height: 2.25rem;
+  position: relative;
+  display: grid;
+  place-items: center;
+  grid-template-columns: none;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--hq-field);
+}
+.nav .nav-apps button:hover { border-color: var(--color-border-strong); background: var(--hq-row-hover); }
+.nav .nav-apps button.is-active { border-color: var(--color-border-strong); background: var(--hq-row-on); box-shadow: none; }
+.nav-apps .nav-loaded { position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--color-good); }
+
+/* Native time fields render in the monospace fallback; HQ sets every number in Geist, tabular. */
+.activity-capture input[type="time"], .activity-row input[type="time"], .activity-row select, .activity-capture select {
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* AI chips: mark + name must fit a 236px rail without an ellipsis. */
+.ai-panel-buttons button { gap: 4px; padding: 0 6px; }
+.ai-panel-buttons button span { font-size: 11px; letter-spacing: -.01em; }
+.ai-panel-buttons button .brand-icon, .ai-panel-buttons button .brand-image { width: 13px; height: 13px; }
+
+/* Section headings inside pages: HQ weights, not bold. */
+.activity-history-head strong, .activity-history-head h2, .task-column h2, .settings h2, .settings h3 { font-weight: 500; letter-spacing: -.01em; }
+
+/* ---------- One label voice: HQ never shouts ----------
+   Every SMALL-CAPS kicker in the app becomes HQ's sentence-case faint label. (List generated from the
+   stylesheets: every rule that set text-transform: uppercase.) */
+.kicker, .list-group > h2, .results section > h2, .paper-kicker, .paper-moved h2, .paper-next h2, .day-clock span,
+.section-kicker, .bot-detail-field > span, .bot-job-details dt, .bot-commands dt, .bot-connections dt,
+.bot-form-field > span, .bot-platform-checks > span, .schedule-preview strong, .bot-platform-picker > legend,
+.quick-field > span, .bot-permission-picker > legend, .bot-link-field > span, .skill-related-bots strong,
+.skills-divider, .skills-outline-head, .skills-page-kicker, .skills-owner-title, .task-column > header strong,
+.overview-intro .eyebrow, .project-facts span, .activity-day h3, .projects-kicker,
+.cep-kicker, .cep-main-section > header span, .cep-secondary-section > header span, .backlinks h2 {
+  color: var(--color-faint);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* badges keep their size, just lose the caps */
+.platform-mark, .calculation, .job-health, .bot-state, .credential-summary, .credential-state {
+  letter-spacing: 0;
+  text-transform: none;
+  border-radius: 999px;
+}
+/* A kicker that sat in a pill (Projects' "WORKSPACE") is just a label now. */
+.projects-kicker { padding: 0; border: 0; background: none; }
+
+/* Numbers and timestamps in UI are Geist tabular, not code. Code stays Geist Mono. */
+.project-rank-row > header > span, .project-rank-row > header small, .project-simple-card time,
+.project-rank-section > .project-rank-heading > .rank-number, .project-updated, .cep-rank,
+.document-status strong, .activity-day h3 {
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* ---------- weights: Geist reads heavy above 600 on dark ---------- */
+.notebook :is(h1, h2, h3, h4) { font-weight: 500; letter-spacing: -.015em; }
+.notebook :is(h1) { letter-spacing: -.03em; }
+.notebook strong, .notebook b { font-weight: 550; }
+.nav button strong { font-weight: 450; }
+.nav button.is-active strong { font-weight: 500; }
+
+/* Fields show focus the HQ way, by their own border; a ring belongs to buttons. Without this, a
+   borderless title field drew two full-width blue rules across the note. */
+:is(input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]):focus-visible { box-shadow: none; outline: none; }
+
+/* Bots' header carried its own aurora gradient; HQ headers are flat. */
+.bots-page-header::before { display: none; }
+.bots-page-header, .bot-details-header { background: transparent; border-bottom-color: var(--color-border); }
+.bots-page-header button.primary { border-color: transparent; background: var(--color-accent); color: var(--color-accent-ink); box-shadow: none; }
+.bots-page-header button.primary::before, .bots-page-header button.primary::after { display: none; }
+
+/* AI chip labels: room for "DeepSeek" in a third of the rail. */
+.ai-panel-buttons button { gap: 3px; padding: 0 3px; }
+.ai-panel-buttons button span { width: auto; max-width: none; flex: 0 1 auto; overflow: visible; text-overflow: clip; letter-spacing: -.02em; }
+
+/* ---------- the rail scrolls as one column, like HQ's ----------
+   Pages, HQ's own pages and the calendar no longer fight for a fixed slice; the AI row stays pinned. */
+:root { --hq-side-solid: #f4f4f3; }
+[data-theme="dark"] { --hq-side-solid: #171719; }
+@media (min-width: 34.0625rem) {
+  .sidebar { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+  .sidebar::-webkit-scrollbar { display: none; }
+  .sidebar > * { flex-shrink: 0; }
+  .sidebar-body { flex: 1 0 auto; overflow: visible; mask-image: none; -webkit-mask-image: none; }
+  .ai-panel { position: sticky; bottom: -10px; z-index: 3; margin-top: auto; padding-bottom: 10px; background: var(--hq-side-solid); }
+}
+
+/* HQ's pages hang off the HQ row as a tree, so it is plain which app they belong to. */
+.nav .hq-pages { margin: 2px 0 6px 19px; padding: 0 0 0 9px; border-left: 1px solid var(--color-border); }
+.nav .hq-pages button { min-height: 1.875rem; padding: 0 9px; font-size: 13.5px; }
+.nav .hq-pages .nav-heading { margin: 8px 9px 2px; font-size: 12px; }
+.nav .hq-pages .hq-fold { margin: 8px 0 2px; padding: 0 9px; }
+.nav .hq-pages .hq-gap { height: 6px; }
+@media (max-width: 34rem) {
+  /* The narrow strip has no room for a tree; HQ shows its own page strip at this width instead. */
+  .nav .hq-pages { display: none; }
+}
+@media (max-width: 34rem) {
+  .sidebar { width: 100%; flex: 0 0 auto; border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .nav .nav-apps { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; padding: 0 4px; }
+  .nav .nav-apps button { width: 2.5rem; min-width: 2.5rem; min-height: 2.5rem; }
+  .nav button.is-active { box-shadow: var(--hq-row-on-ring); }
+}
+
+/* ---------- weight ceiling ----------
+   Generated: every rule that set 650+ (Roboto-era bold). Geist at 700+ on dark reads as shouting; HQ tops out at 600. */
+.kicker,
+.nav-heading,
+.cep-nav-mark,
+.list-group > h2, .results section > h2,
+.calendar-day.is-selected,
+.paper-kicker,
+.today-sections button,
+.paper-moved h2, .paper-next h2,
+.day-clock span,
+.duration-switch button,
+.cloud-identity em,
+.bot-icon strong,
+.bots-attention > button em,
+.platform-mark,
+.bot-state,
+.bot-empty button, .add-inline, .monitor-test-row button, .connection-actions button, .bot-documentation button, .dependency-list button, .used-by-bots button, .skill-related-bots button,
+.credential-summary,
+.bot-detail-field > span,
+.advanced-settings-card button, .archive-bot,
+.bot-link-card button,
+.bot-form legend,
+.bot-create-rail li > span,
+.connector-setup summary,
+.platform-choice em.ready,
+.setup-panel > button, .connection-panel > button, .folder-picker button, .success-actions button, .view-created,
+.bot-icon-picker-actions button,
+.skills-divider,
+.skills-page-kicker,
+.skills-owner-title,
+.skills-card-title strong,
+.skills-row-copy strong,
+.skills-doc-title,
+.skills-source-link,
+.project-form label, .project-overview-form label, .commit-message,
+.detected-project span,
+.task-card-main em,
+.project-rank-row > header > span,
+.project-github-account em,
+.ui-badge,
+.cep-rank,
+.cep-card-actions button {
+  font-weight: 600;
+}
+.note-title { font-weight: 600; letter-spacing: -.03em; }
+.note-editor .ProseMirror :is(h1, h2, h3), .note-reading :is(h1, h2, h3, h4) { font-weight: 550; letter-spacing: -.02em; }
+
+/* ---------- no side stripes: HQ marks state with a tint or a dot, never a coloured left edge ---------- */
+.status-active, .priority-critical { box-shadow: none; }
+.project-pill { min-height: 26px; padding: 2px 10px; font-weight: 500; }
+.project-pill.status-active::before { content: ""; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--color-good); }
+.bot-account-status, .bot-icon-picker { border-left-width: 1px; border-left-color: var(--color-border); }
+.bot-account-status.ready { border-color: color-mix(in oklab, var(--color-good) 35%, transparent); }
+.bot-account-status.needs-connection { border-color: color-mix(in oklab, var(--color-warning) 40%, transparent); }
+.monitoring-limitation, .bot-create-notice, .bot-form-error, .job-error { border-left-width: 1px; border-radius: 10px; }
+.kanban-card.is-blocked { border-left-width: 1px; border-color: color-mix(in oklab, var(--color-warning) 45%, transparent); }
+
+/* Projects: the task bar's button had the browser's outset border; kanban lanes had 3px tops. */
+.quick-task { border-radius: 12px; background: var(--hq-field); }
+.quick-task button.primary { min-height: 32px; padding: 0 14px; border: 0; border-radius: 9px; background: var(--color-accent); color: var(--color-accent-ink); font-weight: 500; }
+.quick-task button.primary:disabled { background: rgba(127, 127, 127, .18); color: var(--color-faint); opacity: 1; }
+.kanban-column, .kanban-column.lane-in_progress, .kanban-column.lane-done { border: 1px solid var(--color-border); border-top-width: 1px; border-radius: 14px; background: var(--hq-field); }
+.kanban-column > header b { background: var(--hq-row-hover); }
+
+/* App screens (Mailbrain, Notion, X, AI) sit on the same panel colour as every page. */
+.service-screen, .service-body, .service-preview { background: var(--hq-panel); }
+
+/* ---------- Markdown tables (notes, memory): HQ's table — hairline rows, faint header, no grid ---------- */
+.md-table { max-width: 100%; margin: 0 0 var(--space-sm); overflow-x: auto; border: 1px solid var(--color-border); border-radius: 12px; }
+.md-table table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.md-table th { padding: 9px 14px; border-bottom: 1px solid var(--color-border); background: var(--hq-field); color: var(--color-muted); font-size: 12.5px; font-weight: 450; text-align: left; white-space: nowrap; }
+.md-table td { padding: 10px 14px; border-bottom: 1px solid var(--color-border); color: var(--color-ink); vertical-align: top; }
+.md-table tr:last-child td { border-bottom: 0; }
+.md-table tbody tr:hover td { background: var(--hq-row-hover); }
+
+/* The pinned AI row must cover the rail edge to edge, or scrolled content peeks out at its sides.
+   The hairline above it is drawn inset instead of using margins. */
+.sidebar { width: 15rem; flex-basis: 15rem; }
+.ai-panel { margin: 0; padding: 10px 10px 0; border-top: 0; }
+.ai-panel::before {
+  display: block;
+  top: 0;
+  left: 12px;
+  width: auto;
+  right: 12px;
+  height: 1px;
+  border-radius: 0;
+  background: var(--color-border);
+  opacity: 1;
+}
+.ai-panel > .nav-heading { margin-left: 4px; }
+.ai-panel-buttons { gap: 3px; }
+@media (max-width: 34rem) { .sidebar { width: 100%; flex-basis: auto; } }
+.ai-panel { padding-inline: 8px; }
+.ai-panel-buttons button { padding: 0 2px; }

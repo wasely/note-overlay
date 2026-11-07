@@ -4,6 +4,92 @@ const os = require("node:os");
 const path = require("node:path");
 const { createStorage } = require("../src/main/storage.cjs");
 const Database = require("better-sqlite3");
+const { test } = require("node:test");
+
+function storageRegression(name, check) {
+  test(name, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-storage-regression-"));
+    const storage = createStorage(root);
+    try { check(storage); }
+    finally {
+      storage.close();
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+}
+
+storageRegression("a burst of safety backups keeps one backup from each earlier day", (storage) => {
+  const directory = path.join(storage.userDataPath, "backups");
+  fs.mkdirSync(directory, { recursive: true });
+  const old = path.join(directory, "notebook-backup-2026-01-01-00-00-00-000--aaaaaa.json");
+  fs.writeFileSync(old, JSON.stringify(storage.exportData()));
+  const oldTime = new Date("2026-01-01T12:00:00Z");
+  fs.utimesSync(old, oldTime, oldTime);
+  for (let index = 0; index < 30; index += 1) storage.createBackup();
+  assert.ok(fs.existsSync(old), "the only backup from an earlier day survives the burst");
+});
+
+storageRegression("case variants of one tag save once without losing other tags", (storage) => {
+  const note = storage.createNote({ title: "Tags" });
+  storage.setTags(note.id, ["Work", " work ", "WORK", "Personal"]);
+  assert.deepEqual(storage.getNote(note.id).tags.map((tag) => tag.name), ["Personal", "Work"]);
+});
+
+storageRegression("import assigns generated note IDs to their tags", (storage) => {
+  storage.importData({ notes: [{ title: "Imported without ID", body: "Keep me", tags: [{ name: "work" }] }] });
+  const note = storage.listNotes().find((row) => row.title === "Imported without ID");
+  assert.equal(note.tags[0].name, "work");
+});
+
+storageRegression("importing an older note preserves both existing content and tags", (storage) => {
+  const note = storage.createNote({ title: "Current", body: "New content" });
+  storage.setTags(note.id, ["current"]);
+  storage.importData({ notes: [{ ...note, body: "Old content", tags: [{ name: "old" }] }] });
+  assert.equal(storage.getNote(note.id).body, "New content");
+  assert.deepEqual(storage.getNote(note.id).tags.map((tag) => tag.name), ["current"]);
+});
+
+storageRegression("JSON import preserves compression history and zero token counts", (storage) => {
+  storage.importData({ notes: [{ id: "compressed-note", title: "Compressed" }], compressions: [{
+    id: "compression-history", note_id: "compressed-note", source_text: "Original", compressed_text: "",
+    preset: "Balanced", rate: 0.6, origin_tokens: 1, compressed_tokens: 0,
+    ratio: "0", created_at: "2026-08-18T00:00:00.000Z",
+  }] });
+  const history = storage.listCompressions("compressed-note");
+  assert.equal(history.length, 1);
+  assert.equal(history[0].compressed_tokens, 0);
+  storage.importData({ notes: [], compressions: history });
+  assert.deepEqual(storage.listCompressions("compressed-note"), history, "repeat import is idempotent");
+  const backup = storage.createBackup();
+  storage.restoreBackup(backup.name);
+  assert.deepEqual(storage.listCompressions("compressed-note"), history);
+});
+
+storageRegression("cloud replacement tolerates deleted project skill and command references", (storage) => {
+  const skill = storage.createSkill({ name: "Retained skill" });
+  const command = storage.createSlashCommand({ name: "Retained command", command: "/keep" });
+  const project = storage.createProject({ name: "Concurrent project" });
+  const snapshot = storage.exportData();
+  const imported = snapshot.projects.find((row) => row.id === project.id);
+  imported.skill_ids = [skill.id, "deleted-skill"];
+  imported.slash_command_ids = [command.id, "deleted-command"];
+  imported.skill_installs = [{ item_id: "deleted-skill", relative_path: "skills/old/SKILL.md", content_hash: "old" }];
+  imported.command_installs = [{ item_id: "deleted-command", relative_path: "commands/old.md", content_hash: "old" }];
+  storage.replaceData(snapshot);
+  const restored = storage.getProject(project.id);
+  // A restore that changes nothing must export identically, or every sync reads it as an edit.
+  const tagged = storage.createNote({ title: "Tagged", body: "Body" });
+  storage.setTags(tagged.id, ["alpha", "beta"]);
+  const beforeRestore = storage.exportData();
+  storage.replaceData(beforeRestore);
+  const afterRestore = storage.exportData();
+  assert.equal(beforeRestore.notes.find((note) => note.id === tagged.id).tags.length, 2);
+  assert.deepEqual(afterRestore.notes.find((note) => note.id === tagged.id).tags, beforeRestore.notes.find((note) => note.id === tagged.id).tags, "restore keeps tag ids");
+  assert.deepEqual(restored.skill_ids, [skill.id]);
+  assert.deepEqual(restored.slash_command_ids, [command.id]);
+  assert.deepEqual(restored.skill_installs, []);
+  assert.deepEqual(restored.command_installs, []);
+});
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "notebook-storage-"));
 let cloudSaveSignals = 0;
@@ -24,6 +110,9 @@ try {
   assert.equal(project.category, "Uncategorized");
   store.updateProject(project.id, { category: "Apps" });
   const secondProject = store.createProject({ name: "Second project", category: "Tools", tier: 1, localPath: "C:\\code\\notebook-storage-test-two" });
+  const localFolder = store.createProject({ name: "Non-Git project", localPath: "C:\\code\\notebook-local-folder-test", gitRoot: null });
+  assert.equal(localFolder.git_root, null, "a non-Git folder must not be treated as a repository");
+  store.removeProject(localFolder.id);
   const movedProjects = store.moveProject(project.id, 1, secondProject.id);
   assert.deepEqual(movedProjects.filter((item) => item.tier === 1).map((item) => item.id), [project.id, secondProject.id], "cross-tier moves persist before the target");
   let savedProject = store.createProjectTask(project.id, { title: "Build task board", status: "in_progress", priority: "critical" });
@@ -165,6 +254,9 @@ cleanupStore = createStorage(cleanupUserData);
 try {
   assert.equal(cleanupStore.listNotes().some((note) => !note.title.trim() && !note.body.trim()), false, "startup removes abandoned blank notes");
   assert.deepEqual(cleanupStore.listNotes().filter((note) => note.title === "Same note").map((note) => note.id), ["duplicate-note-new"], "startup keeps one newest identical note");
+  // Another synced device must reach the same survivor, so cleanup never re-stamps it as newest.
+  assert.equal(cleanupStore.listNotes().find((note) => note.id === "duplicate-note-new").updated_at, newer, "deduplication keeps the survivor's timestamp");
+  assert.equal(cleanupStore.listSkills().find((skill) => skill.id === "duplicate-skill-new").updated_at, newer, "skill deduplication keeps the survivor's timestamp");
   assert.deepEqual(cleanupStore.listSkills().filter((skill) => skill.name.toLowerCase() === "duplicate skill").map((skill) => skill.id), ["duplicate-skill-new"], "startup consolidates case-insensitive skill copies");
   assert.deepEqual(cleanupStore.listSlashCommands().filter((command) => command.command === "/prompts:duplicate-deploy").map((command) => command.id), ["duplicate-command-new"], "startup consolidates duplicate invocations");
   const cleanedProject = cleanupStore.getProject(cleanupProject.id);
@@ -219,3 +311,50 @@ try {
   migratedStore.close();
   fs.rmSync(legacyUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
+
+// --- Wiki-links -----------------------------------------------------------------
+storageRegression("wiki-links index on write and answer backlinks", (storage) => {
+  const target = storage.createNote({ title: "Shot list", body: "" });
+  const source = storage.createNote({ title: "Edit plan", body: "Pull from [[Shot list]] today." });
+  storage.createNote({ title: "Unrelated", body: "nothing here" });
+
+  const links = storage.backlinks(target.id);
+  assert.equal(links.length, 1, "exactly one note links here");
+  assert.equal(links[0].id, source.id);
+  assert.equal(links[0].title, "Edit plan");
+  assert.equal(links[0].context, "Pull from Shot list today.", "context reads as prose, without brackets");
+
+  // Case and spacing do not matter.
+  storage.updateNote(source.id, { body: "Pull from [[  shot   LIST ]] today." });
+  assert.equal(storage.backlinks(target.id).length, 1, "a link matches regardless of case or spacing");
+
+  // Removing the link clears the backlink.
+  storage.updateNote(source.id, { body: "No links now." });
+  assert.equal(storage.backlinks(target.id).length, 0, "editing the link away removes the backlink");
+});
+
+storageRegression("wiki-links follow a renamed note and survive deletion", (storage) => {
+  const target = storage.createNote({ title: "Old name", body: "" });
+  storage.createNote({ title: "Source", body: "see [[Old name]]" });
+  assert.equal(storage.backlinks(target.id).length, 1);
+
+  // Renaming the target breaks the link by design: links point at titles.
+  storage.updateNote(target.id, { title: "New name" });
+  assert.equal(storage.backlinks(target.id).length, 0, "a renamed note no longer answers the old title");
+  assert.deepEqual(storage.brokenLinks(), ["Old name"], "the old title is reported as unresolved");
+
+  // A note linked but never created is reported too, and deleting the source clears it.
+  const ghost = storage.createNote({ title: "Ghost source", body: "[[Never written]]" });
+  assert.ok(storage.brokenLinks().includes("Never written"));
+  storage.deleteForever(ghost.id);
+  assert.ok(!storage.brokenLinks().includes("Never written"), "deleting a note drops its links");
+});
+
+storageRegression("wiki-links ignore trashed notes and self-links", (storage) => {
+  const target = storage.createNote({ title: "Hub", body: "I mention [[Hub]] myself." });
+  const source = storage.createNote({ title: "Spoke", body: "go to [[Hub]]" });
+  assert.deepEqual(storage.backlinks(target.id).map((row) => row.title), ["Spoke"], "a note never backlinks itself");
+
+  storage.moveToTrash(source.id);
+  assert.equal(storage.backlinks(target.id).length, 0, "a trashed note stops backlinking");
+});

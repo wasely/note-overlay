@@ -9,8 +9,10 @@ const aiBridge = Object.fromEntries(AI_IDS.map((id) => [id, {
 }]));
 
 contextBridge.exposeInMainWorld("hushnote", {
-  notes: { list: () => call("notes:list"), create: (data) => call("notes:create", data), update: (id, data) => call("notes:update", id, data), dragFile: (data) => call("notes:drag-file", data), dragCleanName: (data) => ipcRenderer.send("notes:drag-clean-name", data), setTags: (id, tags) => call("notes:tags", id, tags), trash: (id) => call("notes:trash", id), restore: (id) => call("notes:restore", id), remove: (id) => call("notes:remove", id) },
+  notes: { list: () => call("notes:list"), backlinks: (id) => call("notes:backlinks", id), create: (data) => call("notes:create", data), update: (id, data) => call("notes:update", id, data), dragFile: (data) => call("notes:drag-file", data), dragCleanName: (data) => ipcRenderer.send("notes:drag-clean-name", data), setTags: (id, tags) => call("notes:tags", id, tags), trash: (id) => call("notes:trash", id), restore: (id) => call("notes:restore", id), remove: (id) => call("notes:remove", id) },
   skills: { list: () => call("skills:list"), create: (data) => call("skills:create", data), update: (id, data) => call("skills:update", id, data), remove: (id) => call("skills:remove", id), openSource: (url) => call("skills:open-source", url), relatedBots: (id) => call("skills:related-bots", id) },
+  keys: { list: () => call("keys:list") },
+  memory: { master: () => call("memory:master"), stores: () => call("memory:stores"), save: (content, expectedModifiedAt) => call("memory:save", content, expectedModifiedAt), openStore: (id) => call("memory:open-store", id) },
   bots: {
     list: (options) => call("bots:list", options), get: (id) => call("bots:get", id), create: (data) => call("bots:create", data), update: (id, data) => call("bots:update", id, data), archive: (id) => call("bots:archive", id), restore: (id) => call("bots:restore", id),
     check: (id) => call("bots:check", id), checkAll: () => call("bots:check-all"), testMonitoring: (data) => call("bots:test-monitoring", data), verifyConnection: (botId, connectionId) => call("bots:verify-connection", botId, connectionId),
@@ -27,7 +29,8 @@ contextBridge.exposeInMainWorld("hushnote", {
   },
   slashCommands: { list: () => call("slash-commands:list"), create: (data) => call("slash-commands:create", data), update: (id, data) => call("slash-commands:update", id, data), remove: (id) => call("slash-commands:remove", id) },
   projects: {
-    list: () => call("projects:list"), syncWorkshop: () => call("projects:workshop-sync"), create: (data) => call("projects:create", data), update: (id, data) => call("projects:update", id, data), reorder: (ids) => call("projects:reorder", ids), move: (data) => call("projects:move", data), remove: (id) => call("projects:remove", id), logo: (id) => call("projects:logo", id),
+    list: () => call("projects:list"), syncWorkshop: () => call("projects:workshop-sync"),
+    onUpdated: (handler) => { const listener = (_event, items) => handler(items); ipcRenderer.on("projects:updated", listener); return () => ipcRenderer.removeListener("projects:updated", listener); }, create: (data) => call("projects:create", data), update: (id, data) => call("projects:update", id, data), reorder: (ids) => call("projects:reorder", ids), move: (data) => call("projects:move", data), remove: (id) => call("projects:remove", id), logo: (id) => call("projects:logo", id),
     chooseFolder: () => call("projects:choose-folder"), chooseParent: () => call("projects:choose-parent"), inspect: (path) => call("projects:inspect", path), status: (root) => call("projects:status", root), diff: (data) => call("projects:diff", data),
     stage: (data) => call("projects:stage", data), unstage: (data) => call("projects:unstage", data), commit: (data) => call("projects:commit", data), push: (root) => call("projects:push", root), publish: (data) => call("projects:publish", data), fetch: (root) => call("projects:fetch", root),
     githubAuthStatus: () => call("projects:github-auth-status"), githubSignIn: () => call("projects:github-sign-in"), githubSetup: (data) => call("projects:github-setup", data),
@@ -51,6 +54,7 @@ contextBridge.exposeInMainWorld("hushnote", {
   },
   clipboard: { writeText: (text) => call("clipboard:write-text", text), writeRich: (data) => call("clipboard:write-rich", data) },
   googleDocs: { create: () => call("docs:new") },
+  hq: { ensure: () => call("hq:ensure") },
   mail: { show: () => call("mail:show"), hide: () => call("mail:hide"), reload: () => call("mail:reload"), openExternal: () => call("mail:open-external") },
   notion: { show: () => call("notion:show"), hide: () => call("notion:hide"), reload: () => call("notion:reload"), openExternal: () => call("notion:open-external") },
   twitter: { show: () => call("twitter:show"), hide: () => call("twitter:hide"), reload: () => call("twitter:reload"), openExternal: () => call("twitter:open-external") },

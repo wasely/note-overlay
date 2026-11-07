@@ -131,6 +131,14 @@ function readDescription(root) {
   } catch { /* optional */ }
   return "";
 }
+function projectName(root) {
+  for (const name of ["README.md", "README.MD", "readme.md"]) try {
+    const match = fs.readFileSync(path.join(root, name), "utf8").match(/^#\s+([^:\r\n]{2,60}):\s+\S/m);
+    if (match) return match[1].trim();
+  } catch { /* optional */ }
+  return path.basename(root);
+}
+function nameKey(value) { return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
 async function inspectFolder(value) {
   const selectedPath = canonical(value); const root = await gitRoot(selectedPath);
   const effective = root || selectedPath; let remote = null; let branch = null;
@@ -139,17 +147,41 @@ async function inspectFolder(value) {
     remote = status.remote;
     branch = status.branch;
   }
-  return { selectedPath, localPath: effective, gitRoot: root, isGit: Boolean(root), name: path.basename(effective), description: readDescription(effective), branch, remote, githubUrl: githubUrl(remote), primaryLanguage: detectLanguage(effective), hasAgents: fs.existsSync(path.join(effective, "AGENTS.md")), hasReadme: ["README.md", "README.MD", "readme.md"].some((name) => fs.existsSync(path.join(effective, name))) };
+  return { selectedPath, localPath: effective, gitRoot: root, isGit: Boolean(root), name: projectName(effective), description: readDescription(effective), branch, remote, githubUrl: githubUrl(remote), primaryLanguage: detectLanguage(effective), hasAgents: fs.existsSync(path.join(effective, "AGENTS.md")), hasReadme: ["README.md", "README.MD", "readme.md"].some((name) => fs.existsSync(path.join(effective, name))) };
 }
-async function discoverRepositories(value) {
+async function discoverRepositories(value, tracked = []) {
   const parent = canonical(value); const candidates = [];
+  const markers = new Set([".git", "package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod", "README.md", "README.MD", "index.html", "AGENTS.md", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "pom.xml", "Gemfile", "pubspec.yaml", "composer.json", "Makefile"]);
+  const ignored = new Set(["node_modules", "vendor", "dist", "build", "outputs", "assets", "screenshots", "tests", "scripts", "docs", "data", "research", "_ARCHIVE", "_TRANSFER"]);
   function visit(directory, depth) {
-    if (depth > 2 || candidates.length >= 100) return;
+    if (depth > 2 || candidates.length >= 250) return;
     let entries = []; try { entries = fs.readdirSync(directory, { withFileTypes: true }); } catch { return; }
-    if (entries.some((entry) => entry.isDirectory() && entry.name === ".git")) { candidates.push(directory); return; }
-    for (const entry of entries) if (entry.isDirectory() && !["node_modules", ".git", "vendor", "dist", "build"].includes(entry.name)) visit(path.join(directory, entry.name), depth + 1);
+    if (depth > 0 && entries.some((entry) => markers.has(entry.name) || entry.name.endsWith(".sln") || (depth === 1 && entry.name.endsWith(".py")))) { candidates.push(directory); return; }
+    for (const entry of entries) if (entry.isDirectory() && !entry.name.startsWith(".") && !entry.name.startsWith("_") && !ignored.has(entry.name)) visit(path.join(directory, entry.name), depth + 1);
   }
-  visit(parent, 0); return Promise.all(candidates.map(inspectFolder));
+  visit(parent, 0);
+  const found = []; const identities = new Set();
+  for (const project of tracked) {
+    for (const entry of [project.local_path, project.git_root, project.github_url]) if (entry) identities.add(String(entry).toLowerCase());
+    if (project.name) identities.add(`name:${nameKey(project.name)}`);
+    if (project.git_root && fs.existsSync(project.git_root)) {
+      const common = await git(project.git_root, ["rev-parse", "--git-common-dir"], { allowFailure: true });
+      if (!common.code && common.stdout.trim()) identities.add(path.resolve(project.git_root, common.stdout.trim()).toLowerCase());
+    }
+  }
+  for (const directory of candidates) {
+    const root = await gitRoot(directory);
+    const effective = root || canonical(directory);
+    const remote = root ? await git(root, ["remote", "get-url", "origin"], { allowFailure: true }) : null;
+    const common = root ? await git(root, ["rev-parse", "--git-common-dir"], { allowFailure: true }) : null;
+    const url = githubUrl(remote?.stdout.trim());
+    const name = projectName(effective);
+    const keys = [effective.toLowerCase(), url?.toLowerCase(), `name:${nameKey(name)}`, common?.code ? null : common?.stdout.trim() ? path.resolve(root, common.stdout.trim()).toLowerCase() : null].filter(Boolean);
+    if (keys.some((key) => identities.has(key))) continue;
+    keys.forEach((key) => identities.add(key));
+    found.push({ selectedPath: directory, localPath: effective, gitRoot: root, isGit: Boolean(root), name, description: readDescription(effective), branch: null, remote: remote?.code ? null : remote?.stdout.trim() || null, githubUrl: url, primaryLanguage: detectLanguage(effective), hasAgents: fs.existsSync(path.join(effective, "AGENTS.md")), hasReadme: ["README.md", "README.MD", "readme.md"].some((entry) => fs.existsSync(path.join(effective, entry))) });
+  }
+  return found;
 }
 function parseStatus(raw) {
   const result = { branch: null, detached: false, upstream: null, ahead: 0, behind: 0, files: [], counts: { modified: 0, added: 0, deleted: 0, untracked: 0, staged: 0, conflicts: 0, renamed: 0 } };

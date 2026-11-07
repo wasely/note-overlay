@@ -24,6 +24,20 @@ try {
     const overflow = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
     if (overflow.document > overflow.viewport || overflow.body > overflow.viewport) throw new Error(`${name} Projects overflow: ${JSON.stringify(overflow)}`);
     await page.screenshot({ path: `screenshots/projects-${name}.png` });
+    if (name === "narrow") {
+      const activeVisible = await page.locator('.nav button[data-view="projects"]').evaluate((button) => {
+        const buttonBox = button.getBoundingClientRect();
+        const navBox = button.closest(".nav").getBoundingClientRect();
+        return buttonBox.left >= navBox.left && buttonBox.right <= navBox.right;
+      });
+      if (!activeVisible) throw new Error("Narrow navigation does not reveal the active Projects tab.");
+    }
+    await page.getByRole("tab", { name: "All projects (4)" }).click();
+    if (await page.locator(".project-tile").count() !== 4) throw new Error("All projects does not show the full directory.");
+    await page.getByLabel("Search projects").fill("ClipForge");
+    if (await page.locator(".project-tile").count() !== 1) throw new Error("Project search does not filter the directory.");
+    await page.getByLabel("Search projects").fill("");
+    await page.getByRole("tab", { name: "Priority queue" }).click();
     const clipForgeCard = page.locator(".project-simple-card").filter({ hasText: "ClipForge AI" });
     await clipForgeCard.getByRole("button", { name: "Open ClipForge AI", exact: true }).dragTo(page.locator('.project-rank-row[aria-label="1st place"]'));
     await page.locator('.project-rank-row[aria-label="1st place"]').getByText("ClipForge AI", { exact: true }).waitFor();

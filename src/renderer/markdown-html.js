@@ -14,6 +14,8 @@ function inlineHtml(text) {
     if (token.type === "code") return `<code style="font-family:monospace">${body}</code>`;
     if (token.type === "strike") return `<s>${body}</s>`;
     if (token.type === "link") return `<a href="${escapeHtml(token.href)}">${body}</a>`;
+    // Nothing outside the app can resolve a wiki-link, so it pastes as its plain text.
+    if (token.type === "wikilink") return body;
     return body;
   }).join("");
 }
@@ -24,6 +26,11 @@ export function markdownToHtml(source, title = "") {
   for (const block of blocks) {
     if (block.type === "heading") { parts.push(`<h${block.level}>${inlineHtml(block.text)}</h${block.level}>`); continue; }
     if (block.type === "rule") { parts.push("<hr>"); continue; }
+    if (block.type === "table") {
+      const cell = (tag, text, index) => `<${tag} style="text-align:${block.align[index]};border:1px solid #ccc;padding:4px 8px">${inlineHtml(text)}</${tag}>`;
+      parts.push(`<table style="border-collapse:collapse"><thead><tr>${block.header.map((text, index) => cell("th", text, index)).join("")}</tr></thead><tbody>${block.rows.map((row) => `<tr>${row.map((text, index) => cell("td", text, index)).join("")}</tr>`).join("")}</tbody></table>`);
+      continue;
+    }
     if (block.type === "code") { parts.push(`<pre style="font-family:monospace"><code>${escapeHtml(block.lines.join("\n"))}</code></pre>`); continue; }
     if (block.type === "quote") { parts.push(`<blockquote>${block.lines.map((line) => `<p>${inlineHtml(line)}</p>`).join("")}</blockquote>`); continue; }
     if (block.type === "bullets") { parts.push(`<ul>${block.items.map((item) => `<li>${inlineHtml(item)}</li>`).join("")}</ul>`); continue; }

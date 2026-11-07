@@ -51,6 +51,27 @@ const run = (...args) => execFileSync("git.exe", args, { cwd: root, encoding: "u
     assert.equal(status.githubUrl, "https://github.com/blixvip/project-test");
     fs.writeFileSync(path.join(root, ".env.local"), "NOT_A_REAL_SECRET=test\n");
     await assert.rejects(projects.commit(root, { files: [".env.local"], message: "Unsafe", push: false, acknowledgeSensitive: false }), /require acknowledgement/);
+    const standalone = path.join(parent, "local app");
+    fs.mkdirSync(standalone);
+    fs.writeFileSync(path.join(standalone, "package.json"), JSON.stringify({ name: "local-app", description: "A project without Git." }));
+    fs.writeFileSync(path.join(standalone, "README.md"), "# Local App: A project without Git\n");
+    const android = path.join(parent, "android app");
+    fs.mkdirSync(android);
+    fs.writeFileSync(path.join(android, "build.gradle.kts"), "plugins {}\n");
+    const python = path.join(parent, "python app");
+    fs.mkdirSync(python);
+    fs.writeFileSync(path.join(python, "main.py"), "print('ready')\n");
+    const worktree = path.join(parent, "repo alternate");
+    run("worktree", "add", "-b", "alternate", worktree);
+    const discovered = await projects.discoverRepositories(parent);
+    assert.equal(discovered.filter((item) => item.githubUrl === "https://github.com/wasely/project-test").length, 1);
+    assert(discovered.some((item) => item.localPath === fs.realpathSync.native(standalone) && !item.gitRoot));
+    assert(discovered.some((item) => item.name === "Local App"));
+    assert(discovered.some((item) => item.localPath === fs.realpathSync.native(android) && !item.gitRoot));
+    assert(discovered.some((item) => item.localPath === fs.realpathSync.native(python) && !item.gitRoot));
+    const newOnly = await projects.discoverRepositories(parent, [{ git_root: root, local_path: root, github_url: "https://github.com/wasely/project-test" }]);
+    assert.equal(newOnly.length, 3);
+    run("worktree", "remove", "--force", worktree);
     console.log("Projects repository inspection, scoped commit, Git status, and AGENTS.md regression tests passed.");
   } finally { fs.rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

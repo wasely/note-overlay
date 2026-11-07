@@ -4,26 +4,37 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, ArrowRight, Bot, CalendarCheck2, Check, ChevronLeft, ChevronRight, Cloud, Copy, Ellipsis, ExternalLink, Eye, FileText, FolderGit2, GripVertical, Keyboard, Layers3, List, ListTodo, Monitor, Moon, Pencil, Pin, Plus, RefreshCw, RotateCcw, Search, Settings, Shrink, SquareTerminal, Sun, Trash2, X } from "lucide-react";
-import { siDeepseek, siExcalidraw, siGmail, siGooglegemini, siNotion, siX } from "simple-icons";
+import { ArrowLeft, ArrowRight, Bot, CalendarCheck2, Check, ChevronLeft, ChevronRight, Cloud, Copy, Ellipsis, ExternalLink, Eye, FileText, GripVertical, Keyboard, Layers3, List, ListTodo, Monitor, Moon, Pencil, Pin, Plus, RefreshCw, RotateCcw, Search, Settings, Shrink, SquareTerminal, Sun, Trash2, X } from "lucide-react";
+import { siDeepseek, siExcalidraw, siGooglegemini, siNotion, siX } from "simple-icons";
 import notebookIconUrl from "../../build/notebook.png";
 import chatgptDarkIconUrl from "./chatgpt-dark.png";
 import chatgptLightIconUrl from "./chatgpt-light.png";
+import { BotsIcon, ExtensionsIcon, KeysIcon, MailbrainMark, MemoryIcon, NotesIcon, ProjectsIcon, SkillsIcon, TodayIcon } from "./icons.jsx";
 import { addBrowserFileDragData } from "./drag-file.mjs";
 import { cleanSkillCategory, displaySkillName } from "./skill-stack.js";
 import { Markdown } from "./markdown.jsx";
 import { markdownToHtml, markdownToText } from "./markdown-html.js";
+import { linkKey, wikilinkTargets, stripLinkMarkup } from "./markdown-blocks.js";
 import { GithubAvatar } from "./GithubAvatar.jsx";
 import RichNoteEditor from "./RichNoteEditor.jsx";
 import { BotsWorkspace, BotSidebar } from "./bots.jsx";
 import { ProjectsPage } from "./ProjectsPage.jsx";
 import { CepExtensionsPage } from "./CepExtensionsPage.jsx";
 import { SkillsWorkspace } from "./skills.jsx";
+import { KeysPage } from "./KeysPage.jsx";
+import { MemoryPage } from "./MemoryPage.jsx";
+import { HqPage, HqSidebar, hqLogoUrl } from "./HqPage.jsx";
 import { DailyTimeline } from "./DailyTimeline.jsx";
 import { clockFromMinute } from "./daily-timeline.js";
 import "./styles.css";
 import "./workspaces.css";
 import "./skills.css";
+import "./keys.css";
+import "./memory.css";
+import "./aside.css";
+import "./wikilinks.css";
+import "./motion.css";
+import "./hq-theme.css";
 
 const mockNotes = [{
   id: "preview-note",
@@ -135,6 +146,35 @@ const mockCepExtensions = [
 const mockSlashCommands = [
   { id: "starter-gitpush", name: "Git push", command: "/prompts:gitpush", body: "Run `/prompts:gitpush` inside the Git repository you want to publish.\n\n## What it does\nStages every change, commits with `Update project files`, then pushes the current tracking branch. It does not run checks.\n\n## Related skill\n`$gitpush`", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: "starter-command-guide", name: "Markdown, skills, and slash commands", command: "", body: "## Markdown (`.md`)\nA text-file format. It can hold instructions but is not automatically a command.\n\n## Custom prompt\nA Markdown file in `.codex/prompts`. `gitpush.md` becomes `/prompts:gitpush`.\n\n## Skill\nA folder containing `SKILL.md` and optional scripts. Invoke it with `$name`.\n\n## Slash command\nA `/` command parsed by Codex. Built-ins use top-level names; custom prompts use `/prompts:<name>`.", created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+];
+const mockMemory = {
+  exists: true, path: String.raw`C:\Users\kaigu\MASTER-MEMORY.md`, modifiedAt: new Date().toISOString(), lines: 13,
+  content: [
+    "# Master Memory", "",
+    "## How to work with me", "- **Be extremely concise.**", "- Decide, don't ask on my own projects.", "- Never open windows on my screen.", "",
+    "## Machine", String.raw`- Windows 11, 24 GB RAM. Projects live in ` + "`C:\\code`.", "",
+    "## Active projects", "- **Null Studio** — browser video editor, the priority.", "- **Notebook** — this app.", "",
+  ].join("\n"),
+};
+const mockMemoryStores = [
+  { id: "claude", label: "Claude Code", detail: "Per-project memory folders", path: String.raw`C:\Users\kaigu\.claude\projects`, exists: true, count: 75, modifiedAt: new Date().toISOString() },
+  { id: "grok", label: "Grok", detail: "Current topics (archive skipped)", path: String.raw`C:\Users\kaigu\.grok\memory-v2`, exists: true, count: 22, modifiedAt: new Date().toISOString() },
+  { id: "aside", label: "Aside", detail: "Browser agent profile and journal", path: String.raw`C:\Users\kaigu\.aside\u\0\memory`, exists: true, count: 13, modifiedAt: new Date().toISOString() },
+  { id: "codex", label: "Codex", detail: "Saved project memories", path: String.raw`C:\Users\kaigu\.codex\memories`, exists: true, count: 1, modifiedAt: new Date().toISOString() },
+];
+const mockKeySources = [
+  {
+    id: "build-a-key", label: "Build a Key", exists: true, path: "C:\\Users\\kaigu\\.codex\\skills\\build-a-key\\SKILL.md",
+    description: "Turn a verified solution to a recurring problem into an installed reusable agent skill called a key.",
+    content: "---\nname: build-a-key\ndescription: Turn a verified solution to a recurring problem into an installed reusable agent skill called a key.\n---\n\n# Build a Key\n\nCapture the verified problem, root cause, fix, and proof so another agent can reuse it.\n",
+    bytes: 246, lines: 9, modifiedAt: new Date().toISOString(),
+  },
+  {
+    id: "thumbnail-extension-fix", label: "Thumbnail Extension Fix", exists: true, path: "C:\\Users\\kaigu\\.codex\\skills\\thumbnail-extension-fix\\SKILL.md",
+    description: "Fix and prevent Script Gen's injected YouTube thumbnail Save control from hiding, fading, losing clicks, or requiring hover.",
+    content: "---\nname: thumbnail-extension-fix\ndescription: Fix and prevent Script Gen's injected YouTube thumbnail Save control from hiding, fading, losing clicks, or requiring hover.\n---\n\n# Thumbnail Extension Fix\n\nKeep the injected Save control visible, stable, and clickable across YouTube hover-state changes.\n",
+    bytes: 292, lines: 9, modifiedAt: new Date().toISOString(),
+  },
 ];
 const mockFolders = [{ id: "inbox", name: "Inbox", is_inbox: true, note_count: 0 }];
 let mockSettings = { hotkey: "Control+Alt+Shift+N", startAtLogin: true, theme: "system" };
@@ -275,6 +315,15 @@ function mockAiService(id) {
 const mockApi = {
   notes: {
     list: async () => mockNotes.filter((note) => !note.deleted_at).map((note) => ({ ...note })),
+    // Mirrors storage.cjs backlinks() so the browser preview shows the same panel as the app.
+    backlinks: async (id) => {
+      const note = mockNotes.find((item) => item.id === id);
+      const key = linkKey(note?.title);
+      if (!key) return [];
+      return mockNotes
+        .filter((item) => !item.deleted_at && item.id !== id && wikilinkTargets(item.body).some((target) => linkKey(target) === key))
+        .map(({ id: sourceId, title, updated_at, body }) => ({ id: sourceId, title, updated_at, context: stripLinkMarkup(body.split("\n").find((line) => wikilinkTargets(line).some((t) => linkKey(t) === key)) || "").trim().slice(0, 240) }));
+    },
     create: async (input = {}) => {
       const note = { id: crypto.randomUUID(), title: input.title || "", body: input.body || "", folder_id: input.folderId || "inbox", pinned: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       mockNotes.unshift(note);
@@ -308,6 +357,13 @@ const mockApi = {
       if (index >= 0) mockSkills.splice(index, 1);
     },
     openSource: async () => true,
+  },
+  keys: { list: async () => mockKeySources.map((item) => ({ ...item })) },
+  memory: {
+    master: async () => ({ ...mockMemory }),
+    stores: async () => mockMemoryStores.map((item) => ({ ...item })),
+    save: async (content) => { mockMemory.content = content; mockMemory.modifiedAt = new Date().toISOString(); return { ...mockMemory }; },
+    openStore: async () => true,
   },
   slashCommands: {
     list: async () => mockSlashCommands.map((item) => ({ ...item })),
@@ -505,8 +561,8 @@ const mockApi = {
     onOpenLink: () => () => {},
   },
   projects: {
-    logo: async () => null,
-    list: async () => { const state = new URLSearchParams(location.search).get("projects"); if (state === "error") throw new Error("Project storage is unavailable in this preview."); if (state === "loading") return new Promise(() => {}); return structuredClone(mockProjects); },
+    logo: async (id) => mockProjects.find((project) => project.id === id)?.preview_logo || null,
+    list: async () => { const state = new URLSearchParams(location.search).get("projects"); if (state === "error") throw new Error("Project storage is unavailable in this preview."); if (state === "loading") return new Promise(() => {}); if (state === "snapshot") { const snapshot = await fetch("/preview-projects.json").then((response) => response.json()); mockProjects.splice(0, mockProjects.length, ...snapshot); } return structuredClone(mockProjects); },
     create: async (input) => { const timestamp = new Date().toISOString(); const item = { id: crypto.randomUUID(), name: input.name, description: input.description || "", status: input.status || "active", priority: input.priority || "none", manual_rank: mockProjects.length, category: input.category || "Uncategorized", tier: input.tier || 4, tier_order: mockProjects.filter((project) => project.tier === (input.tier || 4)).length, local_path: input.localPath || null, git_root: input.gitRoot || null, github_url: input.githubUrl || null, primary_language: input.primaryLanguage || "", tags: input.tags || [], next_action: input.nextAction || "", notes: input.notes || "", push_after_commit: false, created_at: timestamp, updated_at: timestamp, last_worked_at: timestamp, skill_ids: [], slash_command_ids: [], skill_installs: [], command_installs: [], tasks: [], activity: [] }; mockProjects.push(item); return structuredClone(item); },
     update: async (id, input) => { const item = mockProjects.find((project) => project.id === id); const patch = { ...input }; if (Object.hasOwn(patch, "nextAction")) { patch.next_action = patch.nextAction; delete patch.nextAction; } if (Object.hasOwn(patch, "gitRoot")) { patch.git_root = patch.gitRoot; delete patch.gitRoot; } if (Object.hasOwn(patch, "githubUrl")) { patch.github_url = patch.githubUrl; delete patch.githubUrl; } Object.assign(item, patch, { updated_at: new Date().toISOString() }); return structuredClone(item); },
     reorder: async () => structuredClone(mockProjects),
@@ -572,6 +628,7 @@ const mockApi = {
   ai: { chatgpt: mockAiService("chatgpt"), gemini: mockAiService("gemini"), deepseek: mockAiService("deepseek") },
   clipboard: { writeText: async (text) => navigator.clipboard.writeText(text), writeRich: async ({ text }) => navigator.clipboard.writeText(text) },
   googleDocs: { create: async () => true },
+  hq: { ensure: async () => ({ ready: true }) },
   window: { hide: async () => {} },
   voiceLog: { complete: async () => { document.documentElement.dataset.voiceLogCompleted = "true"; } },
   onNewInboxNote: () => {},
@@ -591,24 +648,25 @@ const mockApi = {
 };
 const api = window.hushnote || mockApi;
 
-function CepNavIcon({ size = 16, className = "", strokeWidth: _strokeWidth, ...props }) {
-  return <span className={`cep-nav-mark ${className}`.trim()} style={{ "--cep-nav-size": `${size}px` }} {...props}>C</span>;
-}
 
+// HQ (C:\code\coldsend) is a page here: its logo is its icon, and HqPage.jsx embeds it.
+const HqMark = ({ size = 18 }) => <img className="hq-mark" src={hqLogoUrl} alt="" width={size} height={size} />;
 const VIEWS = [
-  { id: "daily", label: "Today", route: "today", Icon: CalendarCheck2 },
-  { id: "notes", label: "Notes", route: "notes", Icon: FileText },
-  { id: "skills", label: "Skills", route: "skills", Icon: Layers3 },
-  { id: "commands", label: "Commands", route: "commands", Icon: SquareTerminal },
-  { id: "cepExtensions", label: "CEP Extensions", route: "cep-extensions", Icon: CepNavIcon, group: "Workspace" },
-  { id: "projects", label: "Projects", route: "projects", Icon: FolderGit2, group: "Workspace" },
-  { id: "bots", label: "Bots", route: "bots", Icon: Bot, group: "Workspace" },
+  { id: "daily", label: "Today", route: "today", Icon: TodayIcon },
+  { id: "hq", label: "HQ", route: "hq", Icon: HqMark },
+  { id: "notes", label: "Notes", route: "notes", Icon: NotesIcon },
+  { id: "tools", label: "Skills & Commands", route: "tools", Icon: SkillsIcon },
+  { id: "keys", label: "Keys", route: "keys", Icon: KeysIcon },
+  { id: "memory", label: "Memory", route: "memory", Icon: MemoryIcon },
+  { id: "cepExtensions", label: "CEP Extensions", route: "cep-extensions", Icon: ExtensionsIcon, group: "Workspace" },
+  { id: "projects", label: "Projects", route: "projects", Icon: ProjectsIcon, group: "Workspace" },
+  { id: "bots", label: "Bots", route: "bots", Icon: BotsIcon, group: "Workspace" },
 ];
 // Full-window embedded services. These are windows, not pages, so they sit under their own heading.
 // Brand marks ship with the app (simple-icons), so they render offline and never depend on a
 // service being reachable. Each keeps its own signed-in session and stays loaded once opened.
 const SERVICES = [
-  { id: "mail", label: "Gmail", brand: siGmail, tone: "gmail", hotkey: "Ctrl+Alt+Shift+M" },
+  { id: "mail", label: "Mailbrain", Mark: MailbrainMark, tone: "mailbrain", hotkey: "Ctrl+Alt+Shift+M" },
   { id: "notion", label: "Notion", brand: siNotion, tone: "notion", hotkey: "Ctrl+Alt+Shift+O" },
   { id: "twitter", label: "Twitter", brand: siX, tone: "twitter", hotkey: "Ctrl+Alt+Shift+X" },
   { id: "excalidraw", label: "Excalidraw", brand: siExcalidraw, tone: "excalidraw" },
@@ -620,8 +678,7 @@ const AI_SERVICES = [
 ];
 const AI_SERVICE_IDS = new Set(AI_SERVICES.map((service) => service.id));
 const SERVICE_IDS = new Set([...SERVICES, ...AI_SERVICES].map((service) => service.id));
-const LIBRARY_VIEWS = new Set(["notes", "skills", "commands"]);
-const NEW_LABEL = { notes: "New note", skills: "New skill", commands: "New command" };
+const LIBRARY_VIEWS = new Set(["notes", "tools"]);
 
 // List previews read as prose, not as raw Markdown syntax.
 function preview(note) {
@@ -632,7 +689,10 @@ function preview(note) {
       .replace(/^\s{0,3}#{1,6}\s+/, "")
       .replace(/^\s*[-*+]\s+\[[ xX]]\s+/, "")
       .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
-      .replace(/^\s*>\s?/, ""))
+      .replace(/^\s*>\s?/, "")
+      // Table rows read as their cells; the |---| rule line disappears.
+      .replace(/^\s*\|(\s*:?-+:?\s*\|)+\s*$/, "")
+      .replace(/^\s*\|(.*)\|\s*$/, (_, cells) => cells.split("|").map((cell) => cell.trim()).filter(Boolean).join(" · ")))
     .join(" ")
     .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, "$1")
     .replace(/\*\*|__|~~|`/g, "")
@@ -970,7 +1030,30 @@ function TodayPage({ page, status, onSelectDate, onAdd, onToggle, onLocalEdit, o
   </section>;
 }
 
-function NotePage({ note, notebooks, status, mode, browserOpen, onBrowserToggle, onMode, onEdit, onSave, onCopy, onCopyPath, onCompress, onGoogleDoc, onDrag, onDragEnd, onTogglePin, onMove, onRemove, onAddTodo, onToggleTodo, onCreate, onHide, editorRef, notebookName }) {
+// What links here. Backlinks are read from the link index, so this costs one indexed query
+// per note rather than a scan of every body.
+function Backlinks({ links, outgoing, onOpenLink, onOpenNote }) {
+  if (!links.length && !outgoing.length) return null;
+  return <section className="backlinks" aria-label="Links">
+    {links.length > 0 && <>
+      <h2>Linked from<span>{links.length}</span></h2>
+      <ul>{links.map((link) => <li key={link.id}>
+        <button type="button" className="backlink" onClick={() => onOpenNote(link.id)}>
+          <strong>{link.title?.trim() || "Untitled"}</strong>
+          {link.context && <span>{link.context}</span>}
+        </button>
+      </li>)}</ul>
+    </>}
+    {outgoing.length > 0 && <>
+      <h2>Links to<span>{outgoing.length}</span></h2>
+      <ul className="is-inline">{outgoing.map((target) => <li key={linkKey(target.title)}>
+        <button type="button" className={`wikilink${target.exists ? "" : " is-new"}`} onClick={() => onOpenLink(target.title)}>{target.title}</button>
+      </li>)}</ul>
+    </>}
+  </section>;
+}
+
+function NotePage({ note, notebooks, status, mode, browserOpen, onBrowserToggle, onMode, onEdit, onSave, onCopy, onCopyPath, onCompress, onGoogleDoc, onDrag, onDragEnd, onTogglePin, onMove, onRemove, onAddTodo, onToggleTodo, onCreate, onHide, editorRef, notebookName, backlinks = [], linkTitles = [], noteExists, onOpenLink, onOpenNote }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   useEffect(() => {
@@ -1016,12 +1099,18 @@ function NotePage({ note, notebooks, status, mode, browserOpen, onBrowserToggle,
         <button type="button" className="link-button" onClick={onAddTodo}><ListTodo size={14} strokeWidth={1.8} />Add to-do</button>
       </div>
       {mode === "write"
-        ? <RichNoteEditor ref={editorRef} value={note.body || ""} onChange={(markdown) => onEdit({ body: markdown })} onBlur={() => onSave(note)} placeholder="Write here. It saves automatically." ariaLabel="Note content" />
+        ? <RichNoteEditor ref={editorRef} value={note.body || ""} onChange={(markdown) => onEdit({ body: markdown })} onBlur={() => onSave(note)} placeholder="Write here. It saves automatically." ariaLabel="Note content" linkTitles={linkTitles} />
         : <div className="note-reading" aria-label="Rendered note">
           {note.body?.trim()
-            ? <Markdown source={note.body} onToggleTask={onToggleTodo} />
+            ? <Markdown source={note.body} onToggleTask={onToggleTodo} onOpenLink={onOpenLink} linkExists={noteExists} />
             : <EmptyState title="Nothing to preview" body="Switch back to editing and write something first." action={<button type="button" className="button" onClick={() => onMode("write")}><Pencil size={15} strokeWidth={1.8} />Edit note</button>} />}
         </div>}
+      <Backlinks
+        links={backlinks}
+        outgoing={wikilinkTargets(note.body).map((title) => ({ title, exists: noteExists?.(title) ?? true }))}
+        onOpenLink={onOpenLink}
+        onOpenNote={onOpenNote}
+      />
     </div>
   </section>;
 }
@@ -1052,7 +1141,8 @@ const SHORTCUTS = [
   ["Ctrl + N", "New note, skill, or command"],
   ["Ctrl + E", "Switch between writing and Markdown preview"],
   ["Alt + ← / →", "Previous or next skill"],
-  ["Ctrl + 1 – 4", "Jump to Today, Notes, Skills, Commands"],
+  ["Ctrl + 1 – 6", "Jump to Today, Notes, Skills & Commands, Keys, Memory, HQ"],
+  ["Ctrl + Alt + Shift + M", "Show or hide the Mailbrain inbox"],
   ["Esc", "Clear search, close a panel, or hide the window"],
 ];
 
@@ -1126,6 +1216,7 @@ function BrandIcon({ icon, size = 16, className = "" }) {
 }
 
 function ServiceMark({ service, size = 16 }) {
+  if (service.Mark) return <service.Mark size={size} className={`brand-${service.tone}`} />;
   if (service.image) return <span className={`brand-image brand-${service.tone}`} style={{ width: size, height: size }} aria-hidden="true">
     <img className="brand-image-light" src={service.image} width={size} height={size} alt="" draggable="false" />
     {service.darkImage && <img className="brand-image-dark" src={service.darkImage} width={size} height={size} alt="" draggable="false" />}
@@ -1170,7 +1261,7 @@ function ServiceScreen({ appName, activeId, switchServices, switchLabel, loadedS
 function ServicePreview({ name }) {
   return <div className="service-body"><EmptyState title={`${name} preview`} body={`The real ${name} window only exists in the desktop app. This placeholder keeps the browser preview honest.`} /></div>;
 }
-const MailPreview = () => <ServicePreview name="Gmail" />;
+const MailPreview = () => <ServicePreview name="Mailbrain" />;
 const NotionPreview = () => <ServicePreview name="Notion" />;
 const TwitterPreview = () => <ServicePreview name="Twitter" />;
 const ExcalidrawPreview = () => <ServicePreview name="Excalidraw" />;
@@ -1230,6 +1321,7 @@ class ErrorBoundary extends React.Component {
 
 function hashRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (parts[0] === "skills" || parts[0] === "commands") return { view: "tools", id: parts[0] };
   return { view: VIEWS.find((entry) => entry.route === parts[0])?.id || "daily", id: parts[1] || null };
 }
 function hashView() { return hashRoute().view; }
@@ -1247,6 +1339,8 @@ function App() {
   const [slashCommands, setSlashCommands] = useState([]);
   const [currentSlashCommand, setCurrentSlashCommand] = useState(null);
   const [commandFilter, setCommandFilter] = useState("");
+  const [toolsTab, setToolsTab] = useState(() => hashRoute().view === "tools" && hashRoute().id === "commands" ? "commands" : "skills");
+  const [keySources, setKeySources] = useState([]);
   const [bots, setBots] = useState([]);
   const [currentBotId, setCurrentBotId] = useState(null);
   const [mailStatus, setMailStatus] = useState({ status: "idle", message: "" });
@@ -1289,17 +1383,19 @@ function App() {
   const currentRef = useRef(null);
   const currentSkillRef = useRef(null);
   const currentSlashCommandRef = useRef(null);
+  const toolsTabRef = useRef(toolsTab);
   const viewRef = useRef("daily");
   const previousViewRef = useRef("daily");
 
   const load = async () => {
     const cloud = api.githubSync.status().catch(() => null);
-    const [list, savedSkills, savedSlashCommands, savedNotebooks, savedBots, version, saved] = await Promise.all([api.notes.list(), api.skills.list(), api.slashCommands.list(), api.folders.list(), api.bots.list({ includeArchived: true }), api.settings.version(), api.settings.get()]);
+    const [list, savedSkills, savedSlashCommands, savedKeys, savedNotebooks, savedBots, version, saved] = await Promise.all([api.notes.list(), api.skills.list(), api.slashCommands.list(), api.keys.list().catch(() => []), api.folders.list(), api.bots.list({ includeArchived: true }), api.settings.version(), api.settings.get()]);
     setBots(savedBots);
     const inboxId = savedNotebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
     setNotes(list);
     setSkills(savedSkills);
     setSlashCommands(savedSlashCommands);
+    setKeySources(savedKeys);
     setNotebooks(savedNotebooks);
     setAppVersion(version);
     cloud.then(setGithubCloud);
@@ -1344,7 +1440,7 @@ function App() {
     api.onFlushEditor(flushOpenEditors);
     api.onOverlayHiding(() => {
       setClosing(true);
-      discardBlankDraft(viewRef.current).catch(() => {});
+      discardBlankDraft(viewRef.current === "tools" ? toolsTabRef.current : viewRef.current).catch(() => {});
       if (SERVICE_IDS.has(viewRef.current)) { serviceApi(viewRef.current).hide().catch(() => {}); setView(previousViewRef.current); }
     });
     api.onOverlayShown(() => { setClosing(false); setShowTick((tick) => tick + 1); loadDaily(); });
@@ -1359,7 +1455,12 @@ function App() {
       loadDaily(today);
       setQuickVoiceSession({ id: update.id || `${Date.now()}`, ...update });
     });
-    const onHashChange = () => { const route = hashRoute(); setView(route.view); if (route.view === "bots") setCurrentBotId(route.id); };
+    const onHashChange = () => {
+      const route = hashRoute();
+      setView(route.view);
+      if (route.view === "tools" && ["skills", "commands"].includes(route.id)) { toolsTabRef.current = route.id; setToolsTab(route.id); }
+      if (route.view === "bots") setCurrentBotId(route.id);
+    };
     addEventListener("hashchange", onHashChange);
     const stopBotStatus = api.bots.onStatus?.((update) => { if (update?.bot?.id) setBots((items) => items.map((item) => item.id === update.bot.id ? update.bot : item)); });
     const stopServiceEvents = [
@@ -1369,7 +1470,7 @@ function App() {
         else setSaveState("Synced");
       }),
       api.onOpenMail?.(() => openService("mail")),
-      api.onMailStatus?.((next) => receiveServiceStatus("mail", "Gmail", next)),
+      api.onMailStatus?.((next) => receiveServiceStatus("mail", "Mailbrain", next)),
       api.onOpenNotion?.(() => openService("notion")),
       api.onNotionStatus?.((next) => receiveServiceStatus("notion", "Notion", next)),
       api.onOpenTwitter?.(() => openService("twitter")),
@@ -1417,7 +1518,16 @@ function App() {
   useEffect(() => { currentRef.current = current; }, [current]);
   useEffect(() => { currentSkillRef.current = currentSkill; }, [currentSkill]);
   useEffect(() => { currentSlashCommandRef.current = currentSlashCommand; }, [currentSlashCommand]);
+  useEffect(() => { toolsTabRef.current = toolsTab; }, [toolsTab]);
   useEffect(() => { viewRef.current = view; if (!SERVICE_IDS.has(view)) previousViewRef.current = view; }, [view]);
+  useEffect(() => {
+    const nav = document.querySelector(".sidebar .nav");
+    const active = nav?.querySelector("button.is-active");
+    if (!nav || !active || nav.scrollWidth <= nav.clientWidth) return;
+    const navRect = nav.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    nav.scrollLeft += activeRect.left - navRect.left - (navRect.width - activeRect.width) / 2;
+  }, [view]);
 
   useEffect(() => {
     const handleKeys = (event) => {
@@ -1432,7 +1542,7 @@ function App() {
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") { event.preventDefault(); createForView(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "e" && viewRef.current === "notes") { event.preventDefault(); setEditorMode((mode) => mode === "write" ? "read" : "write"); return; }
-      if ((event.ctrlKey || event.metaKey) && /^[1-4]$/.test(event.key)) { event.preventDefault(); selectView(VIEWS[Number(event.key) - 1].id); return; }
+      if ((event.ctrlKey || event.metaKey) && /^[1-6]$/.test(event.key)) { event.preventDefault(); selectView(["daily", "notes", "tools", "keys", "memory", "hq"][Number(event.key) - 1]); return; }
       if (event.key === "/" && !typing) { event.preventDefault(); searchRef.current?.focus(); return; }
       if (event.key === "Escape") {
         if (settingsOpen) { setSettingsOpen(false); return; }
@@ -1486,12 +1596,15 @@ function App() {
   }
   async function reloadBots() { const saved = await api.bots.list({ includeArchived: true }); setBots(saved); return saved; }
   async function reloadNotes() { const saved = await api.notes.list(); setNotes(saved); return saved; }
+  async function reloadKeys() { const saved = await api.keys.list(); setKeySources(saved); return saved; }
   function openBot(id) { setCurrentBotId(id || null); setView("bots"); setSearchQuery(""); setCompressOpen(false); location.hash = id ? `/bots/${id}` : "/bots"; }
 
+  // Save only edits still waiting on their debounce. Re-saving an untouched page bumped its
+  // updated_at, which every 30-second cloud sync (it flushes first) then pushed as a new edit.
   function flushOpenEditors() {
-    if (currentRef.current && !isBlankNote(currentRef.current)) saveNow(currentRef.current);
-    if (currentSkillRef.current && !isBlankSkill(currentSkillRef.current)) saveSkillNow(currentSkillRef.current);
-    if (currentSlashCommandRef.current && !isBlankCommand(currentSlashCommandRef.current)) saveSlashCommandNow(currentSlashCommandRef.current);
+    if (saveTimer.current && currentRef.current && !isBlankNote(currentRef.current)) saveNow(currentRef.current);
+    if (skillSaveTimer.current && currentSkillRef.current && !isBlankSkill(currentSkillRef.current)) saveSkillNow(currentSkillRef.current);
+    if (slashCommandSaveTimer.current && currentSlashCommandRef.current && !isBlankCommand(currentSlashCommandRef.current)) saveSlashCommandNow(currentSlashCommandRef.current);
   }
 
   async function discardBlankDraft(kind) {
@@ -1541,7 +1654,7 @@ function App() {
       const skill = await api.skills.create({ name: "", category: "Unsorted", body: "" });
       setSkills((items) => [skill, ...items]);
       setCurrentSkill(skill);
-      selectView("skills");
+      openTools("skills");
       setSaveState("Saved");
     } catch { setSaveState("Could not create skill"); }
   }
@@ -1553,14 +1666,14 @@ function App() {
       setSlashCommands((items) => [item, ...items]);
       setCommandFilter("");
       setCurrentSlashCommand(item);
-      selectView("commands");
+      openTools("commands");
       setSaveState("Saved");
     } catch { setSaveState("Could not create command"); }
   }
 
   function createForView() {
-    if (viewRef.current === "skills") return createSkill();
-    if (viewRef.current === "commands") return createSlashCommand();
+    if (viewRef.current === "tools" && toolsTabRef.current === "skills") return createSkill();
+    if (viewRef.current === "tools" && toolsTabRef.current === "commands") return createSlashCommand();
     return createNote();
   }
 
@@ -1609,7 +1722,7 @@ function App() {
   }
 
   async function saveNow(note) {
-    clearTimeout(saveTimer.current);
+    clearTimeout(saveTimer.current); saveTimer.current = null;
     setSaveState("Saving…");
     try {
       const saved = await api.notes.update(note.id, { title: note.title, body: note.body, folderId: note.folder_id, pinned: Boolean(note.pinned) });
@@ -1640,7 +1753,7 @@ function App() {
   }
 
   async function saveSkillNow(skill) {
-    clearTimeout(skillSaveTimer.current);
+    clearTimeout(skillSaveTimer.current); skillSaveTimer.current = null;
     setSaveState("Saving…");
     try {
       const saved = await api.skills.update(skill.id, { name: skill.name, category: skill.category?.trim() || "Unsorted", body: skill.body, sourceUrl: skill.source_url?.trim() || "", ownership: skill.ownership === "other" ? "other" : "mine" });
@@ -1668,7 +1781,7 @@ function App() {
   }
 
   async function saveSlashCommandNow(item) {
-    clearTimeout(slashCommandSaveTimer.current);
+    clearTimeout(slashCommandSaveTimer.current); slashCommandSaveTimer.current = null;
     setSaveState("Saving…");
     try {
       const saved = await api.slashCommands.update(item.id, { name: item.name, command: item.command, body: item.body });
@@ -1904,6 +2017,54 @@ function App() {
     setEditorMode("write");
     if (window.matchMedia("(max-width: 56rem)").matches) setLibraryBrowserOpen(false);
   }
+  // --- Wiki-links -----------------------------------------------------------------
+  // Backlinks come from the main process's link index. They are reloaded when the open note
+  // changes, when its title changes (which re-points what links to it), and when the library
+  // changes, so a link typed in another note shows up here without a restart.
+  const [backlinks, setBacklinks] = useState([]);
+  useEffect(() => {
+    if (!current?.id || !api.notes.backlinks) { setBacklinks([]); return undefined; }
+    let live = true;
+    api.notes.backlinks(current.id)
+      .then((rows) => { if (live) setBacklinks(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (live) setBacklinks([]); });
+    return () => { live = false; };
+  }, [current?.id, current?.title, notes]);
+
+  // Titles offered by the editor's `[[` picker: every named note except the open one.
+  const linkTitles = notes
+    .filter((item) => !item.deleted_at && item.title?.trim() && item.id !== current?.id)
+    .map((item) => item.title.trim());
+
+  // A link points at a TITLE, so it resolves against the live note list and keeps working
+  // when a note is renamed. Clicking a link to a note that does not exist creates it.
+  function noteByTitle(title) {
+    const key = linkKey(title);
+    return key ? notes.find((item) => !item.deleted_at && linkKey(item.title) === key) || null : null;
+  }
+  function noteExists(title) { return Boolean(noteByTitle(title)); }
+  function openNoteById(id) {
+    const note = notes.find((item) => item.id === id);
+    if (note) { selectView("notes"); selectNoteFromBrowser(note); }
+  }
+  async function openWikiLink(title) {
+    const existing = noteByTitle(title);
+    if (existing) { selectView("notes"); selectNoteFromBrowser(existing); return; }
+    const clean = String(title || "").trim();
+    if (!clean) return;
+    try {
+      await discardBlankDraft("notes");
+      const inboxId = notebooks.find((notebook) => notebook.is_inbox)?.id || "inbox";
+      const destination = activeNotebookId === "all" ? inboxId : activeNotebookId;
+      const note = await api.notes.create({ title: clean, body: "", folderId: destination });
+      setNotes((items) => [note, ...items]);
+      setCurrent(note);
+      selectView("notes");
+      setEditorMode("write");
+      showSaveNotice(`Created "${clean}"`, 1400);
+    } catch (error) { showSaveNotice(error.message || "Could not create that note", 2000); }
+  }
+
   function selectCommandFromBrowser(item) {
     if (currentSlashCommandRef.current?.id !== item.id) discardBlankDraft("commands").catch(() => {});
     setCurrentSlashCommand(item);
@@ -1911,17 +2072,27 @@ function App() {
   }
 
   function selectView(nextView) {
-    if (nextView !== viewRef.current) discardBlankDraft(viewRef.current).catch(() => {});
+    if (nextView !== viewRef.current) discardBlankDraft(viewRef.current === "tools" ? toolsTabRef.current : viewRef.current).catch(() => {});
     setView(nextView);
     const route = VIEWS.find((entry) => entry.id === nextView)?.route;
-    if (route) location.hash = `/${route}`;
+    if (route) location.hash = `/${route}${nextView === "tools" ? `/${toolsTabRef.current}` : ""}`;
     setSearchQuery("");
     setCompressOpen(false);
     if (nextView === "daily") loadDaily();
   }
+  function openTools(kind) {
+    if (!["skills", "commands"].includes(kind)) return;
+    if (viewRef.current === "tools" && toolsTabRef.current !== kind) discardBlankDraft(toolsTabRef.current).catch(() => {});
+    toolsTabRef.current = kind;
+    setToolsTab(kind);
+    setView("tools");
+    location.hash = `/tools/${kind}`;
+    setSearchQuery("");
+    setCompressOpen(false);
+  }
   function openSearchNote(note) { discardBlankDraft("notes").catch(() => {}); setNoteFilter(""); setCurrent(note); setActiveNotebookId(note.folder_id); selectView("notes"); }
-  function openSearchSkill(skill) { discardBlankDraft("skills").catch(() => {}); setCurrentSkill(skill); selectView("skills"); }
-  function openSearchCommand(item) { discardBlankDraft("commands").catch(() => {}); setCommandFilter(""); setCurrentSlashCommand(item); selectView("commands"); }
+  function openSearchSkill(skill) { discardBlankDraft("skills").catch(() => {}); setCurrentSkill(skill); openTools("skills"); }
+  function openSearchCommand(item) { discardBlankDraft("commands").catch(() => {}); setCommandFilter(""); setCurrentSlashCommand(item); openTools("commands"); }
 
   const visibleNotes = useMemo(() => {
     const needle = noteFilter.trim().toLocaleLowerCase();
@@ -1939,8 +2110,8 @@ function App() {
   const counts = {
     daily: todayCounts ? Math.max(0, todayCounts.total - todayCounts.done) : 0,
     notes: notes.filter((note) => !note.deleted_at).length,
-    skills: skills.length,
-    commands: slashCommands.length,
+    tools: skills.length + slashCommands.length,
+    keys: keySources.filter((item) => item.exists).length,
     cepExtensions: null,
     projects: null,
     bots: bots.filter((bot) => !bot.archivedAt).length,
@@ -1966,11 +2137,11 @@ function App() {
     />
   </div>;
   return <div className={`window-surface ${closing ? "is-closing" : ""}`} ref={surfaceRef}><main className="notebook">
-    <aside className={`sidebar ${LIBRARY_VIEWS.has(view) && !searchQuery.trim() ? "is-library" : ""}`} aria-label="Notebook navigation">
+    <aside className={`sidebar ${(LIBRARY_VIEWS.has(view) || view === "keys" || view === "memory") && !searchQuery.trim() ? "is-library" : ""}`} aria-label="Notebook navigation">
       <div className="sidebar-top">
         <div className="wordmark"><img src={notebookIconUrl} alt="" /><strong>Notebook</strong></div>
         <div className="sidebar-top-actions">
-          {LIBRARY_VIEWS.has(view) && <IconButton label={NEW_LABEL[view]} onClick={createForView}><Plus size={18} strokeWidth={2} /></IconButton>}
+          {LIBRARY_VIEWS.has(view) && <IconButton label={view === "tools" && toolsTab === "commands" ? "New command" : view === "tools" ? "New skill" : "New note"} onClick={createForView}><Plus size={18} strokeWidth={2} /></IconButton>}
           <button type="button" className={`github-account-button ${githubCloud?.accountMatches ? "is-connected" : ""}`} aria-label={githubCloud?.accountMatches ? "GitHub @blixvip connected" : "Connect GitHub @blixvip"} title={githubCloud?.accountMatches ? "@blixvip · live sync" : "Connect @blixvip"} onClick={openSettings}>
             <GithubAvatar account={githubCloud} size={22} />
             <i aria-hidden="true" />
@@ -1979,27 +2150,32 @@ function App() {
         </div>
       </div>
 
-      <label className="search"><Search size={15} strokeWidth={1.8} aria-hidden="true" /><input ref={searchRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search everything" aria-label="Search everything" /><kbd>Ctrl K</kbd></label>
+      <label className="search"><Search size={15} strokeWidth={1.8} aria-hidden="true" /><input ref={searchRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search" aria-label="Search everything" /><kbd>Ctrl K</kbd></label>
 
       <nav className="nav" aria-label="Pages">
         {VIEWS.map(({ id, label, Icon, group }, index) => <React.Fragment key={id}>
           {group && VIEWS[index - 1]?.group !== group && <span className="nav-heading">{group}</span>}
-          <button type="button" className={view === id && !searchQuery ? "is-active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => id === "bots" ? openBot(null) : selectView(id)}>
-            <Icon size={16} strokeWidth={1.8} aria-hidden="true" /><strong>{label}</strong><small>{counts[id] ?? ""}</small>
+          <button type="button" data-view={id} className={view === id && !searchQuery ? "is-active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => id === "bots" ? openBot(null) : selectView(id)}>
+            <Icon size={18} aria-hidden="true" /><strong>{id === "tools" ? <><span>Skills &amp; </span><span>Commands</span></> : label}</strong><small>{counts[id] ?? ""}</small>
           </button>
+          {id === "hq" && view === "hq" && !searchQuery && <HqSidebar />}
         </React.Fragment>)}
         <span className="nav-heading">Apps</span>
-        {SERVICES.map(({ id, label, brand, tone, hotkey }) => <button type="button" key={id} className={view === id ? "is-active" : ""} title={hotkey ? `${label} · ${hotkey}` : label} onClick={() => openService(id)}>
-          <BrandIcon icon={brand} className={`brand-${tone}`} size={16} />
-          <strong>{label}</strong>
-          {loadedServices.has(id) ? <small className="nav-loaded" title={`${label} is preloaded; its session stays persistent`}>●</small> : <ExternalLink className="nav-external" size={13} strokeWidth={1.8} aria-hidden="true" />}
-        </button>)}
+        {/* One row of app marks: four full rows of brand names pushed the calendar off the window. */}
+        <div className="nav-apps">
+          {SERVICES.map((service) => { const { id, label, hotkey } = service; return <button type="button" key={id} className={view === id ? "is-active" : ""} title={hotkey ? `${label} · ${hotkey}` : label} onClick={() => openService(id)}>
+            <ServiceMark service={service} size={18} />
+            <strong className="visually-hidden">{label}</strong>
+            {loadedServices.has(id) && <i className="nav-loaded" aria-hidden="true" title={`${label} is loaded`} />}
+          </button>; })}
+        </div>
       </nav>
 
       <div className="sidebar-body">
         {searchQuery.trim() ? <SearchResults query={searchQuery} notes={notes} skills={skills} slashCommands={slashCommands} daily={daily} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onOpenCommand={openSearchCommand} onOpenTask={() => selectView("daily")} />
+          : view === "hq" ? null
           : view === "bots" ? <BotSidebar bots={bots} currentId={currentBotId} onSelect={openBot} />
-            : ["notes", "skills", "commands", "cepExtensions", "projects"].includes(view) ? null
+            : ["notes", "tools", "keys", "memory", "cepExtensions", "projects"].includes(view) ? null
               : <DailySidebar page={daily} month={dailyMonth.month} days={dailyMonth.days} status={dailyStatus} onSelectDate={selectDailyDate} onMonth={selectDailyMonth} />}
       </div>
 
@@ -2057,17 +2233,34 @@ function App() {
         onCreate={() => createNote()}
         onHide={() => api.window.hide()}
         editorRef={editorRef}
+        backlinks={backlinks}
+        linkTitles={linkTitles}
+        noteExists={noteExists}
+        onOpenLink={openWikiLink}
+        onOpenNote={openNoteById}
       />
     </div> : view === "cepExtensions" ? <CepExtensionsPage api={api.cepExtensions} projectsApi={api.projects} onOpenProject={(id) => { setView("projects"); location.hash = `/projects/${id}`; }} onHide={() => api.window.hide()} />
       : view === "projects" ? <ProjectsPage api={api.projects} github={githubCloud} onGithubSettings={openSettings} skills={skills} commands={slashCommands} onOpenSkill={openSearchSkill} onOpenCommand={openSearchCommand} onHide={() => api.window.hide()} />
       : view === "bots" ? <BotsWorkspace api={api} bots={bots} skills={skills} notes={notes} currentId={currentBotId} onCurrent={openBot} onBotsChange={reloadBots} onNotesChange={reloadNotes} onOpenNote={openSearchNote} onOpenSkill={openSearchSkill} onHide={() => api.window.hide()} />
-      : view === "skills" ? <SkillsWorkspace skills={skills} current={currentSkill} status={saveState} editorCategories={skillEditorCategories} onSelect={(skill) => { if (currentSkillRef.current?.id !== skill.id) discardBlankDraft("skills").catch(() => {}); setCurrentSkill(skill); }} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onCreate={createSkill} onTogglePin={toggleSkillStar} onOpenSource={(url) => api.skills.openSource(url)} onDiscardEmpty={() => discardBlankDraft("skills").catch(() => {})} onHide={() => api.window.hide()} />
-      : view === "commands" ? <div className={`library-workspace ${libraryBrowserOpen ? "is-browsing" : ""}`}>
-        {libraryBrowserOpen && !searchQuery.trim() && <LibraryBrowser title="Commands" count={visibleSlashCommands.length} label="Command library" createLabel="New command" onCreate={createSlashCommand} onClose={() => setLibraryBrowserOpen(false)} query={commandFilter} onQuery={setCommandFilter} filterLabel="Filter commands">
-          <SlashCommandList items={visibleSlashCommands} currentId={currentSlashCommand?.id} onSelect={selectCommandFromBrowser} onRemove={removeSlashCommand} onCreate={createSlashCommand} query={commandFilter} />
-        </LibraryBrowser>}
-        <CommandPage item={currentSlashCommand} status={saveState} browserOpen={libraryBrowserOpen && !searchQuery.trim()} onBrowserToggle={toggleLibraryBrowser} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} onHide={() => api.window.hide()} />
-      </div>
+      : view === "tools" ? <section className="tools-workspace" aria-label="Skills and commands">
+        <div className="tools-tabs" role="tablist" aria-label="Skills and commands">
+          <button type="button" role="tab" aria-selected={toolsTab === "skills"} onClick={() => openTools("skills")}><Layers3 size={14} strokeWidth={1.8} />Skills <small>{skills.length}</small></button>
+          <button type="button" role="tab" aria-selected={toolsTab === "commands"} onClick={() => openTools("commands")}><SquareTerminal size={14} strokeWidth={1.8} />Commands <small>{slashCommands.length}</small></button>
+        </div>
+        <div className="tools-content">
+          {toolsTab === "skills"
+            ? <SkillsWorkspace skills={skills} current={currentSkill} status={saveState} editorCategories={skillEditorCategories} onSelect={(skill) => { if (currentSkillRef.current?.id !== skill.id) discardBlankDraft("skills").catch(() => {}); setCurrentSkill(skill); }} onEdit={editSkill} onSave={saveSkillNow} onCopy={copySkill} onRemove={removeSkill} onCreate={createSkill} onTogglePin={toggleSkillStar} onOpenSource={(url) => api.skills.openSource(url)} onDiscardEmpty={() => discardBlankDraft("skills").catch(() => {})} onHide={() => api.window.hide()} />
+            : <div className={`library-workspace ${libraryBrowserOpen ? "is-browsing" : ""}`}>
+              {libraryBrowserOpen && !searchQuery.trim() && <LibraryBrowser title="Commands" count={visibleSlashCommands.length} label="Command library" createLabel="New command" onCreate={createSlashCommand} onClose={() => setLibraryBrowserOpen(false)} query={commandFilter} onQuery={setCommandFilter} filterLabel="Filter commands">
+                <SlashCommandList items={visibleSlashCommands} currentId={currentSlashCommand?.id} onSelect={selectCommandFromBrowser} onRemove={removeSlashCommand} onCreate={createSlashCommand} query={commandFilter} />
+              </LibraryBrowser>}
+              <CommandPage item={currentSlashCommand} status={saveState} browserOpen={libraryBrowserOpen && !searchQuery.trim()} onBrowserToggle={toggleLibraryBrowser} onEdit={editSlashCommand} onSave={saveSlashCommandNow} onCopy={copySlashCommand} onRemove={removeSlashCommand} onCreate={createSlashCommand} onHide={() => api.window.hide()} />
+            </div>}
+        </div>
+      </section>
+      : view === "hq" ? <HqPage api={api} />
+      : view === "memory" ? <MemoryPage api={api} onCopy={(content) => api.clipboard.writeText(content)} onHide={() => api.window.hide()} />
+      : view === "keys" ? <KeysPage keys={keySources} onRefresh={reloadKeys} onCopy={(content) => api.clipboard.writeText(content)} onHide={() => api.window.hide()} />
         : <TodayPage page={daily} status={dailyStatus} onSelectDate={selectDailyDate} onAdd={addDailyTask} onToggle={toggleDailyTask} onLocalEdit={editDailyTaskLocal} onSave={saveDailyTask} onMove={moveDailyTask} onRemove={removeDailyTask} onActivityAdd={addDailyActivity} onActivityUpdate={updateDailyActivity} onActivityRemove={removeDailyActivity} voiceSession={quickVoiceSession} onVoiceComplete={completeQuickVoiceLog} onHide={() => api.window.hide()} onRetry={() => loadDaily()} />}
 
     {view === "notes" && compressOpen && <Compressor note={current} onClose={() => setCompressOpen(false)} />}

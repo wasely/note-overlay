@@ -11,6 +11,8 @@ function inlineNodes(text) {
     if (token.type === "code") return { type: "text", text: token.text, marks: [{ type: "code" }] };
     if (token.type === "strike") return { type: "text", text: token.text, marks: [{ type: "strike" }] };
     if (token.type === "link") return { type: "text", text: token.text, marks: [{ type: "link", attrs: { href: token.href } }] };
+    // Wiki-links stay literal `[[...]]` text in the editor, so serializing back is lossless.
+    if (token.type === "wikilink") return { type: "text", text: token.raw };
     return { type: "text", text: token.text };
   });
 }
@@ -98,7 +100,42 @@ function listItemText(item) {
   return (item.content || []).map((child) => blockToMarkdown(child)).filter(Boolean).join("\n");
 }
 
+// A table typed with Enter arrives as one single-line paragraph per row; those rows are joined by
+// a single newline so they save as one table. The rule is deliberately narrow, because a join
+// rewrites the note:
+//  - only SINGLE-LINE pipe paragraphs join. A stored table is one paragraph of several lines and
+//    is already complete, so two stored tables separated by a blank line stay two tables;
+//  - a run of such rows joins only if it really is a table (its second line is the |---| rule),
+//    so pipe-ish prose kept on separate lines is written back exactly as it was;
+//  - an empty paragraph (the user pressing Enter twice) always ends a run.
+const PIPE_ROW = /^\s*\|.*\|\s*$/;
+const PIPE_RULE = /^\s*\|(\s*:?-+:?\s*\|)+\s*$/;
+const isRowParagraph = (text) => !text.includes("\n") && PIPE_ROW.test(text);
 export function docToMarkdown(json) {
   const content = json?.content || [];
-  return content.map(blockToMarkdown).filter((text) => text !== "").join("\n\n");
+  const parts = [];
+  let afterGap = false;
+  for (const text of content.map(blockToMarkdown)) {
+    if (text === "") { afterGap = true; continue; }
+    parts.push({ text, afterGap });
+    afterGap = false;
+  }
+  // Mark each part that continues a typed table started above it.
+  const joins = new Array(parts.length).fill(false);
+  for (let start = 0; start < parts.length;) {
+    let end = start;
+    while (isRowParagraph(parts[end]?.text || "") && (end === start || !parts[end].afterGap)) end += 1;
+    if (end - start >= 2 && PIPE_RULE.test(parts[start + 1].text)) for (let index = start + 1; index < end; index += 1) joins[index] = true;
+    start = Math.max(end, start + 1);
+  }
+  return parts.reduce((out, part, index) => index ? out + (joins[index] ? "\n" : "\n\n") + part.text : part.text, "");
+}
+
+// Plain-text pastes that look like Markdown (from a terminal, an AI chat, a .md file) arrive as
+// formatted content instead of literal "#" and "**" characters. Rich HTML pastes keep TipTap's path.
+const MARKDOWN_SIGNAL = /^(#{1,6} |[-*+] |\d+[.)] |> |```|- \[[ xX]\] )|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:/m;
+// A pipe table: a |-row followed by its |---|:-:| rule.
+const TABLE_SIGNAL = /^\s*\|.*\|\s*\r?\n\s*\|(\s*:?-+:?\s*\|)+\s*$/m;
+export function looksLikeMarkdown(text) {
+  return typeof text === "string" && text.length > 0 && (MARKDOWN_SIGNAL.test(text) || TABLE_SIGNAL.test(text));
 }

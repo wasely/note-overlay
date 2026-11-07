@@ -1,0 +1,148 @@
+/* Motion + finish layer. Loaded after aside.css. Calm, short, eased — things settle into place
+   rather than bounce. Every entrance uses fill-mode `backwards`, so once it ends no transform
+   lingers on the element (a leftover transform would re-anchor position:fixed children).
+   Reduced motion is handled globally in styles.css. */
+:root {
+  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-press: cubic-bezier(0.3, 0, 0.5, 1);
+  --dur-enter: 260ms;
+  --focus-ring: 0 0 0 2px var(--color-panel), 0 0 0 4px oklch(62% 0.17 255 / .45);
+}
+
+/* Opacity only: a moving panel would shift drag targets (Projects ranking) mid-gesture. */
+@keyframes nb-panel-in { from { opacity: 0; } }
+@keyframes nb-rise { from { opacity: 0; transform: translateY(5px); } }
+@keyframes nb-fade { from { opacity: 0; } }
+@keyframes nb-tick { 0% { opacity: .55; } 100% { opacity: 1; } }
+
+/* ---------- Page switch: the work panel settles in ---------- */
+.notebook > :not(.sidebar):not(.settings):not(.settings-scrim) {
+  animation: nb-panel-in var(--dur-enter) var(--ease-settle) backwards;
+}
+.editor-body, .paper, .skills-reader, .memory-page > * { animation: nb-fade var(--dur-enter) var(--ease-out) backwards; }
+
+/* ---------- Today: header, composer and log arrive in sequence ---------- */
+.paper-date { animation: nb-rise 320ms var(--ease-settle) backwards; }
+.today-sections { animation: nb-rise 320ms 40ms var(--ease-settle) backwards; }
+.day-composer { animation: nb-rise 360ms 80ms var(--ease-settle) backwards; }
+.activity-history-head { animation: nb-rise 360ms 120ms var(--ease-settle) backwards; }
+.activity-list > * { animation: nb-rise 340ms var(--ease-settle) backwards; }
+.activity-list > :nth-child(1) { animation-delay: 150ms; }
+.activity-list > :nth-child(2) { animation-delay: 180ms; }
+.activity-list > :nth-child(3) { animation-delay: 210ms; }
+.activity-list > :nth-child(4) { animation-delay: 240ms; }
+.activity-list > :nth-child(5) { animation-delay: 270ms; }
+.activity-list > :nth-child(n + 6) { animation-delay: 300ms; }
+
+/* ---------- Lists: rows rise in a short stagger the first time they mount ---------- */
+.row { animation: nb-rise 280ms var(--ease-settle) backwards; }
+.row:nth-child(2) { animation-delay: 25ms; }
+.row:nth-child(3) { animation-delay: 50ms; }
+.row:nth-child(4) { animation-delay: 75ms; }
+.row:nth-child(5) { animation-delay: 100ms; }
+.row:nth-child(n + 6) { animation-delay: 120ms; }
+
+/* ---------- Sidebar ---------- */
+.nav button { transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out); }
+.nav button svg { transition: transform var(--dur-short) var(--ease-settle), color var(--dur-short) var(--ease-out); }
+.nav button:hover svg { transform: translateX(1px); }
+.calendar-day { transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out); }
+.calendar-day:active { transform: scale(.92); }
+
+/* ---------- Press feedback: buttons dip slightly, never jump ---------- */
+.button, .icon-button, .today-sections button, .duration-switch button, .ai-panel-buttons button, .format-bar button {
+  transition-property: background-color, border-color, color, box-shadow, transform, opacity;
+  transition-duration: var(--dur-micro);
+  transition-timing-function: var(--ease-out);
+}
+.button:active:not(:disabled), .icon-button:active:not(:disabled), .ai-panel-buttons button:active, .format-bar button:active { transform: scale(.97); transition-timing-function: var(--ease-press); }
+.today-sections button.is-active, .duration-switch button.is-active, .service-switch button.is-active { animation: nb-fade 160ms var(--ease-out); }
+
+/* ---------- Focus: one visible, consistent ring for keyboard users ---------- */
+:is(button, a, [role="button"], [role="tab"], input[type="checkbox"], input[type="radio"]):focus-visible { outline: none; box-shadow: var(--focus-ring); }
+[data-theme="dark"] { --focus-ring: 0 0 0 2px var(--color-panel), 0 0 0 4px oklch(70% 0.14 255 / .5); }
+
+/* ---------- Popovers + settings ---------- */
+.menu-popover { animation: menu-in 160ms var(--ease-settle) both; }
+.settings { animation: nb-panel-in 240ms var(--ease-settle) backwards; }
+.settings-scrim { animation: nb-fade 200ms var(--ease-out) backwards; }
+
+/* ---------- Tasks: the check pops in, the text settles to done ---------- */
+@keyframes nb-check-pop { 0% { opacity: 0; transform: scale(.4) rotate(-12deg); } 60% { opacity: 1; transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes nb-box-pulse { 0% { box-shadow: 0 0 0 0 oklch(62% 0.17 255 / .35); } 100% { box-shadow: 0 0 0 6px oklch(62% 0.17 255 / 0); } }
+.line-box { transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out); }
+.line.is-done .line-box { animation: nb-box-pulse 420ms var(--ease-out); }
+.line.is-done .line-box svg { animation: nb-check-pop 300ms var(--ease-settle) backwards; }
+.line-text { transition: color var(--dur-long) var(--ease-out), text-decoration-color var(--dur-long) var(--ease-out); }
+.checklist > .line { animation: nb-rise 300ms var(--ease-settle) backwards; }
+.checklist > .line:nth-child(2) { animation-delay: 30ms; }
+.checklist > .line:nth-child(n + 3) { animation-delay: 60ms; }
+
+/* ---------- Skills cards: arrow nudges toward the click ---------- */
+.skills-card:hover .skills-card-arrow, .skills-row:hover .skills-row-arrow { transform: translateX(3px); }
+.skills-cards > * { animation: nb-rise 300ms var(--ease-settle) backwards; }
+.skills-cards > :nth-child(2) { animation-delay: 30ms; }
+.skills-cards > :nth-child(3) { animation-delay: 60ms; }
+.skills-cards > :nth-child(n + 4) { animation-delay: 90ms; }
+
+/* ---------- Search results + command palette rows ---------- */
+.result-mark { transition: transform var(--dur-short) var(--ease-settle); }
+button:hover > .result-mark { transform: scale(1.08); }
+
+/* ---------- Notes: switching notes settles in (no transform left behind) ---------- */
+.note-canvas { animation: nb-rise 280ms var(--ease-settle) backwards; }
+
+/* ---------- Search: result groups cascade in as you type ---------- */
+.results-summary { animation: nb-fade 160ms var(--ease-out) backwards; }
+.results section { animation: nb-rise 240ms var(--ease-settle) backwards; }
+.results section:nth-of-type(2) { animation-delay: 40ms; }
+.results section:nth-of-type(n + 3) { animation-delay: 80ms; }
+
+/* ---------- Calendar: picking a day lands with a small pop ---------- */
+@keyframes nb-pop { 0% { transform: scale(.82); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+.calendar-day.is-selected { animation: nb-pop 260ms var(--ease-settle); }
+
+/* ---------- Projects detail: header then body ---------- */
+.project-detail-header .project-title { animation: nb-rise 300ms var(--ease-settle) backwards; }
+.project-detail-header .project-header-meta { animation: nb-fade 300ms 80ms var(--ease-out) backwards; }
+.back-button svg { transition: transform var(--dur-short) var(--ease-settle); }
+.back-button:hover svg { transform: translateX(-3px); }
+
+/* ---------- Grids + lists cascade in on open (opacity only where things can be dragged) ---------- */
+.cep-main-grid > *, .cep-secondary-grid > *, .key-index-list > *, .memory-stores > * { animation: nb-rise 320ms var(--ease-settle) backwards; }
+:is(.cep-main-grid, .cep-secondary-grid, .key-index-list, .memory-stores) > :nth-child(2) { animation-delay: 35ms; }
+:is(.cep-main-grid, .cep-secondary-grid, .key-index-list, .memory-stores) > :nth-child(3) { animation-delay: 70ms; }
+:is(.cep-main-grid, .cep-secondary-grid, .key-index-list, .memory-stores) > :nth-child(4) { animation-delay: 105ms; }
+:is(.cep-main-grid, .cep-secondary-grid, .key-index-list, .memory-stores) > :nth-child(n + 5) { animation-delay: 140ms; }
+.project-rank-row { animation: nb-fade 280ms var(--ease-out) backwards; }
+.cep-page-header, .memory-document { animation: nb-fade 260ms var(--ease-out) backwards; }
+
+/* ---------- App open: the sidebar wakes up top to bottom, once ---------- */
+.nav > * { animation: nb-fade 300ms var(--ease-out) backwards; }
+.nav > :nth-child(2) { animation-delay: 20ms; }
+.nav > :nth-child(3) { animation-delay: 40ms; }
+.nav > :nth-child(4) { animation-delay: 60ms; }
+.nav > :nth-child(5) { animation-delay: 80ms; }
+.nav > :nth-child(n + 6) { animation-delay: 100ms; }
+
+/* ---------- Live status dots breathe instead of sitting still ---------- */
+@keyframes nb-breathe { 50% { opacity: .45; } }
+.nav-loaded, .github-account-button.is-connected > i { animation: nb-breathe 2.8s var(--ease-in-out) infinite; }
+
+/* ---------- HQ sub-pages unfold under the HQ item ---------- */
+.hq-pages > * { animation: nb-rise 260ms var(--ease-settle) backwards; }
+.hq-pages > :nth-child(2) { animation-delay: 20ms; }
+.hq-pages > :nth-child(3) { animation-delay: 40ms; }
+.hq-pages > :nth-child(4) { animation-delay: 60ms; }
+.hq-pages > :nth-child(5) { animation-delay: 80ms; }
+.hq-pages > :nth-child(n + 6) { animation-delay: 100ms; }
+
+/* ---------- Skills shelves: chevron turns, items drop out of the shelf ---------- */
+@keyframes nb-turn-down { from { transform: rotate(-90deg); } }
+@keyframes nb-turn-up { from { transform: rotate(90deg); } }
+.skills-shelf-toggle[aria-expanded="true"] svg { animation: nb-turn-down 220ms var(--ease-settle); }
+.skills-shelf-toggle[aria-expanded="false"] svg { animation: nb-turn-up 220ms var(--ease-settle); }
+.skills-item { animation: nb-rise 240ms var(--ease-settle) backwards; }
+.skills-shelf-head + .skills-item + .skills-item { animation-delay: 25ms; }
+.skills-shelf-head + .skills-item + .skills-item + .skills-item { animation-delay: 50ms; }
+.skills-shelf-head + .skills-item + .skills-item + .skills-item + .skills-item ~ .skills-item { animation-delay: 75ms; }

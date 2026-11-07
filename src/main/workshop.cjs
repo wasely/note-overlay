@@ -84,6 +84,31 @@ const TIER_VENDOR = [
   ["youtube-rag-scraper", "YouTube RAG Scraper", "tooling"], ["prime-agent", "Prime Agent", "tooling"],
 ];
 
+// Every project lands in one plain group so a long list stays scannable.
+const GROUPS = ["Video & Premiere", "Motion graphics", "X & social", "Browser extensions", "Bots & automation", "AI tools", "Dev tools", "Sites & stores", "Personal", "Other", "Not mine"];
+const FOLDER_GROUP = {
+  "Video & Premiere": ["clipforge-ai", "buzzroll-studio", "cep", "premiere-x", "brgod", "easyedit", "podcast-enhance-bridge", "blendremake", "thumb-studio", "thumbnail-generator", "sound-hunter", "headline-flicker", "search-method-lab", "ibm-technology-channel-deck"],
+  "Motion graphics": ["null", "null-studio", "null-public", "null-motion-web", "motionlayer", "motion-agency", "frameforge-local", "motionclone-waitlist", "openmotion", "genga"],
+  "X & social": ["x-master-app", "x-virality-tracker", "x-virality-tracker-production", "x-media-archive", "x-media", "x-media-web", "x-gemini-lens"],
+  "Browser extensions": ["watch-better", "ai-only-youtube", "extension-manager", "tab-brain", "turbo-tube", "transcript-saver", "youtube-gemini-overlay", "chrome-extentions", "context-compiler"],
+  "Bots & automation": ["chronicle-bot", "discord-youtube-tracker", "discord-reddit-meme-bot", "china-ai-radar", "ai-channel-watcher", "marketplace-deal-radar"],
+  "AI tools": ["ai-broadcaster", "ai-broadcaster-privacy", "ai-broadcaster-android", "agent-workbench", "agent-watcher", "agent-browser-eval", "room-brain", "mailbrain", "note-overlay", "script-gen", "signal-forge", "component-generator", "landgraf", "llmlingua-local"],
+  "Dev tools": ["chromectl", "phonectl", "mobile-harness", "ai-usage", "ram checker", "valorant-focus-guard", "pc-speed-guard", "codex-performance", "desktop-composer", "vps-deploy", "blixvip-skills", "skills", "keylog", "uo"],
+  "Sites & stores": ["sync-studios-client", "sync-studios-client-guide", "obsession-store", "blixvip-home", "wasely", "watch-better-emails"],
+  "Personal": ["internship-resume", "drip-to-impress"],
+  "Not mine": ["sayo_cli", "closepaw-upstream", "cli-anything", "pyvideotrans", "prime-agent"],
+};
+const folderGroup = new Map(Object.entries(FOLDER_GROUP).flatMap(([group, folders]) => folders.map((folder) => [folder, group])));
+// Categories the sync may overwrite; anything else was typed by hand and is kept.
+const AUTO_CATEGORIES = new Set(["uncategorized", "local", "", ...GROUPS.map((group) => group.toLowerCase())]);
+
+function projectGroup(project) {
+  const local = String(project.local_path || "");
+  const folder = folderKey(project);
+  if (physicalWorkspace(local) === "else" || /[\\/]x-ingestion-tests[\\/]/i.test(local) || catalog.get(folder)?.ownership === "vendor") return "Not mine";
+  return folderGroup.get(folder) || "Other";
+}
+
 const catalog = new Map();
 function register(entry) { catalog.set(entry.folder.toLowerCase(), entry); }
 
@@ -168,7 +193,9 @@ function preferredPath(item) {
 // however it got there, so it is rescanned instead of trusted.
 function borrowedLogo(logoPath, local) {
   if (!logoPath || !local) return false;
-  const relative = path.relative(local, logoPath);
+  const folder = path.basename(local);
+  const home = [local, path.join(ROOTS.code, folder), path.join(ROOTS.live, folder)].find((copy) => { const inside = path.relative(copy, logoPath); return inside && !inside.startsWith("..") && !path.isAbsolute(inside); }) || local;
+  const relative = path.relative(home, logoPath);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return true;
   const foreign = foreignFolders(local);
   const file = path.basename(logoPath).toLowerCase();
@@ -184,17 +211,78 @@ function foreignFolders(local) {
   return names;
 }
 
+// Copies of one project drift apart between C:\live and C:\code, so a mark in either copy counts.
+function findLogo(local, name) {
+  const options = { skipDirectories: foreignFolders(local), names: [name] };
+  const own = findProjectLogo(local, options);
+  if (own || !trackedRoot(local)) return own;
+  const folder = path.basename(local);
+  for (const root of [ROOTS.code, ROOTS.live]) {
+    const sibling = path.join(root, folder);
+    if (sibling.toLowerCase() === String(local).toLowerCase() || !fs.existsSync(sibling)) continue;
+    const logo = findProjectLogo(sibling, options);
+    if (logo) return logo;
+  }
+  return null;
+}
+
 function trackedRoot(value) {
   return physicalWorkspace(value) !== "other";
 }
 
-async function syncWorkshop(store, inspectFolder) {
+// Anything else in C:\code or C:\live that looks like a project joins the Queue on its own.
+const DISCOVER_ROOTS = [ROOTS.code, ROOTS.live];
+const PROJECT_MARKERS = [".git", "package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod", "README.md", "AGENTS.md", "CLAUDE.md", "index.html", "project.json", "default.project.json", "src"];
+const SKIP_FOLDER = /^[._]|[-_]tests?$/i;
+
+function looksLikeProject(folder) {
+  const gitEntry = path.join(folder, ".git");
+  // A .git file means a linked worktree of a repository that is tracked on its own.
+  if (fs.existsSync(gitEntry) && fs.statSync(gitEntry).isFile()) return false;
+  return PROJECT_MARKERS.some((marker) => fs.existsSync(path.join(folder, marker)));
+}
+
+async function discoverProjects(store, inspectFolder, roots = DISCOVER_ROOTS) {
+  const tracked = store.listProjects();
+  const known = new Set(catalog.keys());
+  for (const project of tracked) {
+    known.add(folderKey(project));
+    for (const value of [project.local_path, project.git_root, project.github_url]) if (value) known.add(String(value).toLowerCase());
+  }
+  const added = [];
+  for (const root of roots) {
+    let entries = [];
+    try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || SKIP_FOLDER.test(entry.name)) continue;
+      const folder = path.join(root, entry.name);
+      if (known.has(entry.name.toLowerCase()) || known.has(folder.toLowerCase()) || isSupportPath(folder) || !looksLikeProject(folder)) continue;
+      const inspected = await inspectFolder(folder);
+      const identities = [inspected.localPath, inspected.gitRoot, inspected.githubUrl].filter(Boolean).map((value) => String(value).toLowerCase());
+      if (identities.some((value) => known.has(value))) continue;
+      const project = store.createProject({
+        name: inspected.name || entry.name, description: inspected.description || "", status: "active", priority: "none", tier: 4,
+        localPath: inspected.localPath, gitRoot: inspected.gitRoot, githubUrl: inspected.githubUrl,
+        primaryLanguage: inspected.primaryLanguage, tags: [physicalWorkspace(folder), "discovered"],
+        nextAction: "Rank it or cut it.", manualRank: 10_000,
+      });
+      known.add(entry.name.toLowerCase());
+      identities.forEach((value) => known.add(value));
+      added.push(project);
+    }
+  }
+  return added;
+}
+
+async function syncWorkshop(store, inspectFolder, options = {}) {
   const existing = new Map(store.listProjects().map((project) => [folderKey(project), project]));
   const result = { added: 0, relocated: 0, unchanged: 0, unavailable: 0, removed: 0, demoted: 0, ranked: 0, logos: 0 };
   for (const item of catalog.values()) {
     const localPath = preferredPath(item);
     if (!localPath) { result.unavailable += 1; continue; }
-    let current = existing.get(item.folder.toLowerCase());
+    // Two copies of one folder can both be tracked; the one already at the ranked path wins,
+    // otherwise relocating the other onto that path breaks the unique local_path.
+    let current = store.listProjects().find((project) => String(project.local_path || "").toLowerCase() === localPath.toLowerCase()) || existing.get(item.folder.toLowerCase());
     const samePath = current && String(current.local_path || "").toLowerCase() === localPath.toLowerCase();
     if (!current) {
       const inspected = await inspectFolder(localPath);
@@ -224,20 +312,28 @@ async function syncWorkshop(store, inspectFolder) {
       result.ranked += 1;
     }
   }
+  result.discovered = (await discoverProjects(store, inspectFolder, options.discoverRoots)).length;
+  const canonical = new Map([...catalog.values()].map((item) => [item.folder.toLowerCase(), String(preferredPath(item) || "").toLowerCase()]));
+  result.duplicates = 0; result.grouped = 0;
   for (const project of store.listProjects()) {
     const local = project.local_path || "";
     if (local && trackedRoot(local) && !fs.existsSync(local)) { store.removeProject(project.id); result.removed += 1; continue; }
+    // A second copy of a ranked project (C:\code beside C:\live) is noise unless work was logged on it.
+    const home = canonical.get(folderKey(project));
+    if (home && local.toLowerCase() !== home && !(project.tasks || []).length) { store.removeProject(project.id); result.duplicates += 1; continue; }
+    const group = projectGroup(project);
+    if (AUTO_CATEGORIES.has(String(project.category || "").toLowerCase()) && project.category !== group) { store.updateProject(project.id, { category: group }); result.grouped += 1; }
     if (isSupportPath(local) && (project.status !== "archived" || project.manual_rank < 10_000)) {
       store.updateProject(project.id, { status: "archived", priority: "none", manualRank: 10_000 });
       result.demoted += 1;
       continue;
     }
     if (!project.logo_path || !fs.existsSync(project.logo_path) || borrowedLogo(project.logo_path, local)) {
-      const logo = findProjectLogo(local, { skipDirectories: foreignFolders(local) }) || "";
+      const logo = findLogo(local, project.name) || "";
       if (logo !== (project.logo_path || "")) { store.setProjectLogo(project.id, logo); if (logo) result.logos += 1; }
     }
   }
   return result;
 }
 
-module.exports = { AUDIT_DATE, ROOTS, catalog, enrichProject, syncWorkshop, isSupportPath };
+module.exports = { AUDIT_DATE, ROOTS, GROUPS, catalog, projectGroup, enrichProject, syncWorkshop, discoverProjects, isSupportPath };

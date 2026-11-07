@@ -14,7 +14,8 @@ A small, local-first Windows notebook. Press `Ctrl+Alt+Shift+N` anywhere, write,
 - **Projects** — categorize work, drag it between Now/Next/Later/Parked, then review changed files and commit or push them from one GitHub page.
 - **Bots** — connect Discord or Telegram once, then create named Discord agents or distinct Telegram bots from Notebook; every bot also gets a private resettable Notebook link.
 - **Quick AI** — a fixed three-button panel for opening ChatGPT, Gemini, or DeepSeek in a secure embedded view with a persistent sign-in session.
-- **Apps** — optional embedded Gmail, Notion, and Twitter views.
+- **Memory** — the master sheet every AI agent should know (`~/MASTER-MEMORY.md`), editable in place, plus a count of each agent's own memory folder (Claude Code, Grok, Aside, Codex).
+- **Apps** — **Mailbrain** (the local unified inbox at `127.0.0.1:4390`, preloaded and always live, opening on its Everything tab), plus Notion, Twitter, and Excalidraw. Those three load on first open and unload after five minutes hidden to save memory.
 - Search everything (`Ctrl+K`) across notes, tasks, skills, and commands.
 - Copy full Markdown, or drag a clean `Title.md` file into a terminal or editor while the real file stays in local app data.
 - Light, dark, or system theme.
@@ -31,7 +32,8 @@ Notebook has no telemetry or auto-update feed. Sign in as `@blixvip` through Git
 | `Ctrl+N` | New note, skill, or command |
 | `Ctrl+E` | Switch between editing and preview |
 | `Alt+←` / `Alt+→` | Previous or next skill |
-| `Ctrl+1`–`4` | Today, Notes, Skills, Commands |
+| `Ctrl+1`–`5` | Today, Notes, Skills & Commands, Keys, Memory |
+| `Ctrl+Alt+Shift+M` | Show or hide Mailbrain |
 | `Esc` | Clear search, close a panel, or hide the window |
 
 ## Install

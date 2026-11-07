@@ -21,7 +21,7 @@ try {
   });
   const page = await application.firstWindow();
   await page.getByText("Notebook", { exact: true }).waitFor();
-  const registered = await application.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+L"));
+  const registered = await application.evaluate(({ globalShortcut }) => globalShortcut.isRegistered("Control+Alt+Shift+F11"));
   if (!registered) throw new Error("Quick voice-log shortcut is not registered.");
 
   await application.evaluate(({ BrowserWindow }) => {

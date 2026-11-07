@@ -1,7 +1,7 @@
 const { app, BrowserWindow, WebContentsView, Tray, Menu, globalShortcut, ipcMain, dialog, nativeImage, screen, clipboard, powerMonitor, shell, safeStorage } = require("electron");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const { z } = require("zod");
 const { createStorage } = require("./storage.cjs");
 const { createBotMonitorService } = require("./bot-monitor.cjs");
@@ -18,11 +18,15 @@ const projectsService = require("./projects.cjs");
 const { syncWorkshop } = require("./workshop.cjs");
 const { readProjectLogo } = require("./project-logos.cjs");
 const { listCepExtensions } = require("./cep-extensions.cjs");
+const { listKeySources } = require("./key-sources.cjs");
+const { listMemoryStores, memoryStorePath, readMaster, saveMaster } = require("./memory-sources.cjs");
 const { buildProjectTool, installProjectTool, toolStatus, uninstallProjectTool } = require("./project-tools.cjs");
 const { validBounds, boundsForDisplay, boundsMatch } = require("./window-bounds.cjs");
 const { createHotkeyManager, shouldHideOverlay } = require("./hotkey-manager.cjs");
 const { createHandyVoiceController, resolveHandyExecutable } = require("./handy-voice.cjs");
 const { DEFAULT_MAIL_URL, createMailViewController } = require("./mail-view.cjs");
+const { createHqService, isHqUrl } = require("./hq-service.cjs");
+const hqService = createHqService();
 const { DEFAULT_NOTION_URL, createNotionViewController } = require("./notion-view.cjs");
 const { DEFAULT_TWITTER_URL, createTwitterViewController } = require("./twitter-view.cjs");
 const { DEFAULT_EXCALIDRAW_URL, createExcalidrawViewController } = require("./excalidraw-view.cjs");
@@ -34,7 +38,8 @@ const FALLBACK_HOTKEYS = ["Control+Alt+N"];
 const MAIL_HOTKEY = "Control+Alt+Shift+M";
 const NOTION_HOTKEY = "Control+Alt+Shift+O";
 const TWITTER_HOTKEY = "Control+Alt+Shift+X";
-const VOICE_LOG_HOTKEY = "Control+Alt+Shift+L";
+// Isolated smoke tests must coexist with the running app's voice shortcut.
+const VOICE_LOG_HOTKEY = process.env.NOTEBOOK_TEST_ISOLATED === "1" ? "Control+Alt+Shift+F11" : "Control+Alt+Shift+L";
 const RETIRED_HOTKEYS = new Set(["Control+Shift+Space", "Control+Alt+N", "F8"]);
 const COMPRESSOR_URL = process.env.NOTEBOOK_COMPRESSOR_URL || "http://127.0.0.1:8787";
 const noteInput = z.object({ title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional(), folderId: z.string().max(120).optional(), pinned: z.boolean().optional(), archived: z.boolean().optional() });
@@ -77,7 +82,9 @@ const managedBotInput = instantBotInput.extend({ platform: z.enum(["discord", "t
 const cloudInput = z.object({ repository: z.string().trim().max(140).optional(), visibility: z.enum(["private", "public"]).optional(), autoUpload: z.boolean().optional() }).default({});
 const dragNoteInput = z.object({ id: z.string().max(120).optional(), title: z.string().max(240).optional(), body: z.string().max(2_000_000).optional() });
 const compressionInput = z.object({ noteId: z.string().nullable().optional(), sourceText: z.string().min(1).max(2_000_000), compressedText: z.string().min(1).max(2_000_000), preset: z.string().max(40), rate: z.number().min(0.1).max(1), originTokens: z.number().optional(), compressedTokens: z.number().optional(), ratio: z.string().optional() });
-let overlay; let tray; let store; let botMonitor; let botFactory; let botProcesses; let botSecrets; let botLinks; let botProvisioning; let botConnector; let telegramManagedBots; let githubSync; let cloudSyncTimer; let cloudSyncRunning; let boundsTimer; let hideTimer; let focusTimer; let placementTimer; let anchorDisplayId; let hotkeys; let mailHotkeys; let notionHotkeys; let twitterHotkeys; let voiceLogHotkeys; let handyVoice; let mailView; let notionView; let twitterView; let excalidrawView; let pendingBotLinkId; let aiViews = {}; let quitFlushed = false;
+// Monitor ticks write these every few seconds; they ride along with the next real sync.
+const BOT_TELEMETRY_WRITES = new Set(["recordBotEvent", "recordBotRun", "saveBotRuntime", "updateConnectionVerification"]);
+let overlay; let tray; let store; let botMonitor; let botFactory; let botProcesses; let botSecrets; let botLinks; let botProvisioning; let botConnector; let telegramManagedBots; let githubSync; let cloudSyncTimer; let cloudSyncRunning; let boundsTimer; let hideTimer; let focusTimer; let placementTimer; let anchorDisplayId; let hotkeys; let mailHotkeys; let notionHotkeys; let twitterHotkeys; let voiceLogHotkeys; let handyVoice; let mailView; let notionView; let twitterView; let excalidrawView; let pendingBotLinkId; let aiViews = {}; let quitFlushed = false; let hiddenUnloadTimer = null; let viewToRestore = null; let viewIdleMs = 5 * 60 * 1000;
 const isolatedTestInstance = process.env.NOTEBOOK_TEST_ISOLATED === "1";
 const isPrimaryInstance = isolatedTestInstance || app.requestSingleInstanceLock();
 const openedInBackground = process.argv.includes("--background");
@@ -150,6 +157,48 @@ function forEachAiView(callback) { Object.values(aiViews).forEach(callback); }
 function hideAiViews(exceptId = "") { Object.entries(aiViews).forEach(([id, view]) => { if (id !== exceptId) view.hide(); }); }
 function resizeEmbeddedViews() { mailView?.resize(); notionView?.resize(); twitterView?.resize(); excalidrawView?.resize(); forEachAiView((view) => view.resize()); }
 function destroyAiViews() { forEachAiView((view) => view.destroy()); aiViews = {}; }
+// Each embedded site is a full Chromium renderer (X and Notion each hold 100-300 MB), so
+// sites load on first open and close after sitting unseen — hidden behind another page, or
+// behind the hidden overlay. Logins live in persistent partitions, so reopening only reloads.
+function isMailbrainOrigin(value) {
+  try { const url = new URL(value); return url.origin === new URL(DEFAULT_MAIL_URL).origin; }
+  catch { return false; }
+}
+function embeddedViews() { return [notionView, twitterView, excalidrawView, ...Object.values(aiViews)].filter(Boolean); }
+function unloadWhenIdle(controller, idleMs) {
+  let timer = null;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  const schedule = () => {
+    cancel();
+    timer = setTimeout(() => { timer = null; if (!controller.isActive()) controller.destroy(); }, idleMs);
+    timer.unref?.();
+  };
+  return {
+    ...controller,
+    show: () => { cancel(); return controller.show(); },
+    reload: () => { cancel(); return controller.reload(); },
+    hide: () => { const result = controller.hide(); if (controller.getStatus() !== "idle") schedule(); return result; },
+    destroy: () => { cancel(); controller.destroy(); },
+  };
+}
+function scheduleHiddenOverlayUnload() {
+  clearTimeout(hiddenUnloadTimer);
+  hiddenUnloadTimer = setTimeout(() => {
+    hiddenUnloadTimer = null;
+    if (overlay?.isVisible()) return;
+    const active = embeddedViews().find((view) => view.isActive());
+    if (!active) return;
+    active.destroy();
+    viewToRestore = active;
+  }, viewIdleMs);
+  hiddenUnloadTimer.unref?.();
+}
+function restoreUnloadedView() {
+  clearTimeout(hiddenUnloadTimer); hiddenUnloadTimer = null;
+  const view = viewToRestore;
+  viewToRestore = null;
+  if (view && !view.isActive()) view.show();
+}
 function restoreNormalWindowState() {
   if (!overlay || overlay.isDestroyed()) return false;
   let restored = false;
@@ -208,6 +257,7 @@ function showOverlay(newNote = false) {
     overlay.moveTop(); overlay.focus();
   };
   overlay.show(); focus();
+  restoreUnloadedView();
   focusTimer = setTimeout(() => { if (!overlay?.isFocused()) focus(); }, 180); focusTimer.unref?.();
   overlay.webContents.send("overlay:focus-editor"); overlay.webContents.send("overlay:shown");
   if (newNote) overlay.webContents.send("overlay:new-inbox");
@@ -218,7 +268,7 @@ function hideOverlay() {
   overlay.webContents.send("overlay:flush-editor");
   overlay.webContents.send("overlay:hiding");
   clearTimeout(hideTimer); clearTimeout(focusTimer);
-  hideTimer = setTimeout(() => { hideTimer = null; overlay?.hide(); overlay?.blur(); }, 130);
+  hideTimer = setTimeout(() => { hideTimer = null; overlay?.hide(); overlay?.blur(); scheduleHiddenOverlayUnload(); }, 130);
 }
 function toggleOverlay() { if (shouldHideOverlay(overlay)) hideOverlay(); else showOverlay(false); }
 function toggleMailOverlay() {
@@ -260,7 +310,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "New Inbox note", click: () => showOverlay(true) },
     { label: "Show Notebook", click: () => showOverlay(false) },
-    { label: "Open Gmail", click: toggleMailOverlay },
+    { label: "Open Mailbrain", click: toggleMailOverlay },
     { label: "Open Notion", click: toggleNotionOverlay },
     { label: "Open Twitter", click: toggleTwitterOverlay },
     { label: "Quick voice log", click: () => { showOverlay(false); handyVoice?.trigger(); } },
@@ -353,7 +403,8 @@ function createOverlay(showWhenReady = !openedInBackground, newNoteWhenReady = f
   const remembered = savedWindowBounds();
   overlay = new BrowserWindow({ width: remembered?.width || 940, height: remembered?.height || 700, minWidth: 600, minHeight: 430, show: false, frame: false, transparent: false, backgroundColor: "#f7f7f5", hasShadow: true, alwaysOnTop: true, resizable: true, webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, devTools: !app.isPackaged } });
   overlay.setAlwaysOnTop(true, "screen-saver"); overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // The HQ page (an iframe) opens sites and its own pages in the browser; nothing else may open a window.
+  overlay.webContents.setWindowOpenHandler(({ url }) => { if (isHqUrl(url) || /^https:\/\//i.test(url)) shell.openExternal(url).catch(() => {}); return { action: "deny" }; });
   overlay.webContents.on("will-navigate", (event) => event.preventDefault());
   overlay.webContents.on("render-process-gone", (_event, details) => console.error(`Notebook renderer ended: ${details.reason}`));
   overlay.loadFile(path.join(__dirname, "../../dist/renderer/index.html"));
@@ -397,9 +448,11 @@ app.whenReady().then(() => {
     else app.setAsDefaultProtocolClient("notebook");
   }
   app.on("web-contents-created", (_event, contents) => {
-    contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    // Websites get no permissions, except new-mail notifications from the local Mailbrain inbox.
+    contents.session.setPermissionRequestHandler((requester, permission, callback) => callback(permission === "notifications" && isMailbrainOrigin(requester?.getURL?.())));
+    contents.session.setPermissionCheckHandler((_requester, permission, origin) => permission === "notifications" && isMailbrainOrigin(origin));
   });
-  store = createStorage(app.getPath("userData"), { onChange: () => scheduleCloudSync() });
+  store = createStorage(app.getPath("userData"), { onChange: (name) => { if (!BOT_TELEMETRY_WRITES.has(name)) scheduleCloudSync(); } });
   botSecrets = createBotSecretStore({ userDataPath: app.getPath("userData"), safeStorage });
   botLinks = createBotLinks({ getBot: (id) => store.getBot(id), secrets: botSecrets, recordEvent: (event) => store.recordBotEvent(event) });
   const resolveBotSecret = (reference) => { try { return botSecrets.get(reference); } catch { return undefined; } };
@@ -429,58 +482,58 @@ app.whenReady().then(() => {
   openBotLink(botLinkArgument(process.argv));
   scheduleCloudSync(1_000);
   const allowServiceUrlOverrides = !app.isPackaged || isolatedTestInstance;
+  if (allowServiceUrlOverrides && Number(process.env.NOTEBOOK_VIEW_IDLE_MS) > 0) viewIdleMs = Number(process.env.NOTEBOOK_VIEW_IDLE_MS);
+  // Mailbrain is the inbox, so it stays loaded from startup and is never unloaded: it opens
+  // instantly and keeps receiving new mail while hidden.
   mailView = createMailViewController({
     WebContentsView,
     parentWindow: overlay,
     shell,
     devTools: !app.isPackaged,
-    mailUrl: allowServiceUrlOverrides && process.env.NOTEBOOK_MAIL_URL ? process.env.NOTEBOOK_MAIL_URL : DEFAULT_MAIL_URL,
+    mailUrl: allowServiceUrlOverrides && process.env.NOTEBOOK_MAIL_URL ? process.env.NOTEBOOK_MAIL_URL : `${DEFAULT_MAIL_URL}#inbox/everything`,
+    // Mailbrain runs from its own logon task; if it is down, ask Windows to start that task.
+    startService: isolatedTestInstance ? null : () => new Promise((resolve) => execFile("schtasks.exe", ["/Run", "/TN", "Mailbrain"], { windowsHide: true, timeout: 10_000 }, () => resolve())),
     emitStatus: (status) => overlay?.webContents.send("mail:status", status),
   });
-  notionView = createNotionViewController({
+  notionView = unloadWhenIdle(createNotionViewController({
     WebContentsView,
     parentWindow: overlay,
     shell,
     devTools: !app.isPackaged,
     notionUrl: allowServiceUrlOverrides && process.env.NOTEBOOK_NOTION_URL ? process.env.NOTEBOOK_NOTION_URL : DEFAULT_NOTION_URL,
     emitStatus: (status) => overlay?.webContents.send("notion:status", status),
-  });
-  twitterView = createTwitterViewController({
+  }), viewIdleMs);
+  twitterView = unloadWhenIdle(createTwitterViewController({
     WebContentsView,
     parentWindow: overlay,
     shell,
     devTools: !app.isPackaged,
     twitterUrl: allowServiceUrlOverrides && process.env.NOTEBOOK_TWITTER_URL ? process.env.NOTEBOOK_TWITTER_URL : DEFAULT_TWITTER_URL,
     emitStatus: (status) => overlay?.webContents.send("twitter:status", status),
-  });
-  excalidrawView = createExcalidrawViewController({
+  }), viewIdleMs);
+  excalidrawView = unloadWhenIdle(createExcalidrawViewController({
     WebContentsView,
     parentWindow: overlay,
     shell,
     devTools: !app.isPackaged,
     excalidrawUrl: allowServiceUrlOverrides && process.env.NOTEBOOK_EXCALIDRAW_URL ? process.env.NOTEBOOK_EXCALIDRAW_URL : DEFAULT_EXCALIDRAW_URL,
     emitStatus: (status) => overlay?.webContents.send("excalidraw:status", status),
-  });
+  }), viewIdleMs);
   aiViews = Object.fromEntries(Object.values(AI_SERVICES).map((service) => {
     const overrideName = `NOTEBOOK_AI_${service.id.toUpperCase()}_URL`;
     const configured = allowServiceUrlOverrides && process.env[overrideName] ? { ...service, url: process.env[overrideName] } : service;
-    return [service.id, createAiViewController({
+    return [service.id, unloadWhenIdle(createAiViewController({
       WebContentsView,
       parentWindow: overlay,
       shell,
       service: configured,
       devTools: !app.isPackaged,
       emitStatus: (status) => overlay?.webContents.send(`ai:${service.id}:status`, status),
-    })];
+    }), viewIdleMs)];
   }));
-  const preloadApps = () => {
-    mailView?.preload();
-    notionView?.preload();
-    twitterView?.preload();
-    excalidrawView?.preload();
-  };
-  if (overlay.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", () => setTimeout(preloadApps, 250));
-  else setTimeout(preloadApps, 250);
+  const preloadMail = () => setTimeout(() => mailView?.preload(), 400);
+  if (overlay.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", preloadMail);
+  else preloadMail();
   hotkeys = createHotkeyManager({
     globalShortcut,
     onTriggered: toggleOverlay,
@@ -536,6 +589,7 @@ app.whenReady().then(() => {
   repairStartAtLogin();
   const startupRepairInterval = setInterval(repairStartAtLogin, 10 * 60 * 1000); startupRepairInterval.unref();
   ipcMain.handle("notes:list", () => store.listNotes());
+  ipcMain.handle("notes:backlinks", (_event, id) => store.backlinks(z.string().parse(id)));
   ipcMain.handle("notes:create", (_event, input) => store.createNote(noteInput.partial().parse(input || {})));
   ipcMain.handle("notes:update", (_event, id, input) => store.updateNote(z.string().parse(id), noteInput.parse(input)));
   ipcMain.handle("notes:drag-file", (_event, input) => createDragFile(input));
@@ -545,6 +599,16 @@ app.whenReady().then(() => {
   ipcMain.handle("notes:restore", (_event, id) => store.restoreNote(z.string().parse(id)));
   ipcMain.handle("notes:remove", (_event, id) => store.deleteForever(z.string().parse(id)));
   ipcMain.handle("skills:list", () => store.listSkills());
+  ipcMain.handle("keys:list", () => listKeySources({ homeDir: app.getPath("home") }));
+  ipcMain.handle("memory:master", () => readMaster({ homeDir: app.getPath("home") }));
+  ipcMain.handle("memory:stores", () => listMemoryStores({ homeDir: app.getPath("home") }));
+  ipcMain.handle("memory:save", (_event, content, expectedModifiedAt) => saveMaster({ homeDir: app.getPath("home"), content: z.string().max(1_000_000).parse(content), expectedModifiedAt: z.string().max(64).nullable().optional().parse(expectedModifiedAt) }));
+  // Only the fixed agent folders can be opened; the renderer never supplies a path.
+  ipcMain.handle("memory:open-store", async (_event, id) => {
+    const target = memoryStorePath({ homeDir: app.getPath("home"), id: z.enum(["claude", "grok", "aside", "codex"]).parse(id) });
+    const error = await shell.openPath(target); if (error) throw new Error(error);
+    return true;
+  });
   ipcMain.handle("skills:create", (_event, input) => store.createSkill(skillInput.partial().parse(input || {})));
   ipcMain.handle("skills:update", (_event, id, input) => store.updateSkill(z.string().parse(id), skillInput.parse(input)));
   ipcMain.handle("skills:remove", (_event, id) => store.deleteSkill(z.string().parse(id)));
@@ -717,12 +781,34 @@ app.whenReady().then(() => {
   ipcMain.handle("slash-commands:update", (_event, id, input) => store.updateSlashCommand(z.string().parse(id), slashCommandInput.parse(input)));
   ipcMain.handle("slash-commands:remove", (_event, id) => store.deleteSlashCommand(z.string().parse(id)));
   let workshopSyncPromise = null;
+  let workshopSyncedAt = 0;
+  const WORKSHOP_SYNC_LIMIT = 4 * 60_000;
   async function runWorkshopSync() {
-    if (!workshopSyncPromise) workshopSyncPromise = syncWorkshop(store, projectsService.inspectFolder).finally(() => { workshopSyncPromise = null; });
+    if (!workshopSyncPromise) {
+      const scan = syncWorkshop(store, projectsService.inspectFolder).then((result) => { workshopSyncedAt = Date.now(); return result; });
+      // A scan that never settles must not wedge every later call: the slot is freed either way.
+      const guard = new Promise((_resolve, reject) => { const timer = setTimeout(() => reject(new Error("Workshop scan took too long.")), WORKSHOP_SYNC_LIMIT); timer.unref?.(); scan.finally(() => clearTimeout(timer)); });
+      workshopSyncPromise = Promise.race([scan, guard]).finally(() => { workshopSyncPromise = null; });
+    }
     return workshopSyncPromise;
   }
-  ipcMain.handle("projects:list", async () => { await runWorkshopSync(); return store.listProjects(); });
-  ipcMain.handle("cep-extensions:list", async () => { await runWorkshopSync(); return listCepExtensions(store.listProjects()); });
+  // The folder scan walks every repository, so it runs behind the page instead of in front of it.
+  function syncWorkshopInBackground() {
+    runWorkshopSync()
+      .then(() => { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("projects:updated", store.listProjects()); })
+      .catch((error) => console.error(`Workshop sync failed: ${error.message}`));
+  }
+  ipcMain.handle("projects:list", async () => {
+    // Saved projects show at once; new folders arrive over "projects:updated" when the scan ends.
+    const known = store.listProjects();
+    if (!known.length) { await runWorkshopSync().catch((error) => console.error(`Workshop sync failed: ${error.message}`)); return store.listProjects(); }
+    if (Date.now() - workshopSyncedAt > 10 * 60_000) syncWorkshopInBackground();
+    return known;
+  });
+  ipcMain.handle("cep-extensions:list", async () => {
+    if (!store.listProjects().length) await runWorkshopSync();
+    return listCepExtensions(store.listProjects());
+  });
   ipcMain.handle("projects:workshop-sync", async () => ({ ...(await runWorkshopSync()), projects: store.listProjects() }));
   ipcMain.handle("projects:create", (_event, input) => store.createProject(projectInput.parse(input)));
   ipcMain.handle("projects:update", (_event, id, input) => store.updateProject(z.string().max(120).parse(id), projectPatch.parse(input)));
@@ -780,9 +866,9 @@ app.whenReady().then(() => {
     return { canceled: false, project: await projectsService.inspectFolder(result.filePaths[0]) };
   });
   ipcMain.handle("projects:choose-parent", async () => {
-    const result = await dialog.showOpenDialog({ title: "Discover Git repositories", properties: ["openDirectory"] });
+    const result = await dialog.showOpenDialog({ title: "Find local projects", defaultPath: "C:\\code", properties: ["openDirectory"] });
     if (result.canceled || !result.filePaths[0]) return { canceled: true, projects: [] };
-    return { canceled: false, projects: await projectsService.discoverRepositories(result.filePaths[0]) };
+    return { canceled: false, projects: await projectsService.discoverRepositories(result.filePaths[0], store.listProjects()) };
   });
   ipcMain.handle("projects:inspect", (_event, value) => projectsService.inspectFolder(z.string().max(1_000).parse(value)));
   ipcMain.handle("projects:status", (_event, root) => projectsService.repositoryStatus(z.string().max(1_000).parse(root)));
@@ -900,6 +986,7 @@ app.whenReady().then(() => {
   });
   // Opens a blank Google Doc. The URL is fixed, never taken from the renderer.
   ipcMain.handle("docs:new", async () => { await shell.openExternal("https://docs.new"); return true; });
+  ipcMain.handle("hq:ensure", () => hqService.ensure());
   ipcMain.handle("mail:show", () => {
     if (restoreNormalWindowState()) moveOverlayToCursorDisplay();
     notionView.hide();

@@ -1,4 +1,7 @@
-const DEFAULT_MAIL_URL = "https://mail.google.com/mail/";
+// Mail is Mailbrain, the local unified inbox (all Gmail accounts in one place). It runs at login
+// from the "Mailbrain" scheduled task; Notebook only embeds its page.
+const DEFAULT_MAIL_URL = "http://127.0.0.1:4390/";
+const MAIL_SERVICE_NAME = "Mailbrain";
 const MAIL_TOOLBAR_HEIGHT = 44;
 const MAIL_NAVIGATION_HOSTS = new Set([
   "mail.google.com",
@@ -12,8 +15,14 @@ function parsedUrl(value) {
   catch { return null; }
 }
 
+function isLoopback(url) {
+  return url?.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost");
+}
+
+// HTTPS anywhere, plus plain HTTP only for this computer (Mailbrain's own page).
 function isSafeExternalUrl(value) {
-  return parsedUrl(value)?.protocol === "https:";
+  const url = parsedUrl(value);
+  return url?.protocol === "https:" || isLoopback(url);
 }
 
 function isAllowedMailNavigation(value, initialUrl = DEFAULT_MAIL_URL) {
@@ -32,13 +41,15 @@ function mailBounds(contentBounds, toolbarHeight = MAIL_TOOLBAR_HEIGHT) {
   return { x: 0, y: top, width, height: Math.max(0, height - top) };
 }
 
-function createMailViewController({ WebContentsView, parentWindow, shell, emitStatus = () => {}, mailUrl = DEFAULT_MAIL_URL, devTools = false }) {
+function createMailViewController({ WebContentsView, parentWindow, shell, emitStatus = () => {}, mailUrl = DEFAULT_MAIL_URL, devTools = false, startService = null, retryDelayMs = 2500, maxStartAttempts = 3 }) {
   let view = null;
   let attached = false;
   let active = false;
   let loaded = false;
   let loadFailed = false;
   let status = "idle";
+  let startAttempts = 0;
+  let retryTimer = null;
 
   function report(nextStatus, message = "") {
     status = nextStatus;
@@ -62,9 +73,23 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
     view.setBounds(mailBounds(parentWindow.getContentBounds()));
   }
 
-  function fail(message = "Gmail could not load.") {
+  function fail(message = `${MAIL_SERVICE_NAME} could not load.`) {
     detach();
     report("error", message);
+  }
+
+  // A local inbox that is not answering is usually just not started yet (or restarting).
+  // Ask the host to start it, keep showing "loading", and retry a few times before failing.
+  function recover(message) {
+    loadFailed = true;
+    if (typeof startService !== "function" || !isLoopback(parsedUrl(mailUrl)) || startAttempts >= maxStartAttempts) { fail(message); return; }
+    startAttempts += 1;
+    report("loading", `Starting ${MAIL_SERVICE_NAME}…`);
+    Promise.resolve().then(() => startService()).catch(() => {}).finally(() => {
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => { retryTimer = null; if (view && !view.webContents.isDestroyed()) load(); }, retryDelayMs);
+      retryTimer.unref?.();
+    });
   }
 
   function ensureView() {
@@ -77,6 +102,8 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
         sandbox: true,
         webSecurity: true,
         devTools,
+        // The inbox keeps its live connection and timers running while hidden.
+        backgroundThrottling: false,
       },
     });
     const contents = view.webContents;
@@ -96,16 +123,17 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
       report("loading");
     });
     contents.on("did-stop-loading", () => {
-      if (!loadFailed) report("ready");
+      if (loadFailed) return;
+      startAttempts = 0;
+      report("ready");
     });
     contents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return;
-      loadFailed = true;
-      fail("Gmail could not load. Check your connection or open Gmail externally.");
+      recover(`${MAIL_SERVICE_NAME} is not running. Start the Mailbrain task or C:\\code\\mailbrain, then reload.`);
     });
     contents.on("render-process-gone", () => {
       loadFailed = true;
-      fail("Gmail stopped unexpectedly. Reload it or open Gmail externally.");
+      fail(`${MAIL_SERVICE_NAME} stopped unexpectedly. Reload it or open it externally.`);
     });
     return view;
   }
@@ -122,10 +150,7 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
     loaded = true;
     loadFailed = false;
     report("loading");
-    view.webContents.loadURL(mailUrl).catch(() => {
-      loadFailed = true;
-      fail("Gmail could not load. Check your connection or open Gmail externally.");
-    });
+    view.webContents.loadURL(mailUrl).catch(() => {});
   }
 
   // Load while detached so the first visible attach is immediate. The persistent
@@ -161,10 +186,11 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
   }
 
   function openExternal() {
-    return openSafeExternal(DEFAULT_MAIL_URL);
+    return openSafeExternal(mailUrl);
   }
 
   function destroy() {
+    clearTimeout(retryTimer); retryTimer = null; startAttempts = 0;
     active = false;
     detach();
     if (view && !view.webContents.isDestroyed()) view.webContents.close();
@@ -179,6 +205,7 @@ function createMailViewController({ WebContentsView, parentWindow, shell, emitSt
 
 module.exports = {
   DEFAULT_MAIL_URL,
+  MAIL_SERVICE_NAME,
   MAIL_TOOLBAR_HEIGHT,
   createMailViewController,
   isAllowedMailNavigation,

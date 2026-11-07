@@ -6,6 +6,7 @@ const { randomUUID } = require("crypto");
 const { createBotRepository } = require("./bot-storage.cjs");
 const { enrichProject } = require("./workshop.cjs");
 const { dailyCarryId, normalizeDailyTasks } = require("./daily-tasks.cjs");
+const { linkKey, wikilinkTargets, linkContext } = require("./wikilinks.cjs");
 const CURATED_SKILLS = require("./curated-skills.json");
 const CURATED_SKILLS_VERSION = 5;
 const DEVICE_NAME = os.hostname();
@@ -116,6 +117,8 @@ function createStorage(userDataPath, { onChange } = {}) {
     CREATE TABLE IF NOT EXISTS slash_commands (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', command TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS note_tags (note_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY(note_id, tag_id), FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE, FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE);
+    CREATE TABLE IF NOT EXISTS note_links (source_id TEXT NOT NULL, target_key TEXT NOT NULL, target_title TEXT NOT NULL, PRIMARY KEY(source_id, target_key), FOREIGN KEY(source_id) REFERENCES notes(id) ON DELETE CASCADE);
+    CREATE INDEX IF NOT EXISTS note_links_target ON note_links(target_key);
     CREATE TABLE IF NOT EXISTS compressions (id TEXT PRIMARY KEY, note_id TEXT, source_text TEXT NOT NULL, compressed_text TEXT NOT NULL, preset TEXT NOT NULL, rate REAL NOT NULL, origin_tokens INTEGER, compressed_tokens INTEGER, ratio TEXT, created_at TEXT NOT NULL, FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE SET NULL);
     CREATE TABLE IF NOT EXISTS daily_tasks (id TEXT PRIMARY KEY, task_date TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'done', 'carried')), priority INTEGER NOT NULL DEFAULT 2 CHECK(priority BETWEEN 1 AND 3), owner TEXT NOT NULL DEFAULT 'me' CHECK(owner IN ('me', 'agent')), completed_at TEXT, completed_on TEXT, carried_from_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(carried_from_id) REFERENCES daily_tasks(id) ON DELETE SET NULL);
     CREATE INDEX IF NOT EXISTS daily_tasks_date_status ON daily_tasks(task_date, status);
@@ -210,6 +213,7 @@ function createStorage(userDataPath, { onChange } = {}) {
   function createNote(input = {}) {
     const id = randomUUID(); const timestamp = now();
     db.prepare("INSERT INTO notes (id, title, body, folder_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, input.title || "", input.body || "", input.folderId || inbox.id, timestamp, timestamp);
+    indexNoteLinks(id, input.body || "");
     return getNote(id);
   }
   function hydrateSkill(row) {
@@ -311,12 +315,14 @@ function createStorage(userDataPath, { onChange } = {}) {
     const safetyBackup = backup ? createBackup() : null;
     const updatedAt = now();
     const chooseNewest = (left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")) || String(left.id).localeCompare(String(right.id));
+    // The survivor keeps its own updated_at. Stamping "now" made it the newest copy on this
+    // device only, so two synced devices kept opposite copies and re-merged them forever.
     const cleanup = db.transaction(() => {
       for (const note of blankNotes) db.prepare("DELETE FROM notes WHERE id = ?").run(note.id);
       for (const items of noteDuplicates) {
-        const ordered = [...items].sort((left, right) => Number(referencedNotes.has(right.id)) - Number(referencedNotes.has(left.id)) || Number(!right.deleted_at) - Number(!left.deleted_at) || Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || chooseNewest(left, right));
+        const ordered = [...items].sort((left, right) => Number(referencedNotes.has(right.id)) - Number(referencedNotes.has(left.id)) || Number(!right.deleted_at) - Number(!left.deleted_at) || chooseNewest(left, right));
         const keep = ordered[0];
-        db.prepare("UPDATE notes SET pinned = ?, archived = ?, deleted_at = ?, updated_at = ? WHERE id = ?").run(Number(items.some((item) => item.pinned)), Number(items.every((item) => item.archived)), items.some((item) => !item.deleted_at) ? null : keep.deleted_at, updatedAt, keep.id);
+        db.prepare("UPDATE notes SET pinned = ?, archived = ?, deleted_at = ? WHERE id = ?").run(Number(items.some((item) => item.pinned)), Number(items.every((item) => item.archived)), items.some((item) => !item.deleted_at) ? null : keep.deleted_at, keep.id);
         for (const duplicate of ordered.slice(1)) {
           db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) SELECT ?, tag_id FROM note_tags WHERE note_id = ?").run(keep.id, duplicate.id);
           db.prepare("UPDATE compressions SET note_id = ? WHERE note_id = ?").run(keep.id, duplicate.id);
@@ -331,8 +337,8 @@ function createStorage(userDataPath, { onChange } = {}) {
         const ordered = [...items].sort((left, right) => Number(right.id === catalog?.id) - Number(left.id === catalog?.id) || Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || chooseNewest(left, right));
         const keep = ordered[0];
         const pinned = Number(items.some((item) => item.pinned));
-        if (catalog) db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, source_url = ?, ownership = ?, pinned = ?, updated_at = ? WHERE id = ?").run(catalog.name, catalog.category, catalog.body, catalog.source_url, catalog.ownership, pinned, updatedAt, keep.id);
-        else db.prepare("UPDATE skills SET pinned = ?, updated_at = ? WHERE id = ?").run(pinned, updatedAt, keep.id);
+        if (catalog) db.prepare("UPDATE skills SET name = ?, category = ?, body = ?, source_url = ?, ownership = ?, pinned = ? WHERE id = ?").run(catalog.name, catalog.category, catalog.body, catalog.source_url, catalog.ownership, pinned, keep.id);
+        else db.prepare("UPDATE skills SET pinned = ? WHERE id = ?").run(pinned, keep.id);
         for (const duplicate of ordered.slice(1)) {
           db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) SELECT project_id, ? FROM project_skills WHERE skill_id = ?").run(keep.id, duplicate.id);
           db.prepare("INSERT OR IGNORE INTO project_skill_installs (project_id, skill_id, relative_path, content_hash, installed_at) SELECT project_id, ?, relative_path, content_hash, installed_at FROM project_skill_installs WHERE skill_id = ?").run(keep.id, duplicate.id);
@@ -391,7 +397,7 @@ function createStorage(userDataPath, { onChange } = {}) {
     const tier = Number.isInteger(input.tier) ? input.tier : ({ critical: 1, high: 2, medium: 3 }[input.priority] || 4);
     const tierOrder = Number.isInteger(input.tierOrder) ? input.tierOrder : db.prepare("SELECT COALESCE(MAX(tier_order), -1) + 1 AS value FROM projects WHERE tier = ?").get(tier).value;
     const category = String(input.category || "Uncategorized").trim() || "Uncategorized";
-    db.prepare("INSERT INTO projects (id, name, description, status, priority, manual_rank, category, tier, tier_order, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, String(input.name || "Untitled project").trim(), input.description || "", input.status || "active", input.priority || "none", rank, category, tier, tierOrder, input.localPath || null, input.gitRoot || input.localPath || null, input.githubUrl || null, input.primaryLanguage || "", JSON.stringify(cleanJsonList(input.tags)), input.nextAction || "", input.notes || "", Number(Boolean(input.pushAfterCommit)), timestamp, timestamp, input.lastWorkedAt || timestamp, DEVICE_NAME);
+    db.prepare("INSERT INTO projects (id, name, description, status, priority, manual_rank, category, tier, tier_order, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, String(input.name || "Untitled project").trim(), input.description || "", input.status || "active", input.priority || "none", rank, category, tier, tierOrder, input.localPath || null, input.gitRoot === undefined ? input.localPath || null : input.gitRoot || null, input.githubUrl || null, input.primaryLanguage || "", JSON.stringify(cleanJsonList(input.tags)), input.nextAction || "", input.notes || "", Number(Boolean(input.pushAfterCommit)), timestamp, timestamp, input.lastWorkedAt || timestamp, DEVICE_NAME);
     addProjectActivity(id, "created", "Project added");
     return getProject(id);
   }
@@ -705,8 +711,55 @@ function createStorage(userDataPath, { onChange } = {}) {
   function updateNote(id, input) {
     const note = getNote(id); if (!note) throw new Error("Note not found.");
     db.prepare("UPDATE notes SET title = ?, body = ?, folder_id = ?, pinned = ?, archived = ?, updated_at = ? WHERE id = ?").run(input.title ?? note.title, input.body ?? note.body, input.folderId ?? note.folder_id, input.pinned === undefined ? Number(note.pinned) : Number(input.pinned), input.archived === undefined ? Number(note.archived) : Number(input.archived), now(), id);
+    if (input.body !== undefined) indexNoteLinks(id, input.body);
     return getNote(id);
   }
+  // --- Wiki-links -------------------------------------------------------------------
+  // Every `[[target]]` in a note is stored by its canonical key, so backlinks are a single
+  // indexed lookup instead of a scan over every body. Links are kept by TITLE rather than by
+  // id: a note can be linked before it exists, and renaming a note re-points its backlinks
+  // without rewriting anyone's text.
+  function indexNoteLinks(noteId, body) {
+    const targets = wikilinkTargets(body);
+    const write = db.transaction(() => {
+      db.prepare("DELETE FROM note_links WHERE source_id = ?").run(noteId);
+      const insert = db.prepare("INSERT OR IGNORE INTO note_links (source_id, target_key, target_title) VALUES (?, ?, ?)");
+      for (const target of targets) insert.run(noteId, linkKey(target), target);
+    });
+    write();
+  }
+
+  // Notes that link to this one, newest first, each with the line the link sits on.
+  function backlinks(noteId) {
+    const note = getNote(noteId);
+    if (!note?.title?.trim()) return [];
+    const rows = db.prepare(`
+      SELECT n.id, n.title, n.body, n.updated_at FROM note_links l
+      JOIN notes n ON n.id = l.source_id
+      WHERE l.target_key = ? AND n.id != ? AND n.deleted_at IS NULL
+      ORDER BY n.updated_at DESC
+    `).all(linkKey(note.title), noteId);
+    return rows.map(({ id, title, body, updated_at }) => ({ id, title, updated_at, context: linkContext(body, note.title) }));
+  }
+
+  // Targets that no note answers to yet, so the UI can offer to create them.
+  function brokenLinks() {
+    return db.prepare(`
+      SELECT DISTINCT l.target_title AS title FROM note_links l
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notes n WHERE n.deleted_at IS NULL AND TRIM(LOWER(n.title)) = l.target_key
+      ) ORDER BY l.target_title COLLATE NOCASE
+    `).all().map((row) => row.title);
+  }
+
+  // One pass over every note, used once on upgrade to fill the index for notes written
+  // before links existed.
+  function reindexAllLinks() {
+    const rows = db.prepare("SELECT id, body FROM notes").all();
+    for (const row of rows) indexNoteLinks(row.id, row.body);
+    return rows.length;
+  }
+
   function setTags(noteId, names) {
     const clean = [...new Set(names.map((name) => name.trim()).filter(Boolean))].slice(0, 12);
     const run = db.transaction(() => {
@@ -714,7 +767,7 @@ function createStorage(userDataPath, { onChange } = {}) {
       for (const name of clean) {
         let tag = db.prepare("SELECT id FROM tags WHERE name = ? COLLATE NOCASE").get(name);
         if (!tag) { tag = { id: randomUUID() }; db.prepare("INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)").run(tag.id, name, now()); }
-        db.prepare("INSERT INTO note_tags (note_id, tag_id) VALUES (?, ?)").run(noteId, tag.id);
+        db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)").run(noteId, tag.id);
       }
     });
     run(); return getNote(noteId);
@@ -735,10 +788,17 @@ function createStorage(userDataPath, { onChange } = {}) {
   function removeFolder(id) { if (id === inbox.id) throw new Error("Inbox cannot be removed."); const run = db.transaction(() => { db.prepare("UPDATE notes SET folder_id = ? WHERE folder_id = ?").run(inbox.id, id); db.prepare("DELETE FROM folders WHERE id = ?").run(id); }); run(); }
   function createCompression(input) {
     const id = randomUUID(); const timestamp = now();
-    db.prepare("INSERT INTO compressions (id, note_id, source_text, compressed_text, preset, rate, origin_tokens, compressed_tokens, ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.noteId || null, input.sourceText, input.compressedText, input.preset, input.rate, input.originTokens || null, input.compressedTokens || null, input.ratio || null, timestamp);
+    db.prepare("INSERT INTO compressions (id, note_id, source_text, compressed_text, preset, rate, origin_tokens, compressed_tokens, ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.noteId || null, input.sourceText, input.compressedText, input.preset, input.rate, input.originTokens ?? null, input.compressedTokens ?? null, input.ratio ?? null, timestamp);
     return { id, ...input, created_at: timestamp };
   }
   function listCompressions(noteId) { return db.prepare("SELECT * FROM compressions WHERE note_id = ? ORDER BY created_at DESC").all(noteId); }
+  function importCompressions(rows, ignore = false) {
+    const insert = db.prepare(`INSERT ${ignore ? "OR IGNORE " : ""}INTO compressions (id, note_id, source_text, compressed_text, preset, rate, origin_tokens, compressed_tokens, ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const compression of rows) {
+      const noteId = compression.note_id && db.prepare("SELECT id FROM notes WHERE id = ?").get(compression.note_id)?.id;
+      insert.run(compression.id || randomUUID(), noteId || null, compression.source_text || "", compression.compressed_text || "", compression.preset || "Balanced", compression.rate ?? 0.6, compression.origin_tokens ?? null, compression.compressed_tokens ?? null, compression.ratio ?? null, compression.created_at || now());
+    }
+  }
   function exportData() { return { version: 12, exportedAt: now(), folders: listFolders(), notes: listNotes(), skills: listSkills(), slashCommands: listSlashCommands(), projects: listProjects(), dailyTasks: listDailyTasks(), dailyActivities: listDailyActivities(), compressions: db.prepare("SELECT * FROM compressions ORDER BY created_at DESC").all(), ...botRepo.exportBotData() }; }
   function importData(data) {
     if (!data || !Array.isArray(data.notes)) throw new Error("That is not a Notebook JSON backup.");
@@ -748,9 +808,11 @@ function createStorage(userDataPath, { onChange } = {}) {
       for (const folder of data.folders || []) if (folder.id !== inbox.id) db.prepare("INSERT OR IGNORE INTO folders (id, name, is_inbox, created_at) VALUES (?, ?, 0, ?)").run(folder.id, folder.name, folder.created_at || now());
       for (const note of data.notes) {
         const folderId = db.prepare("SELECT id FROM folders WHERE id = ?").get(note.folder_id)?.id || inbox.id;
-        db.prepare("INSERT OR IGNORE INTO notes (id, title, body, folder_id, pinned, archived, deleted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(note.id || randomUUID(), note.title || "", note.body || "", folderId, Number(Boolean(note.pinned)), Number(Boolean(note.archived)), note.deleted_at || null, note.created_at || now(), note.updated_at || now());
-        if (Array.isArray(note.tags)) setTags(note.id, note.tags.map((tag) => tag.name));
+        const noteId = note.id || randomUUID();
+        const inserted = db.prepare("INSERT OR IGNORE INTO notes (id, title, body, folder_id, pinned, archived, deleted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(noteId, note.title || "", note.body || "", folderId, Number(Boolean(note.pinned)), Number(Boolean(note.archived)), note.deleted_at || null, note.created_at || now(), note.updated_at || now());
+        if (inserted.changes && Array.isArray(note.tags)) setTags(noteId, note.tags.map((tag) => tag.name));
       }
+      importCompressions(data.compressions || [], true);
       for (const skill of data.skills || []) {
         db.prepare("INSERT OR IGNORE INTO skills (id, name, category, body, source_url, ownership, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", skill.source_url || skill.sourceUrl || "", skill.ownership === "other" ? "other" : "mine", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
       }
@@ -780,8 +842,20 @@ function createStorage(userDataPath, { onChange } = {}) {
       })
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
+  // Keep the newest backups plus the last one from each of the most recent days, so a burst of
+  // sync safety backups can never push every older day out of the folder.
   function pruneBackups() {
-    for (const backup of listBackups().slice(BACKUP_RETENTION)) fs.rmSync(path.join(backupDirectory(), backup.name), { force: true });
+    const backups = listBackups();
+    const keep = new Set(backups.slice(0, BACKUP_RETENTION).map((backup) => backup.name));
+    const days = new Set();
+    for (const backup of backups) {
+      const day = backup.createdAt.slice(0, 10);
+      if (days.has(day)) continue;
+      if (days.size >= BACKUP_RETENTION) break;
+      days.add(day);
+      keep.add(backup.name);
+    }
+    for (const backup of backups) if (!keep.has(backup.name)) fs.rmSync(path.join(backupDirectory(), backup.name), { force: true });
   }
   function createBackup() {
     const stamp = now().replace(/[^0-9]/g, "-");
@@ -828,14 +902,13 @@ function createStorage(userDataPath, { onChange } = {}) {
           const tagName = String(rawTag?.name || "").trim().slice(0, 48);
           if (!tagName) continue;
           let tag = db.prepare("SELECT id FROM tags WHERE name = ? COLLATE NOCASE").get(tagName);
-          if (!tag) { tag = { id: randomUUID() }; db.prepare("INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)").run(tag.id, tagName, now()); }
+          // Keep the snapshot's tag id so a restore is idempotent and never reads as a sync edit.
+          const wantedId = typeof rawTag?.id === "string" && rawTag.id && !db.prepare("SELECT 1 FROM tags WHERE id = ?").get(rawTag.id) ? rawTag.id : randomUUID();
+          if (!tag) { tag = { id: wantedId }; db.prepare("INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)").run(tag.id, tagName, rawTag?.created_at || now()); }
           db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)").run(noteId, tag.id);
         }
       }
-      for (const compression of data.compressions || []) {
-        const noteId = compression.note_id && db.prepare("SELECT id FROM notes WHERE id = ?").get(compression.note_id)?.id;
-        db.prepare("INSERT INTO compressions (id, note_id, source_text, compressed_text, preset, rate, origin_tokens, compressed_tokens, ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(compression.id || randomUUID(), noteId || null, compression.source_text || "", compression.compressed_text || "", compression.preset || "Balanced", compression.rate || 0.6, compression.origin_tokens || null, compression.compressed_tokens || null, compression.ratio || null, compression.created_at || now());
-      }
+      importCompressions(data.compressions || []);
       for (const skill of data.skills || []) {
         db.prepare("INSERT INTO skills (id, name, category, body, source_url, ownership, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(skill.id || randomUUID(), skill.name || "", skill.category || "Unsorted", skill.body || "", skill.source_url || skill.sourceUrl || "", skill.ownership === "other" ? "other" : "mine", Number(Boolean(skill.pinned)), skill.created_at || now(), skill.updated_at || now());
       }
@@ -873,10 +946,13 @@ function createStorage(userDataPath, { onChange } = {}) {
     db.prepare(`${verb} INTO projects (id, name, description, status, priority, manual_rank, category, tier, tier_order, local_path, git_root, github_url, primary_language, tags_json, next_action, notes, push_after_commit, created_at, updated_at, last_worked_at, last_device, logo_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ).run(projectId, project.name || "Untitled project", project.description || "", project.status || "active", priority, project.manual_rank ?? project.manualRank ?? 0, project.category || "Uncategorized", tier, project.tier_order ?? project.tierOrder ?? project.manual_rank ?? project.manualRank ?? 0, project.local_path || project.localPath || null, project.git_root || project.gitRoot || null, project.github_url || project.githubUrl || null, project.primary_language || project.primaryLanguage || "", JSON.stringify(cleanJsonList(project.tags)), project.next_action || project.nextAction || "", project.notes || "", Number(Boolean(project.push_after_commit ?? project.pushAfterCommit)), project.created_at || now(), project.updated_at || now(), project.last_worked_at || project.lastWorkedAt || null, project.last_device || DEVICE_NAME, project.logo_path || project.logoPath || "");
     const taskInsert = db.prepare(`${verb} INTO project_tasks (id, project_id, title, description, status, priority, manual_order, due_date, tags_json, related, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const task of project.tasks || []) taskInsert.run(task.id || randomUUID(), projectId, task.title || "Untitled task", task.description || "", task.status || "todo", task.priority || "medium", task.manual_order ?? task.manualOrder ?? 0, task.due_date || task.dueDate || null, JSON.stringify(cleanJsonList(task.tags)), task.related || "", task.completed_at || null, task.created_at || now(), task.updated_at || now());
-    const skillInsert = db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) VALUES (?, ?)"); for (const id of project.skill_ids || project.skillIds || []) skillInsert.run(projectId, id);
-    const commandInsert = db.prepare("INSERT OR IGNORE INTO project_slash_commands (project_id, slash_command_id) VALUES (?, ?)"); for (const id of project.slash_command_ids || project.slashCommandIds || []) commandInsert.run(projectId, id);
-    const skillInstallInsert = db.prepare("INSERT OR IGNORE INTO project_skill_installs (project_id, skill_id, relative_path, content_hash, installed_at) VALUES (?, ?, ?, ?, ?)"); for (const item of project.skill_installs || project.skillInstalls || []) skillInstallInsert.run(projectId, item.item_id || item.itemId, item.relative_path || item.relativePath, item.content_hash || item.contentHash, item.installed_at || item.installedAt || now());
-    const commandInstallInsert = db.prepare("INSERT OR IGNORE INTO project_command_installs (project_id, slash_command_id, relative_path, content_hash, installed_at) VALUES (?, ?, ?, ?, ?)"); for (const item of project.command_installs || project.commandInstalls || []) commandInstallInsert.run(projectId, item.item_id || item.itemId, item.relative_path || item.relativePath, item.content_hash || item.contentHash, item.installed_at || item.installedAt || now());
+    // Concurrent sync deletions can leave references to library rows absent from the snapshot.
+    const skillExists = db.prepare("SELECT 1 FROM skills WHERE id = ?");
+    const commandExists = db.prepare("SELECT 1 FROM slash_commands WHERE id = ?");
+    const skillInsert = db.prepare("INSERT OR IGNORE INTO project_skills (project_id, skill_id) VALUES (?, ?)"); for (const id of project.skill_ids || project.skillIds || []) if (skillExists.get(id)) skillInsert.run(projectId, id);
+    const commandInsert = db.prepare("INSERT OR IGNORE INTO project_slash_commands (project_id, slash_command_id) VALUES (?, ?)"); for (const id of project.slash_command_ids || project.slashCommandIds || []) if (commandExists.get(id)) commandInsert.run(projectId, id);
+    const skillInstallInsert = db.prepare("INSERT OR IGNORE INTO project_skill_installs (project_id, skill_id, relative_path, content_hash, installed_at) VALUES (?, ?, ?, ?, ?)"); for (const item of project.skill_installs || project.skillInstalls || []) if (skillExists.get(item.item_id || item.itemId)) skillInstallInsert.run(projectId, item.item_id || item.itemId, item.relative_path || item.relativePath, item.content_hash || item.contentHash, item.installed_at || item.installedAt || now());
+    const commandInstallInsert = db.prepare("INSERT OR IGNORE INTO project_command_installs (project_id, slash_command_id, relative_path, content_hash, installed_at) VALUES (?, ?, ?, ?, ?)"); for (const item of project.command_installs || project.commandInstalls || []) if (commandExists.get(item.item_id || item.itemId)) commandInstallInsert.run(projectId, item.item_id || item.itemId, item.relative_path || item.relativePath, item.content_hash || item.contentHash, item.installed_at || item.installedAt || now());
     const activityInsert = db.prepare("INSERT OR IGNORE INTO project_activity (id, project_id, kind, summary, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)"); for (const item of project.activity || []) activityInsert.run(item.id || randomUUID(), projectId, item.kind || "imported", item.summary || "Imported", item.detail || "", item.created_at || now());
     const canvasInsert = db.prepare("INSERT OR IGNORE INTO project_canvas_items (id, project_id, title, body, color, x, y, width, height, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); for (const item of project.canvas_items || project.canvasItems || []) canvasInsert.run(item.id || randomUUID(), projectId, item.title || "Card", item.body || "", item.color || "yellow", item.x ?? 24, item.y ?? 24, item.width ?? 220, item.height ?? 150, item.created_at || now(), item.updated_at || now());
   }
@@ -922,10 +998,12 @@ function createStorage(userDataPath, { onChange } = {}) {
   seedCuratedSkills();
   seedSlashCommands();
   migrateLegacyJson();
+  // Notes written before wiki-links existed have no rows yet; fill them in once.
+  if (getSetting("linkIndexVersion") !== "1") { reindexAllLinks(); setSetting("linkIndexVersion", "1"); }
   repairDailyTasks();
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS daily_tasks_one_carry_per_source_day ON daily_tasks(task_date, carried_from_id) WHERE carried_from_id IS NOT NULL");
   cleanupLibraryEntries();
-  const api = { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, getSkill, createSkill, updateSkill, deleteSkill, listSlashCommands, getSlashCommand, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, moveProject, removeProject, setProjectLogo, createProjectTask, updateProjectTask, moveProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, getProjectToolInstall, setProjectToolInstall, removeProjectToolInstall, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createDailyActivity, updateDailyActivity, deleteDailyActivity, listDailyActivities, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
+  const api = { listNotes, getNote, listFolders, listTags, createNote, updateNote, setTags, backlinks, brokenLinks, reindexAllLinks, moveToTrash, restoreNote, deleteForever, createFolder, renameFolder, removeFolder, listSkills, getSkill, createSkill, updateSkill, deleteSkill, listSlashCommands, getSlashCommand, createSlashCommand, updateSlashCommand, deleteSlashCommand, listProjects, getProject, createProject, updateProject, reorderProjects, moveProject, removeProject, setProjectLogo, createProjectTask, updateProjectTask, moveProjectTask, removeProjectTask, createProjectCanvasItem, updateProjectCanvasItem, removeProjectCanvasItem, setProjectAssignments, getProjectToolInstall, setProjectToolInstall, removeProjectToolInstall, addProjectActivity, dailyDashboard, dailyPage, dailyMonth, createDailyTask, updateDailyTask, completeDailyTask, deleteDailyTask, listDailyTasks, createDailyActivity, updateDailyActivity, deleteDailyActivity, listDailyActivities, createCompression, listCompressions, getSetting, setSetting, exportData, importData, replaceData, createBackup, ensureDailyBackup, listBackups, restoreBackup, ...botRepo, close: () => db.close(), userDataPath, inboxId: inbox.id };
   const mutations = new Set([
     "createNote", "updateNote", "setTags", "moveToTrash", "restoreNote", "deleteForever",
     "createFolder", "renameFolder", "removeFolder", "createSkill", "updateSkill", "deleteSkill",

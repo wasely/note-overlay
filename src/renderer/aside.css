@@ -1,0 +1,201 @@
+/* Aside-inspired shell. The window is quiet chrome; the page you are working in floats inside
+   it as one inset panel. Flat fills instead of gradients, soft hairlines, calm type.
+   Loaded after every other stylesheet, so it only has to state what changes. */
+:root {
+  --font-display: "Segoe UI Variable Display", "Roboto Variable", sans-serif;
+  --font-body: "Segoe UI Variable Text", "Roboto Variable", sans-serif;
+
+  --color-canvas: oklch(96.4% 0.002 260);
+  --color-sidebar: oklch(96.4% 0.002 260);
+  --color-panel: oklch(100% 0 0);
+  --color-surface: oklch(100% 0 0);
+  --color-subtle: oklch(96.6% 0.002 260);
+  --color-selected: oklch(92.8% 0.003 260);
+  --color-border: oklch(91% 0.003 260);
+  --color-border-strong: oklch(83% 0.004 260);
+  --color-accent-soft: oklch(93.5% 0.003 260);
+  --color-signal: oklch(62% 0.17 255);
+  --shadow-hairline: oklch(20% 0.01 260 / 0.04);
+  --shadow-low: oklch(20% 0.01 260 / 0.08);
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 0.875rem;
+  --shell-gap: 6px;
+}
+
+[data-theme="dark"] {
+  --color-ink: oklch(95% 0 0);
+  --color-ink-soft: oklch(80% 0.003 260);
+  --color-muted: oklch(64% 0.004 260);
+  --color-faint: oklch(48% 0.004 260);
+  --color-canvas: oklch(14.5% 0.003 260);
+  --color-sidebar: oklch(14.5% 0.003 260);
+  --color-panel: oklch(18.2% 0.003 260);
+  --color-surface: oklch(20.5% 0.003 260);
+  --color-subtle: oklch(22.5% 0.003 260);
+  --color-selected: oklch(25.5% 0.004 260);
+  --color-border: oklch(26.5% 0.004 260);
+  --color-border-strong: oklch(35% 0.005 260);
+  --color-accent-soft: oklch(27% 0.004 260);
+  --color-signal: oklch(70% 0.14 255);
+  --shadow-hairline: oklch(0% 0 0 / 0.3);
+}
+
+/* ---------- Shell: chrome + one floating work panel ---------- */
+.window-surface { border-color: var(--color-border-strong); background: var(--color-canvas); }
+.sidebar { gap: 6px; background: var(--color-canvas); border-right: 0; }
+.notebook > :not(.sidebar):not(.settings):not(.settings-scrim) {
+  margin: var(--shell-gap) var(--shell-gap) var(--shell-gap) 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  box-shadow: 0 1px 2px var(--shadow-hairline);
+  overflow: hidden;
+}
+/* Pages that are their own scroller: the clip above must not cancel their overflow:auto. */
+.notebook > :is(.cep-page, .projects-page, .project-detail):not(.sidebar):not(.settings):not(.settings-scrim) { overflow: auto; }
+.library-workspace > .pane, .library-workspace > .library-browser { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.library-browser { background: var(--color-panel); }
+.pane { background: var(--color-panel); }
+.editor-bar { min-height: 2.75rem; background: var(--color-transparent); box-shadow: none; }
+.settings { background: var(--color-panel); }
+.settings > header { background: var(--color-transparent); }
+.settings section { box-shadow: none; }
+
+/* ---------- Sidebar ---------- */
+.search { height: 2rem; border-color: var(--color-transparent); background: var(--color-selected); }
+.search:focus-within { border-color: var(--color-border-strong); background: var(--color-panel); box-shadow: none; }
+.search kbd { border: 0; background: var(--color-canvas); }
+.nav button { min-height: 2rem; color: var(--color-ink-soft); }
+.nav button::before { display: none; }
+.nav button svg:not(.brand-icon) { color: var(--color-muted); }
+.nav button:hover { background: var(--color-selected); }
+.nav button.is-active { background: var(--color-panel); color: var(--color-ink); box-shadow: 0 0 0 1px var(--color-border), 0 1px 2px var(--shadow-hairline); }
+.nav button.is-active svg:not(.brand-icon) { color: var(--color-ink); }
+.nav button strong { font-weight: 550; }
+.nav-heading { margin: var(--space-sm) var(--space-xs) var(--space-3xs); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.nav-loaded { color: var(--color-signal); }
+.github-account-button > i { border-color: var(--color-canvas); }
+.github-account-button.is-connected > i { background: var(--color-signal); }
+
+/* The side panel scrolls instead of clipping the calendar under the AI bar. */
+.sidebar-body { overflow-y: auto; scrollbar-width: thin; mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent); }
+.side-panel { overflow: visible; flex: 0 0 auto; padding-inline: var(--space-xs); }
+.calendar { padding: var(--space-xs); border: 0; background: var(--color-transparent); }
+.calendar-day { aspect-ratio: auto; min-height: 1.625rem; }
+.calendar-day.is-today { box-shadow: inset 0 0 0 1px var(--color-border-strong); }
+
+/* Quick AI: one compact row of chips, like Aside's composer controls. */
+.ai-panel { padding: var(--space-xs) 6px 0; border-top: 0; }
+.ai-panel::before { display: none; }
+.ai-panel > .nav-heading { margin: 0 var(--space-3xs) var(--space-2xs); }
+.ai-panel-buttons { gap: 3px; }
+.ai-panel-buttons button {
+  min-height: 2rem;
+  flex-direction: row;
+  gap: 3px;
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-panel);
+  box-shadow: none;
+}
+.ai-panel-buttons button::before, .ai-panel-buttons button::after { display: none; }
+.ai-panel-buttons button .brand-icon, .ai-panel-buttons button .brand-image { width: 14px; height: 14px; }
+.ai-panel-buttons button:hover, .ai-panel-buttons button:focus-visible { border-color: var(--color-border-strong); box-shadow: none; }
+.ai-panel-buttons button.is-active { border-color: var(--color-ink); box-shadow: none; }
+.ai-panel-buttons button span { width: auto; font-size: 11px; letter-spacing: -.01em; }
+.ai-panel-buttons button i { top: 3px; right: 4px; background: var(--color-signal); box-shadow: none; }
+
+/* ---------- Controls ---------- */
+.button { border-color: var(--color-border); }
+.button.primary:disabled { opacity: .35; }
+.service-switch { border-color: var(--color-transparent); background: var(--color-subtle); }
+.service-switch button::before { display: none; }
+.service-switch button.is-active { background: var(--color-panel); box-shadow: 0 0 0 1px var(--color-border); }
+.format-bar { border-color: var(--color-transparent); background: var(--color-subtle); }
+.row.is-selected { background: var(--color-subtle); box-shadow: inset 0 0 0 1px var(--color-border); }
+.menu-popover { border-color: var(--color-border); }
+
+/* ---------- Today: the panel is the page, so no card-in-card ---------- */
+.paper-scroll { padding: var(--space-lg) var(--space-lg) var(--space-2xl); }
+.paper { max-width: 42rem; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.paper::before { display: none; }
+.paper-kicker { color: var(--color-muted); font-weight: 600; letter-spacing: .06em; }
+.paper-date h1 { font-size: var(--text-lg); font-weight: 650; }
+.today-sections { gap: 2px; width: fit-content; margin: var(--space-md) auto var(--space-lg); padding: 3px; border: 0; border-radius: var(--radius-sm); background: var(--color-subtle); }
+.today-sections button { min-height: 1.875rem; padding: 0 var(--space-sm); border-radius: calc(var(--radius-sm) - 2px); }
+.today-sections button::after { display: none; }
+.today-sections button.is-active { background: var(--color-panel); box-shadow: 0 0 0 1px var(--color-border), 0 1px 2px var(--shadow-hairline); }
+.today-sections small { background: var(--color-transparent); }
+
+.day-composer { border-color: var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 1px 2px var(--shadow-hairline), 0 8px 24px -16px var(--shadow-low); }
+.day-composer::before { display: none; }
+.day-clock { background: var(--color-transparent); border-bottom-color: var(--color-border); }
+.day-clock span { color: var(--color-muted); font-weight: 600; }
+.day-clock strong { font-size: 2rem; font-weight: 600; letter-spacing: -.03em; }
+.activity-capture input, .activity-capture select { border-color: var(--color-transparent); background: var(--color-subtle); }
+.activity-capture input:focus { border-color: var(--color-border-strong); background: var(--color-panel); box-shadow: none; }
+.duration-switch { border-color: var(--color-transparent); background: var(--color-subtle); }
+.duration-switch button.is-active { background: var(--color-panel); color: var(--color-ink); box-shadow: 0 0 0 1px var(--color-border); }
+
+/* History rows read as text until you touch them. */
+.activity-history-head { border-bottom: 0; }
+.activity-row input, .activity-row select { border-color: var(--color-transparent); background: var(--color-transparent); }
+.activity-row:hover input, .activity-row:hover select, .activity-row:focus-within input, .activity-row:focus-within select { border-color: var(--color-border); background: var(--color-panel); }
+.activity-row input:focus, .activity-row select:focus { border-color: var(--color-border-strong); box-shadow: none; }
+.activity-row:hover, .activity-row:focus-within { background: var(--color-subtle); }
+/* "Logged at" is a detail: it floats at the row's end on hover instead of adding a line to every row. */
+.activity-meta { gap: 0; }
+.activity-logged { position: absolute; top: 50%; right: 2.75rem; padding-left: var(--space-xs); background: var(--color-subtle); color: var(--color-faint); opacity: 0; pointer-events: none; transform: translateY(-50%); transition: opacity var(--dur-short) var(--ease-out); }
+.activity-row:hover .activity-logged { opacity: 1; }
+.activity-row:focus-within .activity-logged { opacity: 0; }
+.activity-list { display: flex; flex-direction: column; gap: 2px; }
+.activity-dot { margin-top: .75rem; }
+.activity-capture input[type="time"], .activity-row input[type="time"] { width: 8.25rem; }
+.activity-dot { border-color: var(--color-panel); background: var(--color-ink); box-shadow: 0 0 0 1px var(--color-ink); }
+.line { border-bottom-color: var(--color-border); }
+
+/* ---------- Narrow window ---------- */
+@media (max-width: 52rem) {
+  .paper-scroll { padding: var(--space-md) var(--space-md) var(--space-xl); }
+  .paper { padding: 0; }
+}
+@media (max-width: 34rem) {
+  .notebook > :not(.sidebar):not(.settings):not(.settings-scrim) { margin: 0 var(--shell-gap) var(--shell-gap); }
+  .sidebar { border-bottom: 0; }
+  .nav button { min-width: 4.5rem; }
+  .nav button.is-active { box-shadow: 0 0 0 1px var(--color-border); }
+  .ai-panel-buttons button { min-height: 2rem; }
+}
+
+/* ---------- One selection language everywhere: soft fill + hairline, no side bars ---------- */
+.key-index-list button.is-selected,
+.skills-home-link.is-current,
+.skills-shelf-head.is-current,
+.skills-item.is-current { background: var(--color-subtle); box-shadow: inset 0 0 0 1px var(--color-border); }
+.project-rank-row.project-rank-section { border-top: 1px solid var(--color-border); }
+.kanban-column, .cep-main-card.is-lead { border-top-width: 1px; }
+.task-column { border-top-width: 2px; }
+
+/* Settings floats like the work panel instead of bolting onto the window edge. */
+@media (max-width: 78rem) {
+  .settings { top: var(--shell-gap); right: var(--shell-gap); bottom: var(--shell-gap); border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; box-shadow: 0 18px 48px -12px var(--shadow-high); }
+}
+@media (max-width: 34rem) {
+  .settings { inset: 0; border: 0; border-radius: inherit; }
+}
+
+/* ---------- Notebook icon set (icons.jsx) ---------- */
+.nb-icon { flex: 0 0 auto; overflow: visible; }
+.nb-icon .nb-tone { opacity: .1; transition: opacity var(--dur-short) var(--ease-out); }
+.nav button:hover .nb-icon .nb-tone { opacity: .16; }
+.nav button.is-active .nb-icon { color: var(--color-ink); }
+.nav button.is-active .nb-icon .nb-tone { opacity: .22; }
+[data-theme="dark"] .nb-icon .nb-tone { opacity: .16; }
+[data-theme="dark"] .nav button.is-active .nb-icon .nb-tone { opacity: .3; }
+.keys-mark .nb-icon { color: var(--color-ink); }
+.keys-mark .nb-icon .nb-tone { opacity: .18; }
+.nb-mailbrain { flex: 0 0 auto; display: block; }
+.nav button:not(.is-active) .nb-mailbrain { filter: saturate(.85); }
